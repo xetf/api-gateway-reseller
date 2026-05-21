@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  DISABLED
+  REVOKED
+}
+
+enum WalletTransactionType {
+  RECHARGE
+  CHARGE
+  REFUND
+  ADJUST
+}
+
+enum ApiRequestStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum UpstreamProviderStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum RedeemCodeStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  username     String?    @unique
+  name         String?
+  passwordHash String
+  role         UserRole   @default(USER)
+  status       UserStatus @default(ACTIVE)
+  allowedModels String[]   @default([])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  apiKeys            ApiKey[]
+  wallet             Wallet?
+  walletTransactions WalletTransaction[]
+  apiRequests        ApiRequest[]
+  redeemRedemptions  RedeemCodeRedemption[]
+}
+
+model ApiKey {
+  id                 String       @id @default(cuid())
+  userId             String
+  name               String
+  keyHash            String       @unique
+  keyPrefix          String
+  status             ApiKeyStatus @default(ACTIVE)
+  allowedModels      String[]     @default([])
+  rateLimitPerMinute Int          @default(60)
+  dailyLimitUsd      Decimal?     @db.Decimal(18, 8)
+  expiresAt          DateTime?
+  lastUsedAt         DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiRequests ApiRequest[]
+
+  @@index([userId])
+  @@index([keyPrefix])
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Decimal  @default(0) @db.Decimal(18, 8)
+  currency  String   @default("USD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WalletTransaction {
+  id            String                @id @default(cuid())
+  userId        String
+  requestId     String?
+  type          WalletTransactionType
+  amount        Decimal               @db.Decimal(18, 8)
+  balanceBefore Decimal               @db.Decimal(18, 8)
+  balanceAfter  Decimal               @db.Decimal(18, 8)
+  remark        String?
+  metadata      Json?
+  createdAt     DateTime              @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiRequest ApiRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([requestId])
+}
+
+model ApiRequest {
+  id                String           @id @default(cuid())
+  userId            String
+  apiKeyId          String?
+  upstreamProvider  String
+  model             String
+  endpoint          String
+  method            String
+  status            ApiRequestStatus @default(PENDING)
+  httpStatus        Int?
+  inputTokens       Int              @default(0)
+  outputTokens      Int              @default(0)
+  totalTokens       Int              @default(0)
+  upstreamCostUsd   Decimal          @default(0) @db.Decimal(18, 8)
+  chargedAmountUsd  Decimal          @default(0) @db.Decimal(18, 8)
+  latencyMs         Int?
+  errorMessage      String?
+  upstreamRequestId String?
+  clientIp          String?
+  userAgent         String?
+  requestBody       Json?
+  responseUsage     Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey             ApiKey?             @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  walletTransactions WalletTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([apiKeyId, createdAt])
+  @@index([status, createdAt])
+  @@index([model, createdAt])
+}
+
+model ModelPrice {
+  id                      String   @id @default(cuid())
+  model                   String   @unique
+  upstreamProvider        String   @default("default")
+  currency                String   @default("USD")
+  upstreamInputPer1MTok   Decimal  @db.Decimal(18, 8)
+  upstreamOutputPer1MTok  Decimal  @db.Decimal(18, 8)
+  upstreamCachedInputPer1MTok Decimal @default(0) @db.Decimal(18, 8)
+  upstreamPriceMultiplier Decimal @default(1) @db.Decimal(18, 8)
+  customerInputPer1MTok   Decimal  @db.Decimal(18, 8)
+  customerOutputPer1MTok  Decimal  @db.Decimal(18, 8)
+  customerCachedInputPer1MTok Decimal @default(0) @db.Decimal(18, 8)
+  customerPriceMultiplier Decimal @default(1) @db.Decimal(18, 8)
+  minimumChargeUsd        Decimal  @default(0) @db.Decimal(18, 8)
+  enabled                 Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model UpstreamProvider {
+  id          String                 @id @default(cuid())
+  name        String                 @unique
+  baseUrl     String
+  apiKey      String
+  status      UpstreamProviderStatus @default(ACTIVE)
+  priority    Int                    @default(100)
+  timeoutMs   Int                    @default(120000)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+}
+
+model RedeemCode {
+  id              String             @id @default(cuid())
+  codeHash        String             @unique
+  codePrefix      String
+  amount          Decimal            @db.Decimal(18, 8)
+  currency        String             @default("USD")
+  status          RedeemCodeStatus   @default(ACTIVE)
+  maxRedemptions  Int                @default(1)
+  redeemedCount   Int                @default(0)
+  expiresAt       DateTime?
+  createdByUserId String?
+  remark          String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  redemptions RedeemCodeRedemption[]
+
+  @@index([status, createdAt])
+  @@index([codePrefix])
+}
+
+model RedeemCodeRedemption {
+  id           String     @id @default(cuid())
+  redeemCodeId String
+  userId       String
+  amount       Decimal    @db.Decimal(18, 8)
+  createdAt    DateTime   @default(now())
+
+  redeemCode RedeemCode @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([redeemCodeId, userId])
+  @@index([userId, createdAt])
+  @@index([redeemCodeId, createdAt])
+}

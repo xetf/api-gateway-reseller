@@ -1,0 +1,24 @@
+{
+  "name": "@gateway/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- next dev -p ${WEB_PORT:-4101}",
+    "build": "next build",
+    "start": "dotenv -e ../../.env -- next start -p ${WEB_PORT:-4101}",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "lucide-react": "^0.554.0",
+    "next": "^16.2.6",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "dotenv-cli": "^10.0.0"
+  }
+}
