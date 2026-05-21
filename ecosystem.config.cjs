@@ -4,18 +4,18 @@ module.exports = {
       name: "api-gateway-api",
       cwd: "/www/wwwroot/api-gateway-reseller",
       script: "npm",
-      args: "run dev:api",
+      args: "run start --workspace apps/api",
       env: {
-        NODE_ENV: "development"
+        NODE_ENV: "production"
       }
     },
     {
       name: "api-gateway-web",
       cwd: "/www/wwwroot/api-gateway-reseller",
       script: "npm",
-      args: "run dev:web",
+      args: "run start --workspace apps/web",
       env: {
-        NODE_ENV: "development"
+        NODE_ENV: "production"
       }
     }
   ]

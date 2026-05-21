@@ -350,7 +350,21 @@ export async function adminRoutes(app: FastifyInstance) {
       where: andFilters.length > 0 ? { AND: andFilters } : undefined,
       orderBy: { createdAt: "desc" },
       take: query.take,
-      include: {
+      select: {
+        id: true,
+        model: true,
+        endpoint: true,
+        method: true,
+        status: true,
+        httpStatus: true,
+        inputTokens: true,
+        outputTokens: true,
+        totalTokens: true,
+        chargedAmountUsd: true,
+        upstreamCostUsd: true,
+        latencyMs: true,
+        errorMessage: true,
+        createdAt: true,
         user: {
           select: {
             email: true,

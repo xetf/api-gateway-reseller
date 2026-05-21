@@ -246,75 +246,100 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         throw new Error("管理员请从 /admin 登录后台。");
       }
       setUser(me.user);
-
-      if (mode === "user") {
-        const [keysResult, walletResult, usageResult] = await Promise.all([
-          apiFetch<{ apiKeys: ApiKey[] }>("/api-keys", { token: authToken }),
-          apiFetch<{ wallet: Wallet | null; transactions: Transaction[] }>("/wallet", {
-            token: authToken,
-          }),
-          apiFetch<Summary>("/usage/summary", { token: authToken }),
-        ]);
-        setApiKeys(keysResult.apiKeys);
-        setWallet(walletResult.wallet);
-        setTransactions(walletResult.transactions);
-        setSummary(usageResult);
-      } else {
-        setApiKeys([]);
-        setWallet(null);
-        setTransactions([]);
-        setSummary(null);
-      }
-
-      if (mode === "admin") {
-        const [
-          overviewResult,
-          usersResult,
-          providersResult,
-          pricesResult,
-          codesResult,
-          requestsResult,
-        ] = await Promise.all([
-          apiFetch<AdminOverview>("/admin/overview", { token: authToken }),
-          apiFetch<{ users: AdminUser[] }>("/admin/users", { token: authToken }),
-          apiFetch<{ providers: UpstreamProvider[] }>("/admin/upstream-providers", {
-            token: authToken,
-          }),
-          apiFetch<{ modelPrices: ModelPrice[] }>("/admin/model-prices", {
-            token: authToken,
-          }),
-          apiFetch<{ codes: RedeemCode[] }>("/admin/redeem-codes", {
-            token: authToken,
-          }),
-          apiFetch<{ requests: ApiRequest[] }>(
-            `/admin/requests${toQueryString(requestFilters)}`,
-            {
-            token: authToken,
-            },
-          ),
-        ]);
-        setAdminOverview(overviewResult);
-        setAdminUsers(usersResult.users);
-        setUpstreamProviders(providersResult.providers);
-        setModelPrices(pricesResult.modelPrices);
-        setRedeemCodes(codesResult.codes);
-        setAdminRequests(requestsResult.requests);
-      } else {
-        setAdminOverview(null);
-        setAdminUsers([]);
-        setUpstreamProviders([]);
-        setModelPrices([]);
-        setRedeemCodes([]);
-        setAdminRequests([]);
-      }
     } catch (refreshError) {
       setError(errorToText(refreshError));
       clearToken();
       setTokenState(null);
       setUser(null);
-    } finally {
       setLoading(false);
+      return;
     }
+
+    setLoading(false);
+
+    const loadData = async (label: string, task: () => Promise<void>) => {
+      try {
+        await task();
+      } catch (loadError) {
+        setError(`${label}加载失败：${errorToText(loadError)}`);
+      }
+    };
+
+    if (mode === "user") {
+      setAdminOverview(null);
+      setAdminUsers([]);
+      setUpstreamProviders([]);
+      setModelPrices([]);
+      setRedeemCodes([]);
+      setAdminRequests([]);
+
+      void Promise.allSettled([
+        loadData("API Key", async () => {
+          const result = await apiFetch<{ apiKeys: ApiKey[] }>("/api-keys", {
+            token: authToken,
+          });
+          setApiKeys(result.apiKeys);
+        }),
+        loadData("钱包", async () => {
+          const result = await apiFetch<{ wallet: Wallet | null; transactions: Transaction[] }>(
+            "/wallet",
+            { token: authToken },
+          );
+          setWallet(result.wallet);
+          setTransactions(result.transactions);
+        }),
+        loadData("用量", async () => {
+          const result = await apiFetch<Summary>("/usage/summary", { token: authToken });
+          setSummary(result);
+        }),
+      ]);
+      return;
+    }
+
+    setApiKeys([]);
+    setWallet(null);
+    setTransactions([]);
+    setSummary(null);
+
+    void Promise.allSettled([
+      loadData("后台总览", async () => {
+        const result = await apiFetch<AdminOverview>("/admin/overview", { token: authToken });
+        setAdminOverview(result);
+      }),
+      loadData("用户", async () => {
+        const result = await apiFetch<{ users: AdminUser[] }>("/admin/users", {
+          token: authToken,
+        });
+        setAdminUsers(result.users);
+      }),
+      loadData("上游", async () => {
+        const result = await apiFetch<{ providers: UpstreamProvider[] }>(
+          "/admin/upstream-providers",
+          { token: authToken },
+        );
+        setUpstreamProviders(result.providers);
+      }),
+      loadData("价格", async () => {
+        const result = await apiFetch<{ modelPrices: ModelPrice[] }>(
+          "/admin/model-prices",
+          { token: authToken },
+        );
+        setModelPrices(result.modelPrices);
+      }),
+      loadData("兑换码", async () => {
+        const result = await apiFetch<{ codes: RedeemCode[] }>("/admin/redeem-codes", {
+          token: authToken,
+        });
+        setRedeemCodes(result.codes);
+      }),
+      loadData("调用记录", async () => {
+        const result = await apiFetch<{ requests: ApiRequest[] }>(
+          `/admin/requests${toQueryString(requestFilters)}`,
+          { token: authToken },
+        );
+        setAdminRequests(result.requests);
+      }),
+    ]);
   }
 
   function logout() {
