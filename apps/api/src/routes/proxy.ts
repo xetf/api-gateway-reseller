@@ -25,9 +25,21 @@ type ProxyBody = {
   [key: string]: unknown;
 };
 
+const proxyRoutePatterns = [
+  "/v1/*",
+  "/responses",
+  "/responses/*",
+  "/chat/completions",
+  "/embeddings",
+  "/completions",
+];
+
 export async function proxyRoutes(app: FastifyInstance) {
-  app.all("/v1/*", async (request: ApiRequestWithUser, reply) => {
-    const endpoint = request.url.split("?")[0] ?? request.url;
+  for (const pattern of proxyRoutePatterns) {
+    app.all(pattern, async (request: ApiRequestWithUser, reply) => {
+    const rawEndpoint = request.url.split("?")[0] ?? request.url;
+    const endpoint = normalizeEndpoint(rawEndpoint);
+    const upstreamRequestUrl = normalizeRequestUrl(request.url);
 
     if (!isSupportedEndpoint(endpoint)) {
       return sendApiError(reply, 404, "Endpoint not supported by this gateway");
@@ -102,7 +114,7 @@ export async function proxyRoutes(app: FastifyInstance) {
       const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
 
       const upstreamResponse = await fetch(
-        buildUpstreamUrl(provider.baseUrl, request.url),
+        buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
         {
           method: request.method,
           headers: {
@@ -138,7 +150,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         return reply.send(text);
       }
 
-      const shouldStream = shouldStreamResponse(upstreamResponse, body, request.url);
+      const shouldStream = shouldStreamResponse(upstreamResponse, body, upstreamRequestUrl);
 
       if (shouldStream && billable && price) {
         return proxyStream({
@@ -194,9 +206,35 @@ export async function proxyRoutes(app: FastifyInstance) {
       await markRequestFailed(apiRequest, message, 502);
       return sendApiError(reply, 502, message, "upstream_error");
     }
-  });
+    });
+  }
 }
 
+function normalizeEndpoint(endpoint: string) {
+  if (endpoint.startsWith("/v1/")) {
+    return endpoint;
+  }
+
+  if (endpoint === "/responses" || endpoint.startsWith("/responses/")) {
+    return `/v1${endpoint}`;
+  }
+
+  if (
+    endpoint === "/chat/completions" ||
+    endpoint === "/embeddings" ||
+    endpoint === "/completions"
+  ) {
+    return `/v1${endpoint}`;
+  }
+
+  return endpoint;
+}
+
+function normalizeRequestUrl(url: string) {
+  const [path = "", query] = url.split("?");
+  const normalizedPath = normalizeEndpoint(path);
+  return query ? `${normalizedPath}?${query}` : normalizedPath;
+}
 function isSupportedEndpoint(endpoint: string) {
   return proxiedEndpoints.has(endpoint) || isResponsesEndpoint(endpoint);
 }

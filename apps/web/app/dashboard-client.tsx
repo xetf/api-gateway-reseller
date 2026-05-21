@@ -18,7 +18,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { apiBaseUrl, apiFetch, clearToken, getToken, setToken } from "../lib/api";
 
 type User = {
@@ -43,6 +43,7 @@ type ApiKey = {
   id: string;
   name: string;
   keyPrefix: string;
+  keySecret?: string | null;
   status: "ACTIVE" | "DISABLED" | "REVOKED" | string;
   rateLimitPerMinute: number;
   allowedModels: string[];
@@ -471,7 +472,7 @@ function Login({
   onLogin: (token: string, user: User) => void;
 }) {
   const [identifier, setIdentifier] = useState(mode === "admin" ? "admin" : "");
-  const [password, setPassword] = useState(mode === "admin" ? "ayh20080407" : "");
+  const [password, setPassword] = useState(mode === "admin" ? "Gateway@2026#Secure" : "");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -500,13 +501,6 @@ function Login({
     }
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void submit();
-    }
-  }
-
   return (
     <main className="login-page">
       <div className="login-panel">
@@ -519,7 +513,6 @@ function Login({
               className="input"
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
-              onKeyDown={handleKeyDown}
               type={mode === "admin" ? "text" : "email"}
             />
           </label>
@@ -529,7 +522,6 @@ function Login({
               className="input"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              onKeyDown={handleKeyDown}
               type="password"
             />
           </label>
@@ -623,12 +615,13 @@ function Keys({
   const [rateLimit, setRateLimit] = useState(60);
   const [secret, setSecret] = useState<string | null>(null);
   const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
+  const [configKey, setConfigKey] = useState<ApiKey | null>(null);
 
   async function createKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onError(null);
     try {
-      const result = await apiFetch<{ secret: string }>("/api-keys", {
+      const result = await apiFetch<{ apiKey: ApiKey; secret: string }>("/api-keys", {
         method: "POST",
         body: JSON.stringify({
           name,
@@ -636,7 +629,12 @@ function Keys({
           allowedModels: [],
         }),
       });
+      const createdKey = {
+        ...result.apiKey,
+        keySecret: result.apiKey.keySecret ?? result.secret,
+      };
       setSecret(result.secret);
+      setConfigKey(createdKey);
       onChanged();
     } catch (createError) {
       onError(errorToText(createError));
@@ -660,101 +658,216 @@ function Keys({
   }
 
   return (
-    <div className="grid cols-2">
-      <section className="card">
-        <h2 className="section-title">创建 API Key</h2>
-        <form className="form" onSubmit={createKey}>
-          <label className="field">
-            <span>名称</span>
-            <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>每分钟限流</span>
-            <input
-              className="input"
-              value={rateLimit}
-              min={1}
-              max={10000}
-              onChange={(event) => setRateLimit(Number(event.target.value))}
-              type="number"
-            />
-          </label>
-          <button className="button" type="submit">
-            <Plus size={17} />
-            创建
-          </button>
-        </form>
-        {secret ? (
-          <div className="stack-top">
-            <div className="notice">这串 key 只显示一次。</div>
-            <div className="secret">{secret}</div>
-          </div>
-        ) : null}
-      </section>
-      <section className="card">
-        <h2 className="section-title">API Key 列表</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>前缀</th>
-                <th>状态</th>
-                <th>限流</th>
-                <th>创建时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {apiKeys.map((key) => (
-                <tr key={key.id}>
-                  <td>{key.name}</td>
-                  <td>{key.keyPrefix}</td>
-                  <td>
-                    <StatusPill status={key.status} />
-                  </td>
-                  <td>{key.rateLimitPerMinute}/min</td>
-                  <td>{dateTime(key.createdAt)}</td>
-                  <td>
-                    <div className="button-row compact">
-                      {key.status === "ACTIVE" ? (
+    <>
+      <div className="grid cols-2">
+        <section className="card">
+          <h2 className="section-title">创建 API Key</h2>
+          <form className="form" onSubmit={createKey}>
+            <label className="field">
+              <span>名称</span>
+              <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>每分钟限流</span>
+              <input
+                className="input"
+                value={rateLimit}
+                min={1}
+                max={10000}
+                onChange={(event) => setRateLimit(Number(event.target.value))}
+                type="number"
+              />
+            </label>
+            <button className="button" type="submit">
+              <Plus size={17} />
+              创建
+            </button>
+          </form>
+          {secret ? (
+            <div className="stack-top">
+              <div className="notice">API Key 已创建，可在列表中一直查看和配置。</div>
+              <div className="secret">{secret}</div>
+            </div>
+          ) : null}
+        </section>
+        <section className="card wide-card">
+          <h2 className="section-title">API Key 列表</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>API Key</th>
+                  <th>状态</th>
+                  <th>限流</th>
+                  <th>创建时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apiKeys.map((key) => (
+                  <tr key={key.id}>
+                    <td>{key.name}</td>
+                    <td>
+                      <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
+                    </td>
+                    <td>
+                      <StatusPill status={key.status} />
+                    </td>
+                    <td>{key.rateLimitPerMinute}/min</td>
+                    <td>{dateTime(key.createdAt)}</td>
+                    <td>
+                      <div className="button-row compact">
                         <button
                           className="button secondary"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => updateKeyStatus(key, "DISABLED")}
+                          disabled={!key.keySecret}
+                          onClick={() => setConfigKey(key)}
                           type="button"
                         >
-                          停用
+                          使用 / 配置
                         </button>
-                      ) : (
+                        {key.status === "ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyKeyId === key.id}
+                            onClick={() => updateKeyStatus(key, "DISABLED")}
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : (
+                          <button
+                            className="button"
+                            disabled={busyKeyId === key.id || key.status === "REVOKED"}
+                            onClick={() => updateKeyStatus(key, "ACTIVE")}
+                            type="button"
+                          >
+                            启用
+                          </button>
+                        )}
                         <button
-                          className="button"
+                          className="button danger"
                           disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                          onClick={() => updateKeyStatus(key, "ACTIVE")}
+                          onClick={() => updateKeyStatus(key, "REVOKED")}
                           type="button"
                         >
-                          启用
+                          吊销
                         </button>
-                      )}
-                      <button
-                        className="button danger"
-                        disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                        onClick={() => updateKeyStatus(key, "REVOKED")}
-                        type="button"
-                      >
-                        吊销
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {apiKeys.length === 0 ? <EmptyRow colSpan={6} /> : null}
-            </tbody>
-          </table>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {apiKeys.length === 0 ? <EmptyRow colSpan={6} /> : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      {configKey?.keySecret ? (
+        <ApiKeyConfigModal apiKey={configKey.keySecret} onClose={() => setConfigKey(null)} />
+      ) : null}
+    </>
+  );
+}
+
+function ApiKeyConfigModal({ apiKey, onClose }: { apiKey: string; onClose: () => void }) {
+  const [tool, setTool] = useState("Codex CLI");
+  const [os, setOs] = useState("macOS / Linux");
+  const configPath = os === "Windows" ? "%USERPROFILE%\\.codex\\config.toml" : "~/.codex/config.toml";
+  const authPath = os === "Windows" ? "%USERPROFILE%\\.codex\\auth.json" : "~/.codex/auth.json";
+  const mkdirCommand = os === "Windows" ? "mkdir %USERPROFILE%\\.codex" : "mkdir -p ~/.codex";
+  const config = codexConfigToml(tool);
+  const auth = JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="config-modal" role="dialog" aria-modal="true" aria-label="使用 API 密钥">
+        <div className="modal-header">
+          <div>
+            <h2>使用 API 密钥</h2>
+            <p>将以下配置文件添加到 Codex CLI 配置目录中。</p>
+          </div>
+          <button className="modal-close" onClick={onClose} type="button">
+            ×
+          </button>
         </div>
-      </section>
+        <div className="tab-row">
+          {["Codex CLI", "Codex CLI (WebSocket)", "Claude Code", "OpenCode"].map((item) => (
+            <button
+              className={tool === item ? "tab active" : "tab"}
+              key={item}
+              onClick={() => setTool(item)}
+              type="button"
+            >
+              ▻ {item}
+            </button>
+          ))}
+        </div>
+        <div className="tab-row os-tabs">
+          {["macOS / Linux", "Windows"].map((item) => (
+            <button
+              className={os === item ? "tab active" : "tab"}
+              key={item}
+              onClick={() => setOs(item)}
+              type="button"
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+        <div className="config-tip">请确保以下内容位于 config.toml 文件的开头部分。</div>
+        <ConfigBlock title={configPath} value={config} />
+        <ConfigBlock title={authPath} value={auth} />
+        <div className="info-box">请确保配置目录存在。{os} 用户可运行 <code>{mkdirCommand}</code> 创建目录。</div>
+      </div>
     </div>
   );
+}
+
+function ConfigBlock({ title, value }: { title: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard?.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  return (
+    <div className="config-block">
+      <div className="config-block-title">
+        <span>{title}</span>
+        <button onClick={copy} type="button">{copied ? "已复制" : "复制"}</button>
+      </div>
+      <pre>{value}</pre>
+    </div>
+  );
+}
+
+function codexConfigToml(tool: string) {
+  const providerName = tool === "Codex CLI (WebSocket)" ? "codex_local_access" : "OpenAI";
+
+  return `model_provider = "${providerName}"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "${apiBaseUrl}"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.codex_local_access]
+name = "OpenAI"
+base_url = "${apiBaseUrl}"
+wire_api = "responses"
+requires_openai_auth = true`;
 }
 
 function WalletView({
@@ -1042,7 +1155,7 @@ function CallTester({
 }) {
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState<"chat" | "responses">("responses");
-  const [model, setModel] = useState("gpt-5.5");
+  const [model, setModel] = useState("gpt-4o-mini");
   const [prompt, setPrompt] = useState("用一句话回复：API 网关测试成功。");
   const [stream, setStream] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1970,7 +2083,7 @@ function ModelPrices({
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
-  const [model, setModel] = useState("gpt-5.5");
+  const [model, setModel] = useState("gpt-4o-mini");
   const [upstreamInput, setUpstreamInput] = useState("5");
   const [upstreamCachedInput, setUpstreamCachedInput] = useState("0.5");
   const [upstreamOutput, setUpstreamOutput] = useState("30");

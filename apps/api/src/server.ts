@@ -79,6 +79,12 @@ app.setErrorHandler((error, _request, reply) => {
   });
 });
 
+app.get("/", async () => ({
+  ok: true,
+  service: "api-gateway-reseller",
+  health: "/health",
+}));
+
 app.get("/health", async () => ({ ok: true }));
 
 await app.register(authRoutes);

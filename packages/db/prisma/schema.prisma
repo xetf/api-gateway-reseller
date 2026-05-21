@@ -71,6 +71,7 @@ model ApiKey {
   name               String
   keyHash            String       @unique
   keyPrefix          String
+  keySecret          String?
   status             ApiKeyStatus @default(ACTIVE)
   allowedModels      String[]     @default([])
   rateLimitPerMinute Int          @default(60)

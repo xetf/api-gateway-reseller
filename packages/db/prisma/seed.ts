@@ -56,25 +56,48 @@ async function main() {
 
   const prices = [
     {
+      model: "gpt-5.5",
+      upstreamInputPer1MTok: "5.00000000",
+      upstreamCachedInputPer1MTok: "0.50000000",
+      upstreamOutputPer1MTok: "30.00000000",
+      upstreamPriceMultiplier: "0.06000000",
+      customerInputPer1MTok: "5.00000000",
+      customerCachedInputPer1MTok: "0.50000000",
+      customerOutputPer1MTok: "30.00000000",
+      customerPriceMultiplier: "0.12000000",
+    },
+    {
       model: "gpt-4o-mini",
       upstreamInputPer1MTok: "0.15000000",
+      upstreamCachedInputPer1MTok: "0.00000000",
       upstreamOutputPer1MTok: "0.60000000",
+      upstreamPriceMultiplier: "1.00000000",
       customerInputPer1MTok: "0.30000000",
+      customerCachedInputPer1MTok: "0.00000000",
       customerOutputPer1MTok: "1.20000000",
+      customerPriceMultiplier: "1.00000000",
     },
     {
       model: "gpt-4o",
       upstreamInputPer1MTok: "2.50000000",
+      upstreamCachedInputPer1MTok: "0.00000000",
       upstreamOutputPer1MTok: "10.00000000",
+      upstreamPriceMultiplier: "1.00000000",
       customerInputPer1MTok: "3.50000000",
+      customerCachedInputPer1MTok: "0.00000000",
       customerOutputPer1MTok: "14.00000000",
+      customerPriceMultiplier: "1.00000000",
     },
     {
       model: "text-embedding-3-small",
       upstreamInputPer1MTok: "0.02000000",
+      upstreamCachedInputPer1MTok: "0.00000000",
       upstreamOutputPer1MTok: "0.00000000",
+      upstreamPriceMultiplier: "1.00000000",
       customerInputPer1MTok: "0.05000000",
+      customerCachedInputPer1MTok: "0.00000000",
       customerOutputPer1MTok: "0.00000000",
+      customerPriceMultiplier: "1.00000000",
     },
   ];
 
