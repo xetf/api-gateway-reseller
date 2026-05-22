@@ -179,15 +179,17 @@ model ModelPrice {
 }
 
 model ModelPool {
-  id        String             @id @default(cuid())
-  model     String             @unique
-  status    String             @default("ACTIVE")
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @default(now()) @updatedAt
+  id                     String             @id @default(cuid())
+  model                  String             @unique
+  status                 String             @default("ACTIVE")
+  autoHealthCheckEnabled Boolean            @default(true)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @default(now()) @updatedAt
 
   channels ModelPoolChannel[]
 
   @@index([status])
+  @@index([autoHealthCheckEnabled])
 }
 
 model ModelPoolChannel {

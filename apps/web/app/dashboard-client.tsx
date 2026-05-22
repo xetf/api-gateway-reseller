@@ -182,6 +182,7 @@ type ModelPool = {
   id: string;
   model: string;
   status: "ACTIVE" | "DISABLED" | string;
+  autoHealthCheckEnabled: boolean;
   readyChannelCount: number;
   pricedChannelCount: number;
   channels: ModelPoolChannel[];
@@ -2468,9 +2469,16 @@ function AdminModelPools({
 
   useEffect(() => {
     const dueChannelIds = modelPools
-      .flatMap((pool) => pool.channels)
-      .filter((channel) => nextCheckState(channel, healthCheck, nowMs).isWaitingForResult)
-      .map((channel) => `${channel.id}:${channel.nextCheckAt ?? ""}:${channel.isChecking ? "checking" : "due"}`)
+      .flatMap((pool) =>
+        pool.channels.map((channel) => ({
+          channel,
+          autoHealthCheckEnabled: pool.autoHealthCheckEnabled,
+        })),
+      )
+      .filter(({ channel, autoHealthCheckEnabled }) =>
+        nextCheckState(channel, healthCheck, nowMs, autoHealthCheckEnabled).isWaitingForResult,
+      )
+      .map(({ channel }) => `${channel.id}:${channel.nextCheckAt ?? ""}:${channel.isChecking ? "checking" : "due"}`)
       .sort();
     const dueKey = dueChannelIds.join("|");
     const canRetryDueRefresh = nowMs - lastDueRefreshAtRef.current > 2000;
@@ -2522,6 +2530,22 @@ function AdminModelPools({
       await apiFetch(`/admin/model-pools/${pool.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
+      });
+      onChanged();
+    } catch (updateError) {
+      onError(errorToText(updateError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function setPoolAutoHealthCheck(pool: ModelPool, autoHealthCheckEnabled: boolean) {
+    onError(null);
+    setBusyId(`${pool.id}:auto-health`);
+    try {
+      await apiFetch(`/admin/model-pools/${pool.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ autoHealthCheckEnabled }),
       });
       onChanged();
     } catch (updateError) {
@@ -2727,12 +2751,22 @@ function AdminModelPools({
                       <strong>{pool.model}</strong>
                       <StatusPill status={pool.status} />
                       <StatusPill status={pool.readyChannelCount > 0 ? "READY" : "UNAVAILABLE"} />
+                      <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
                     </div>
                     <p>
                       可调用 {pool.readyChannelCount} 个 · 已定价 {pool.pricedChannelCount} 个 · 已加入 {pool.channels.length} 个
+                      · 自动检测{pool.autoHealthCheckEnabled ? "已开启" : "已关闭"}
                     </p>
                   </div>
                   <div className="button-row">
+                    <button
+                      className="button secondary"
+                      disabled={busyId === `${pool.id}:auto-health`}
+                      onClick={() => setPoolAutoHealthCheck(pool, !pool.autoHealthCheckEnabled)}
+                      type="button"
+                    >
+                      {pool.autoHealthCheckEnabled ? "关闭自动检测" : "开启自动检测"}
+                    </button>
                     {pool.status === "ACTIVE" ? (
                       <button
                         className="button secondary"
@@ -2768,7 +2802,9 @@ function AdminModelPools({
                   <div>
                     <h3 className="section-title">上游渠道</h3>
                     <p className="section-subtitle">
-                      自动检测按当前设置每 {healthCheck?.intervalSeconds ?? 30} 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。
+                      {pool.autoHealthCheckEnabled
+                        ? `自动检测按当前设置每 ${healthCheck?.intervalSeconds ?? 30} 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。`
+                        : "这个模型池已关闭自动检测；手动检测和用户调用不受影响。"}
                     </p>
                   </div>
                   <div className="button-row">
@@ -2808,6 +2844,7 @@ function AdminModelPools({
                         <th>池状态</th>
                         <th>价格</th>
                         <th>上游状态</th>
+                        <th>自动检测</th>
                         <th>优先级</th>
                         <th>连续失败</th>
                         <th>上次检测</th>
@@ -2834,10 +2871,13 @@ function AdminModelPools({
                           <td>
                             <StatusPill status={channel.providerStatus} />
                           </td>
+                          <td>
+                            <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
+                          </td>
                           <td>{channel.priority}</td>
                           <td>{channel.consecutiveFailures}</td>
                           <td>{channel.lastCheckedAt ? dateTime(channel.lastCheckedAt) : "-"}</td>
-                          <td>{nextCheckCountdown(channel, healthCheck, nowMs)}</td>
+                          <td>{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</td>
                           <td>{seconds(channel.lastFirstTokenLatencyMs)}</td>
                           <td>{seconds(channel.lastLatencyMs)}</td>
                           <td className="muted-cell">{channel.lastError ?? "-"}</td>
@@ -2893,7 +2933,7 @@ function AdminModelPools({
                           </td>
                         </tr>
                       ))}
-                      {pool.channels.length === 0 ? <EmptyRow colSpan={12} /> : null}
+                      {pool.channels.length === 0 ? <EmptyRow colSpan={14} /> : null}
                     </tbody>
                 </table>
               </div>
@@ -2963,9 +3003,12 @@ function AdminModelPools({
                     <MobileField label="上游状态">
                       <StatusPill status={channel.providerStatus} />
                     </MobileField>
+                    <MobileField label="自动检测">
+                      <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
+                    </MobileField>
                     <MobileField label="优先级">{channel.priority}</MobileField>
                     <MobileField label="连续失败">{channel.consecutiveFailures}</MobileField>
-                    <MobileField label="下次检测">{nextCheckCountdown(channel, healthCheck, nowMs)}</MobileField>
+                    <MobileField label="下次检测">{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</MobileField>
                     <MobileField label="首字">{seconds(channel.lastFirstTokenLatencyMs)}</MobileField>
                     <MobileField label="总耗时">{seconds(channel.lastLatencyMs)}</MobileField>
                     <MobileField label="错误" wide>
@@ -3921,19 +3964,23 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
   const labelMap: Record<string, string> = {
     FORCED_ACTIVE: "人工可用",
     FORCED_READY: "人工可调用",
+    AUTO_CHECK_ON: "自动检测开",
+    AUTO_CHECK_OFF: "自动检测关",
   };
   const ok =
     status === "ACTIVE" ||
     status === "SUCCESS" ||
     status === "READY" ||
     status === "FORCED_ACTIVE" ||
-    status === "FORCED_READY";
+    status === "FORCED_READY" ||
+    status === "AUTO_CHECK_ON";
   const danger =
     status === "FAILED" ||
     status === "REVOKED" ||
     status === "DISABLED" ||
     status === "UNAVAILABLE" ||
-    status === "MISSING";
+    status === "MISSING" ||
+    status === "AUTO_CHECK_OFF";
   return <span className={`pill ${ok ? "ok" : danger ? "warn" : ""} ${strong ? "strong" : ""}`}>{labelMap[status] ?? status}</span>;
 }
 
@@ -4024,13 +4071,14 @@ function nextCheckState(
   channel: ModelPoolChannel,
   healthCheck: ModelPoolHealthCheck | null,
   nowMs: number,
+  autoHealthCheckEnabled = true,
 ) {
-  if (!healthCheck) {
-    return { secondsUntilNext: null, isWaitingForResult: false };
-  }
-
   if (channel.isChecking) {
     return { secondsUntilNext: 0, isWaitingForResult: true };
+  }
+
+  if (!autoHealthCheckEnabled || !healthCheck) {
+    return { secondsUntilNext: null, isWaitingForResult: false };
   }
 
   const secondsUntilNext = channel.nextCheckRemainingSeconds;
@@ -4052,8 +4100,13 @@ function nextCheckCountdown(
   channel: ModelPoolChannel,
   healthCheck: ModelPoolHealthCheck | null,
   nowMs: number,
+  autoHealthCheckEnabled = true,
 ) {
-  const state = nextCheckState(channel, healthCheck, nowMs);
+  if (!autoHealthCheckEnabled && !channel.isChecking) {
+    return "未参与";
+  }
+
+  const state = nextCheckState(channel, healthCheck, nowMs, autoHealthCheckEnabled);
 
   if (state.secondsUntilNext === null) {
     return "-";

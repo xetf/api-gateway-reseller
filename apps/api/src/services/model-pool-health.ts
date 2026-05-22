@@ -236,7 +236,10 @@ async function findDueModelPoolChannels() {
   const candidates = await prisma.modelPoolChannel.findMany({
     where: {
       status: { in: checkedChannelStatuses },
-      modelPool: { status: "ACTIVE" },
+      modelPool: {
+        status: "ACTIVE",
+        autoHealthCheckEnabled: true,
+      },
     },
     orderBy: [
       { lastCheckedAt: "asc" },

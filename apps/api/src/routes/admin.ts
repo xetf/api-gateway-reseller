@@ -522,7 +522,14 @@ export async function adminRoutes(app: FastifyInstance) {
         const channels = pool.channels.map((channel) => {
           const price = priceMap.get(`${channel.upstreamProvider}:${pool.model}`);
           const provider = providerMap.get(channel.upstreamProvider);
-          const healthTiming = getModelPoolChannelHealthTiming(channel, healthCheckIntervalSeconds, serverNow);
+          const baseHealthTiming = getModelPoolChannelHealthTiming(channel, healthCheckIntervalSeconds, serverNow);
+          const healthTiming = pool.autoHealthCheckEnabled
+            ? baseHealthTiming
+            : {
+                ...baseHealthTiming,
+                nextCheckAt: null,
+                nextCheckRemainingSeconds: null,
+              };
           return {
             ...channel,
             hasPrice: Boolean(price),
@@ -592,6 +599,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .object({
         model: z.string().min(1).max(120),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
+        autoHealthCheckEnabled: z.boolean().default(true),
       })
       .parse(request.body);
     const providers = await prisma.upstreamProvider.findMany({
@@ -610,7 +618,10 @@ export async function adminRoutes(app: FastifyInstance) {
 
     const pool = await prisma.modelPool.upsert({
       where: { model: body.model },
-      update: { status: body.status },
+      update: {
+        status: body.status,
+        autoHealthCheckEnabled: body.autoHealthCheckEnabled,
+      },
       create: body,
     });
 
@@ -622,6 +633,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+        autoHealthCheckEnabled: z.boolean().optional(),
       })
       .parse(request.body);
     const modelPool = await prisma.modelPool.update({

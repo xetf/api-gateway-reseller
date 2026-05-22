@@ -2,7 +2,7 @@ CREATE TABLE "SystemSetting" (
   "key" TEXT NOT NULL PRIMARY KEY,
   "value" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 INSERT INTO "SystemSetting" ("key", "value", "createdAt", "updatedAt")
