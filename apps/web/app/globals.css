@@ -27,9 +27,21 @@ body {
   letter-spacing: 0;
 }
 
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+code,
+pre {
+  max-width: 100%;
+}
+
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -143,6 +155,7 @@ a {
   padding: 24px 28px 44px;
   max-width: 1580px;
   width: 100%;
+  min-width: 0;
 }
 
 .topbar {
@@ -389,9 +402,11 @@ a {
 
 .table-wrap {
   overflow-x: auto;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
@@ -443,6 +458,7 @@ tbody tr:hover td {
 
 .input {
   width: 100%;
+  min-width: 0;
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -473,6 +489,7 @@ tbody tr:hover td {
   background: var(--brand);
   color: #ffffff;
   font-weight: 700;
+  text-align: center;
 }
 
 .button.secondary {
@@ -500,6 +517,7 @@ tbody tr:hover td {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .inline-field {
@@ -1071,17 +1089,52 @@ td .pill {
 
   .sidebar {
     height: auto;
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 20;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+
+  .brand {
+    margin-bottom: 12px;
+    font-size: 16px;
   }
 
   .nav {
-    gap: 12px;
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 2px 0 4px;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav-group {
+    display: contents;
+  }
+
+  .nav-heading {
+    display: none;
   }
 
   .nav button {
-    min-height: 42px;
+    flex: 0 0 min(178px, 46vw);
+    min-height: 48px;
+    scroll-snap-align: start;
+    align-items: center;
+    padding: 8px 10px;
+    background: #ffffff;
+    border: 1px solid var(--line);
+  }
+
+  .nav button svg {
+    margin-top: 0;
+  }
+
+  .nav button small {
+    display: none;
   }
 
   .grid.cols-3,
@@ -1094,21 +1147,42 @@ td .pill {
   }
 
   .main {
-    padding: 18px;
+    padding: 14px;
   }
 
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+  }
+
+  .topbar h1 {
+    font-size: 22px;
+  }
+
+  .topbar p {
+    font-size: 14px;
   }
 
   .topbar-side {
     width: 100%;
-    justify-items: start;
+    justify-items: stretch;
+  }
+
+  .topbar-side .button-row {
+    width: 100%;
+  }
+
+  .topbar-side .button {
+    flex: 1 1 120px;
   }
 
   .account-chip {
     max-width: 100%;
+    width: 100%;
+    justify-content: space-between;
   }
 
   .account-chip span {
@@ -1124,5 +1198,272 @@ td .pill {
   .form-modal,
   .config-modal {
     max-height: min(92vh, 920px);
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    font-size: 14px;
+  }
+
+  .shell {
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    padding: 10px 10px 8px;
+  }
+
+  .brand {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+
+  .nav {
+    gap: 8px;
+    margin-inline: -2px;
+  }
+
+  .nav button {
+    flex-basis: min(150px, 42vw);
+    min-height: 42px;
+    gap: 8px;
+  }
+
+  .nav button strong {
+    font-size: 13px;
+  }
+
+  .main {
+    padding: 12px 10px 28px;
+  }
+
+  .workspace,
+  .admin-page,
+  .grid {
+    gap: 12px;
+  }
+
+  .card,
+  .action-panel,
+  .provider-panel,
+  .subpanel,
+  .pricing-preview {
+    border-radius: 7px;
+    padding: 12px;
+  }
+
+  .action-panel h2,
+  .section-title {
+    font-size: 15px;
+  }
+
+  .section-head {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .metric {
+    min-height: auto;
+  }
+
+  .metric-value {
+    font-size: 22px;
+  }
+
+  .metric-value.small {
+    font-size: 16px;
+  }
+
+  .button-row,
+  .action-panel-tools {
+    gap: 8px;
+  }
+
+  .button-row:not(.compact) .button,
+  .action-panel-tools .button {
+    flex: 1 1 140px;
+  }
+
+  .button {
+    min-height: 42px;
+    padding: 0 12px;
+  }
+
+  .button-row.compact {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .button-row.compact .button {
+    width: 100%;
+    min-height: 36px;
+    padding: 0 8px;
+  }
+
+  .input,
+  .quick,
+  .chip,
+  .segmented button {
+    min-height: 42px;
+  }
+
+  .login-page {
+    align-items: start;
+    padding: 16px 10px;
+  }
+
+  .login-panel {
+    margin-top: 7vh;
+    padding: 18px;
+  }
+
+  .login-panel h1 {
+    font-size: 22px;
+  }
+
+  .copy-field {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .copy-field .button {
+    width: 100%;
+  }
+
+  .inline-secret {
+    max-width: 68vw;
+  }
+
+  .table-wrap {
+    margin-inline: -12px;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  table {
+    min-width: 680px;
+  }
+
+  th,
+  td {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .filter-bar {
+    gap: 8px;
+  }
+
+  .modal-backdrop {
+    padding: 0;
+    align-items: end;
+  }
+
+  .form-modal,
+  .form-modal.modal-wide,
+  .config-modal {
+    width: 100%;
+    max-height: 94dvh;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .modal-header {
+    padding: 14px 14px 12px;
+  }
+
+  .modal-header h2 {
+    font-size: 18px;
+  }
+
+  .modal-body {
+    padding: 14px;
+  }
+
+  .modal-footer {
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .tab-row {
+    flex-wrap: nowrap;
+    gap: 10px;
+    overflow-x: auto;
+    padding-inline: 14px;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+  }
+
+  .config-tip,
+  .config-block,
+  .info-box {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+
+  .config-block pre,
+  .code-block {
+    font-size: 12px;
+  }
+
+  .info-line {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .info-line strong {
+    text-align: left;
+  }
+}
+
+@media (max-width: 420px) {
+  .nav button {
+    flex-basis: 138px;
+  }
+
+  .topbar h1 {
+    font-size: 20px;
+  }
+
+  .topbar-side .button-row,
+  .button-row:not(.compact),
+  .action-panel-tools {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .topbar-side .button,
+  .button-row:not(.compact) .button,
+  .action-panel-tools .button {
+    width: 100%;
+  }
+
+  .button-row.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .segmented {
+    width: 100%;
+  }
+
+  .segmented button {
+    flex: 1 1 0;
+    padding-inline: 8px;
+  }
+
+  .inline-secret {
+    max-width: 58vw;
   }
 }
