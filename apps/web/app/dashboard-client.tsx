@@ -1060,6 +1060,26 @@ function Keys({
                         >
                           使用 / 配置
                         </button>
+                        {key.status === "ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyKeyId === key.id}
+                            onClick={() => updateKeyStatus(key, "DISABLED")}
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : null}
+                        {key.status === "DISABLED" ? (
+                          <button
+                            className="button"
+                            disabled={busyKeyId === key.id}
+                            onClick={() => updateKeyStatus(key, "ACTIVE")}
+                            type="button"
+                          >
+                            启用
+                          </button>
+                        ) : null}
                         <button
                           className="button danger"
                           disabled={busyKeyId === key.id}
@@ -1093,6 +1113,26 @@ function Keys({
                     >
                       使用 / 配置
                     </button>
+                    {key.status === "ACTIVE" ? (
+                      <button
+                        className="button secondary"
+                        disabled={busyKeyId === key.id}
+                        onClick={() => updateKeyStatus(key, "DISABLED")}
+                        type="button"
+                      >
+                        停用
+                      </button>
+                    ) : null}
+                    {key.status === "DISABLED" ? (
+                      <button
+                        className="button"
+                        disabled={busyKeyId === key.id}
+                        onClick={() => updateKeyStatus(key, "ACTIVE")}
+                        type="button"
+                      >
+                        启用
+                      </button>
+                    ) : null}
                     <button
                       className="button danger"
                       disabled={busyKeyId === key.id}
