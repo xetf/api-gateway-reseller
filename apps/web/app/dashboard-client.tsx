@@ -614,11 +614,11 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <div className="button-row">
               <button className="button secondary" onClick={() => refreshAll()} type="button">
                 <RefreshCw size={17} />
-                刷新
+                <span>刷新</span>
               </button>
               <button className="button secondary" onClick={logout} type="button">
                 <LogOut size={17} />
-                退出
+                <span>退出</span>
               </button>
             </div>
           </div>
@@ -1074,6 +1074,62 @@ function Keys({
               </tbody>
             </table>
           </div>
+          <div className="mobile-record-list">
+            {apiKeys.map((key) => (
+              <MobileRecord
+                key={key.id}
+                title={key.name}
+                meta={dateTime(key.createdAt)}
+                badges={<StatusPill status={key.status} />}
+                actions={
+                  <>
+                    <button
+                      className="button secondary"
+                      disabled={!key.keySecret}
+                      onClick={() => setConfigKey(key)}
+                      type="button"
+                    >
+                      使用 / 配置
+                    </button>
+                    {key.status === "ACTIVE" ? (
+                      <button
+                        className="button secondary"
+                        disabled={busyKeyId === key.id}
+                        onClick={() => updateKeyStatus(key, "DISABLED")}
+                        type="button"
+                      >
+                        停用
+                      </button>
+                    ) : (
+                      <button
+                        className="button"
+                        disabled={busyKeyId === key.id || key.status === "REVOKED"}
+                        onClick={() => updateKeyStatus(key, "ACTIVE")}
+                        type="button"
+                      >
+                        启用
+                      </button>
+                    )}
+                    <button
+                      className="button danger"
+                      disabled={busyKeyId === key.id || key.status === "REVOKED"}
+                      onClick={() => updateKeyStatus(key, "REVOKED")}
+                      type="button"
+                    >
+                      吊销
+                    </button>
+                  </>
+                }
+              >
+                <MobileField label="API Key" wide>
+                  <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
+                </MobileField>
+                <MobileField label="限流">{key.rateLimitPerMinute}/min</MobileField>
+                <MobileField label="创建时间">{dateTime(key.createdAt)}</MobileField>
+              </MobileRecord>
+            ))}
+            {apiKeys.length === 0 ? <MobileEmpty>暂无 API Key</MobileEmpty> : null}
+          </div>
         </section>
       </div>
       {configKey?.keySecret ? (
@@ -1279,6 +1335,23 @@ function Transactions({ transactions }: { transactions: Transaction[] }) {
           </tbody>
         </table>
       </div>
+      <div className="mobile-record-list">
+        {transactions.map((item) => (
+          <MobileRecord
+            key={item.id}
+            title={item.type}
+            meta={dateTime(item.createdAt)}
+            badges={<span className="pill strong">${money(item.amount)}</span>}
+          >
+            <MobileField label="之前">${money(item.balanceBefore)}</MobileField>
+            <MobileField label="之后">${money(item.balanceAfter)}</MobileField>
+            <MobileField label="备注" wide>
+              {item.remark || "-"}
+            </MobileField>
+          </MobileRecord>
+        ))}
+        {transactions.length === 0 ? <MobileEmpty>暂无账本流水</MobileEmpty> : null}
+      </div>
     </section>
   );
 }
@@ -1341,6 +1414,43 @@ function Requests({
             {requests.length === 0 ? <EmptyRow colSpan={showCost ? 14 : 10} /> : null}
           </tbody>
         </table>
+      </div>
+      <div className="mobile-record-list">
+        {requests.map((item) => (
+          <MobileRecord
+            key={item.id}
+            title={item.model}
+            meta={dateTime(item.createdAt)}
+            badges={<StatusPill status={item.status} />}
+          >
+            {showCost ? (
+              <>
+                <MobileField label="用户" wide>
+                  {item.user?.email ?? "-"}
+                </MobileField>
+                <MobileField label="上游" wide>
+                  {item.upstreamProvider ?? "-"}
+                </MobileField>
+              </>
+            ) : null}
+            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
+            <MobileField label="缓存">{formatNumber(item.cachedInputTokens)}</MobileField>
+            <MobileField label="输出">{formatNumber(item.outputTokens)}</MobileField>
+            <MobileField label="总 token">{formatNumber(item.totalTokens)}</MobileField>
+            <MobileField label="扣费">${money(item.chargedAmountUsd)}</MobileField>
+            {showCost ? (
+              <>
+                <MobileField label="上游成本">${money(item.upstreamCostUsd ?? "0")}</MobileField>
+                <MobileField label="毛利">
+                  ${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}
+                </MobileField>
+              </>
+            ) : null}
+            <MobileField label="总时间">{seconds(item.latencyMs)}</MobileField>
+            <MobileField label="首 token">{seconds(item.firstTokenLatencyMs)}</MobileField>
+          </MobileRecord>
+        ))}
+        {requests.length === 0 ? <MobileEmpty>暂无调用记录</MobileEmpty> : null}
       </div>
     </section>
   );
@@ -2033,6 +2143,42 @@ function AdminUsers({
               </tbody>
             </table>
           </div>
+          <div className="mobile-record-list">
+            {filteredUsers.map((item) => (
+              <MobileRecord
+                key={item.id}
+                title={item.email}
+                meta={dateTime(item.createdAt)}
+                badges={
+                  <>
+                    <StatusPill status={item.status} />
+                    <span className="pill">{item.role}</span>
+                  </>
+                }
+                actions={
+                  <>
+                    <button className="button secondary" onClick={() => beginEditUser(item)} type="button">
+                      编辑
+                    </button>
+                    <button className="button secondary" onClick={() => toggleUserStatus(item)} type="button">
+                      {item.status === "ACTIVE" ? "停用" : "启用"}
+                    </button>
+                    <button className="button danger" onClick={() => deleteUser(item)} type="button">
+                      删除
+                    </button>
+                  </>
+                }
+              >
+                <MobileField label="余额">${money(item.wallet?.balance ?? "0")}</MobileField>
+                <MobileField label="Key">{item._count.apiKeys}</MobileField>
+                <MobileField label="请求">{item._count.apiRequests}</MobileField>
+                <MobileField label="模型白名单" wide>
+                  {item.allowedModels.length > 0 ? item.allowedModels.join(", ") : "不限"}
+                </MobileField>
+              </MobileRecord>
+            ))}
+            {filteredUsers.length === 0 ? <MobileEmpty>暂无用户</MobileEmpty> : null}
+          </div>
         </section>
       </div>
 
@@ -2622,7 +2768,7 @@ function AdminModelPools({
                   <div>
                     <h3 className="section-title">上游渠道</h3>
                     <p className="section-subtitle">
-                      自动检测每 30 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。
+                      自动检测按当前设置每 {healthCheck?.intervalSeconds ?? 30} 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。
                     </p>
                   </div>
                   <div className="button-row">
@@ -2749,9 +2895,87 @@ function AdminModelPools({
                       ))}
                       {pool.channels.length === 0 ? <EmptyRow colSpan={12} /> : null}
                     </tbody>
-                  </table>
-                </div>
-              </section>
+                </table>
+              </div>
+              <div className="mobile-record-list">
+                {pool.channels.map((channel) => (
+                  <MobileRecord
+                    key={channel.id}
+                    title={channel.upstreamProvider}
+                    meta={channel.lastCheckedAt ? `上次检测 ${dateTime(channel.lastCheckedAt)}` : "尚未检测"}
+                    badges={<StatusPill status={channel.effectiveStatus} strong />}
+                    actions={
+                      <>
+                        <button
+                          className="button secondary"
+                          disabled={busyId === channel.id}
+                          onClick={() => checkChannel(channel)}
+                          type="button"
+                        >
+                          检测
+                        </button>
+                        {channel.status !== "FORCED_ACTIVE" ? (
+                          <button
+                            className="button"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "FORCED_ACTIVE")}
+                            type="button"
+                          >
+                            人工可用
+                          </button>
+                        ) : null}
+                        {channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "DISABLED")}
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : (
+                          <button
+                            className="button secondary"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "ACTIVE")}
+                            type="button"
+                          >
+                            自动可用
+                          </button>
+                        )}
+                        <button
+                          className="button danger"
+                          disabled={busyId === channel.id}
+                          onClick={() => deleteChannel(channel)}
+                          type="button"
+                        >
+                          删除
+                        </button>
+                      </>
+                    }
+                  >
+                    <MobileField label="池状态">
+                      <StatusPill status={channel.status} />
+                    </MobileField>
+                    <MobileField label="价格">
+                      <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
+                    </MobileField>
+                    <MobileField label="上游状态">
+                      <StatusPill status={channel.providerStatus} />
+                    </MobileField>
+                    <MobileField label="优先级">{channel.priority}</MobileField>
+                    <MobileField label="连续失败">{channel.consecutiveFailures}</MobileField>
+                    <MobileField label="下次检测">{nextCheckCountdown(channel, healthCheck, nowMs)}</MobileField>
+                    <MobileField label="首字">{seconds(channel.lastFirstTokenLatencyMs)}</MobileField>
+                    <MobileField label="总耗时">{seconds(channel.lastLatencyMs)}</MobileField>
+                    <MobileField label="错误" wide>
+                      {channel.lastError ?? "-"}
+                    </MobileField>
+                  </MobileRecord>
+                ))}
+                {pool.channels.length === 0 ? <MobileEmpty>暂无上游渠道</MobileEmpty> : null}
+              </div>
+            </section>
             );
           })}
           {modelPools.length === 0 ? <div className="empty-cell">暂无模型池</div> : null}
@@ -2905,6 +3129,33 @@ function AdminRedeemCodes({
                 {filteredCodes.length === 0 ? <EmptyRow colSpan={8} /> : null}
               </tbody>
             </table>
+          </div>
+          <div className="mobile-record-list">
+            {filteredCodes.map((code) => (
+              <MobileRecord
+                key={code.id}
+                title={code.codePrefix}
+                meta={code.expiresAt ? `过期 ${dateTime(code.expiresAt)}` : "永不过期"}
+                badges={<StatusPill status={code.status} />}
+                actions={
+                  <button className="button secondary" onClick={() => toggleCode(code)} type="button">
+                    {code.status === "ACTIVE" ? "停用" : "启用"}
+                  </button>
+                }
+              >
+                <MobileField label="金额">${money(code.amount)}</MobileField>
+                <MobileField label="兑换">
+                  {code.redeemedCount}/{code.maxRedemptions}
+                </MobileField>
+                <MobileField label="最近兑换" wide>
+                  {code.redemptions?.[0]?.user.email ?? "-"}
+                </MobileField>
+                <MobileField label="备注" wide>
+                  {code.remark || "-"}
+                </MobileField>
+              </MobileRecord>
+            ))}
+            {filteredCodes.length === 0 ? <MobileEmpty>暂无兑换码</MobileEmpty> : null}
           </div>
         </section>
       </div>
@@ -3384,6 +3635,59 @@ function UpstreamProviders({
                       </tbody>
                     </table>
                   </div>
+                  <div className="mobile-record-list">
+                    {providerPrices.map((price) => (
+                      <MobileRecord
+                        key={price.id}
+                        title={price.model}
+                        meta={`上游渠道：${price.upstreamProvider}`}
+                        badges={<StatusPill status={price.enabled ? "ACTIVE" : "DISABLED"} />}
+                        actions={
+                          <>
+                            <button className="button secondary" onClick={() => editPrice(price)} type="button">
+                              编辑
+                            </button>
+                            <button className="button secondary" onClick={() => togglePrice(price)} type="button">
+                              {price.enabled ? "停用" : "启用"}
+                            </button>
+                            <button
+                              className="button danger"
+                              disabled={busyPriceId === price.id}
+                              onClick={() => deletePrice(price)}
+                              type="button"
+                            >
+                              删除
+                            </button>
+                          </>
+                        }
+                      >
+                        <MobileField label="上游原价" wide>
+                          {priceTriplet(
+                            price.upstreamInputPer1MTok,
+                            price.upstreamCachedInputPer1MTok,
+                            price.upstreamOutputPer1MTok,
+                          )}
+                        </MobileField>
+                        <MobileField label="上游实价" wide>
+                          x{price.upstreamPriceMultiplier}:{" "}
+                          {priceTriplet(
+                            multiplied(price.upstreamInputPer1MTok, price.upstreamPriceMultiplier),
+                            multiplied(price.upstreamCachedInputPer1MTok, price.upstreamPriceMultiplier),
+                            multiplied(price.upstreamOutputPer1MTok, price.upstreamPriceMultiplier),
+                          )}
+                        </MobileField>
+                        <MobileField label="站点售价" wide>
+                          x{price.customerPriceMultiplier}:{" "}
+                          {priceTriplet(
+                            multiplied(price.customerInputPer1MTok, price.customerPriceMultiplier),
+                            multiplied(price.customerCachedInputPer1MTok, price.customerPriceMultiplier),
+                            multiplied(price.customerOutputPer1MTok, price.customerPriceMultiplier),
+                          )}
+                        </MobileField>
+                      </MobileRecord>
+                    ))}
+                    {providerPrices.length === 0 ? <MobileEmpty>暂无模型价格</MobileEmpty> : null}
+                  </div>
                 </section>
               );
             })}
@@ -3631,6 +3935,55 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
     status === "UNAVAILABLE" ||
     status === "MISSING";
   return <span className={`pill ${ok ? "ok" : danger ? "warn" : ""} ${strong ? "strong" : ""}`}>{labelMap[status] ?? status}</span>;
+}
+
+function MobileRecord({
+  title,
+  meta,
+  badges,
+  children,
+  actions,
+}: {
+  title: ReactNode;
+  meta?: ReactNode;
+  badges?: ReactNode;
+  children: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <article className="mobile-record">
+      <div className="mobile-record-head">
+        <div className="mobile-record-title-block">
+          <strong className="mobile-record-title">{title}</strong>
+          {meta ? <p>{meta}</p> : null}
+        </div>
+        {badges ? <div className="mobile-record-badges">{badges}</div> : null}
+      </div>
+      <div className="mobile-field-grid">{children}</div>
+      {actions ? <div className="mobile-actions">{actions}</div> : null}
+    </article>
+  );
+}
+
+function MobileField({
+  label,
+  children,
+  wide = false,
+}: {
+  label: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <div className={wide ? "mobile-field wide" : "mobile-field"}>
+      <span>{label}</span>
+      <strong>{children}</strong>
+    </div>
+  );
+}
+
+function MobileEmpty({ children }: { children: ReactNode }) {
+  return <div className="mobile-empty">{children}</div>;
 }
 
 function EmptyRow({ colSpan }: { colSpan: number }) {
