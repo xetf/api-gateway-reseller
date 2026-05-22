@@ -7,7 +7,7 @@ import { sendApiError } from "../lib/errors.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
-import { buildUpstreamUrl, getDefaultProvider } from "../services/upstream.js";
+import { buildUpstreamUrl, getDefaultProvider, getProviderForModel } from "../services/upstream.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
 const proxiedEndpoints = new Set([
@@ -79,17 +79,18 @@ export async function proxyRoutes(app: FastifyInstance) {
       }
     }
 
-    const price = model
-      ? await prisma.modelPrice.findUnique({
-          where: { model },
-        })
-      : null;
+    const modelRoute = billable && model ? await getProviderForModel(model) : null;
+    const provider = modelRoute?.provider ?? await getDefaultProvider();
+    const price = modelRoute?.price ?? null;
 
     if (billable && (!price || !price.enabled)) {
-      return sendApiError(reply, 400, `Model ${model} is not enabled`);
+      return sendApiError(reply, 400, `Model ${model} is not enabled on any active upstream`);
     }
 
-    const provider = await getDefaultProvider();
+    if (!provider) {
+      return sendApiError(reply, 400, "No active upstream provider is configured");
+    }
+
     const start = performance.now();
 
     const apiRequest = await prisma.apiRequest.create({
@@ -129,19 +130,22 @@ export async function proxyRoutes(app: FastifyInstance) {
         },
       ).finally(() => clearTimeout(timeout));
 
-      const latencyMs = Math.round(performance.now() - start);
       await prisma.apiRequest.update({
         where: { id: apiRequest.id },
         data: {
           httpStatus: upstreamResponse.status,
-          latencyMs,
           upstreamRequestId: upstreamResponse.headers.get("x-request-id"),
         },
       });
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
-        await markRequestFailed(apiRequest, text.slice(0, 2000), upstreamResponse.status);
+        await markRequestFailed(
+          apiRequest,
+          text.slice(0, 2000),
+          upstreamResponse.status,
+          Math.round(performance.now() - start),
+        );
         reply.status(upstreamResponse.status);
         reply.header(
           "content-type",
@@ -182,6 +186,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           where: { id: apiRequest.id },
           data: {
             status: "SUCCESS",
+            latencyMs: Math.round(performance.now() - start),
           },
         });
 
@@ -196,6 +201,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         userId: user.id,
         price,
         usage,
+        startedAt: start,
       });
 
       reply.status(upstreamResponse.status);
@@ -203,7 +209,7 @@ export async function proxyRoutes(app: FastifyInstance) {
       return reply.send(responseBody);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upstream request failed";
-      await markRequestFailed(apiRequest, message, 502);
+      await markRequestFailed(apiRequest, message, 502, Math.round(performance.now() - start));
       return sendApiError(reply, 502, message, "upstream_error");
     }
     });
@@ -355,6 +361,7 @@ async function proxyStream(params: {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let pending = "";
+  let firstTokenLatencyMs: number | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -374,6 +381,9 @@ async function proxyStream(params: {
           if (value) {
             const text = decoder.decode(value, { stream: true });
             pending += text;
+            if (firstTokenLatencyMs === null && sseBufferHasOutputToken(pending)) {
+              firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+            }
             streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
             const lastEventBoundary = pending.lastIndexOf("\n\n");
             if (lastEventBoundary >= 0) {
@@ -386,6 +396,9 @@ async function proxyStream(params: {
         const trailing = decoder.decode();
         if (trailing) {
           pending += trailing;
+          if (firstTokenLatencyMs === null && sseBufferHasOutputToken(pending)) {
+            firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+          }
           streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
           controller.enqueue(encoder.encode(trailing));
         }
@@ -399,21 +412,20 @@ async function proxyStream(params: {
         };
 
         await chargeForRequest({
-          requestId: apiRequestId,
-          userId,
-          price,
-          usage,
-        });
+        requestId: apiRequestId,
+        userId,
+        price,
+        usage,
+        startedAt,
+      });
 
         await prisma.apiRequest.update({
           where: { id: apiRequestId },
-          data: {
-            latencyMs: Math.round(performance.now() - startedAt),
-          },
+          data: { firstTokenLatencyMs },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
-        await markRequestFailed({ id: apiRequestId }, message, 502);
+        await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
         controller.error(error);
         return;
       } finally {
@@ -438,6 +450,7 @@ async function proxyPassthroughStream(params: {
   startedAt: number;
 }) {
   const { reply, upstreamResponse, apiRequestId, startedAt } = params;
+  let firstTokenLatencyMs: number | null = null;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const reader = upstreamResponse.body?.getReader();
@@ -453,6 +466,7 @@ async function proxyPassthroughStream(params: {
             break;
           }
           if (value) {
+            firstTokenLatencyMs ??= Math.round(performance.now() - startedAt);
             controller.enqueue(value);
           }
         }
@@ -462,11 +476,12 @@ async function proxyPassthroughStream(params: {
           data: {
             status: "SUCCESS",
             latencyMs: Math.round(performance.now() - startedAt),
+            firstTokenLatencyMs,
           },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
-        await markRequestFailed({ id: apiRequestId }, message, 502);
+        await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
         controller.error(error);
         return;
       } finally {
@@ -485,10 +500,23 @@ async function proxyPassthroughStream(params: {
 }
 
 function parseUsageFromSseBuffer(buffer: string): Usage | null {
-  const events = buffer.split("\n\n");
   let found: Usage | null = null;
 
-  for (const event of events) {
+  for (const parsed of parseSseJsonPayloads(buffer)) {
+    found = usageFromStreamChunk(parsed) ?? found;
+  }
+
+  return found;
+}
+
+function sseBufferHasOutputToken(buffer: string) {
+  return parseSseJsonPayloads(buffer).some(streamChunkHasOutputToken);
+}
+
+function parseSseJsonPayloads(buffer: string) {
+  const payloads: unknown[] = [];
+
+  for (const event of buffer.split("\n\n")) {
     const dataLines = event
       .split("\n")
       .filter((line) => line.startsWith("data:"))
@@ -500,13 +528,62 @@ function parseUsageFromSseBuffer(buffer: string): Usage | null {
       }
 
       try {
-        const parsed = JSON.parse(data);
-        found = usageFromStreamChunk(parsed) ?? found;
+        payloads.push(JSON.parse(data));
       } catch {
         continue;
       }
     }
   }
 
-  return found;
+  return payloads;
+}
+
+function streamChunkHasOutputToken(chunk: unknown): boolean {
+  if (!chunk || typeof chunk !== "object") {
+    return false;
+  }
+
+  const event = chunk as Record<string, unknown>;
+
+  if (typeof event.delta === "string" && event.delta.length > 0) {
+    return true;
+  }
+
+  if (typeof event.text === "string" && event.text.length > 0) {
+    return true;
+  }
+
+  if (Array.isArray(event.choices)) {
+    return event.choices.some((choice) => {
+      if (!choice || typeof choice !== "object") {
+        return false;
+      }
+
+      const item = choice as Record<string, unknown>;
+      return textLikeValueHasContent(item.text) || textLikeValueHasContent(item.delta);
+    });
+  }
+
+  return textLikeValueHasContent(event.output);
+}
+
+function textLikeValueHasContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(textLikeValueHasContent);
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    textLikeValueHasContent(record.content) ||
+    textLikeValueHasContent(record.text) ||
+    textLikeValueHasContent(record.delta)
+  );
 }

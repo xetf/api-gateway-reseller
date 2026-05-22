@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { performance } from "node:perf_hooks";
 import { prisma, type ApiRequest, type ModelPrice } from "@gateway/db";
 import { calculateCharges } from "../lib/money.js";
 import type { Usage } from "../types.js";
@@ -26,8 +27,9 @@ export async function chargeForRequest(params: {
   userId: string;
   price: ModelPrice;
   usage: Usage;
+  startedAt?: number;
 }) {
-  const { requestId, userId, price, usage } = params;
+  const { requestId, userId, price, usage, startedAt } = params;
   const { upstreamCostUsd, chargedAmountUsd } = calculateCharges(price, usage);
 
   return prisma.$transaction(async (tx) => {
@@ -65,6 +67,7 @@ export async function chargeForRequest(params: {
         metadata: {
           inputTokens: usage.inputTokens,
           cachedInputTokens: usage.cachedInputTokens,
+          totalInputTokens: usage.inputTokens + usage.cachedInputTokens,
           outputTokens: usage.outputTokens,
           totalTokens: usage.totalTokens,
           upstreamCostUsd: upstreamCostUsd.toFixed(8),
@@ -78,8 +81,10 @@ export async function chargeForRequest(params: {
       data: {
         status: "SUCCESS",
         inputTokens: usage.inputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
         outputTokens: usage.outputTokens,
         totalTokens: usage.totalTokens,
+        latencyMs: startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
         upstreamCostUsd: upstreamCostUsd.toFixed(8),
         chargedAmountUsd: chargedAmountUsd.toFixed(8),
         responseUsage: usage.raw === undefined ? undefined : (usage.raw as object),
@@ -94,6 +99,7 @@ export async function markRequestFailed(
   request: Pick<ApiRequest, "id">,
   errorMessage: string,
   httpStatus?: number,
+  latencyMs?: number,
 ) {
   await prisma.apiRequest.update({
     where: { id: request.id },
@@ -101,6 +107,7 @@ export async function markRequestFailed(
       status: "FAILED",
       errorMessage,
       httpStatus,
+      latencyMs,
     },
   });
 }

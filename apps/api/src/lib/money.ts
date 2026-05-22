@@ -10,16 +10,12 @@ export function toDecimal(value: Decimal.Value) {
 
 export function calculateCharges(price: ModelPrice, usage: Usage) {
   const inputTokens = new Decimal(usage.inputTokens);
-  const cachedInputTokens = Decimal.min(
-    new Decimal(usage.cachedInputTokens),
-    inputTokens,
-  );
-  const regularInputTokens = inputTokens.minus(cachedInputTokens);
+  const cachedInputTokens = new Decimal(usage.cachedInputTokens);
   const outputTokens = new Decimal(usage.outputTokens);
   const upstreamMultiplier = new Decimal(price.upstreamPriceMultiplier.toString());
   const customerMultiplier = new Decimal(price.customerPriceMultiplier.toString());
 
-  const upstreamInput = regularInputTokens
+  const upstreamInput = inputTokens
     .div(ONE_MILLION)
     .mul(price.upstreamInputPer1MTok.toString())
     .mul(upstreamMultiplier);
@@ -31,7 +27,7 @@ export function calculateCharges(price: ModelPrice, usage: Usage) {
     .div(ONE_MILLION)
     .mul(price.upstreamOutputPer1MTok.toString())
     .mul(upstreamMultiplier);
-  const customerInput = regularInputTokens
+  const customerInput = inputTokens
     .div(ONE_MILLION)
     .mul(price.customerInputPer1MTok.toString())
     .mul(customerMultiplier);

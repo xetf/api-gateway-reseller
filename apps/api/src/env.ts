@@ -4,10 +4,11 @@ const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
   API_HOST: z.string().default("0.0.0.0"),
   API_PORT: z.coerce.number().default(4100),
+  CORS_ORIGINS: z.string().default("http://127.0.0.1:4101,http://localhost:4101"),
   JWT_SECRET: z.string().min(16),
   REDIS_URL: z.string().default("redis://127.0.0.1:6379"),
   UPSTREAM_BASE_URL: z.string().url().default("https://api.openai.com"),
-  UPSTREAM_API_KEY: z.string().min(1),
+  UPSTREAM_API_KEY: z.string().default(""),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().default(120000),
   DEFAULT_CURRENCY: z.string().default("USD"),
 });

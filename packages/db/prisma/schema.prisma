@@ -129,11 +129,13 @@ model ApiRequest {
   status            ApiRequestStatus @default(PENDING)
   httpStatus        Int?
   inputTokens       Int              @default(0)
+  cachedInputTokens Int              @default(0)
   outputTokens      Int              @default(0)
   totalTokens       Int              @default(0)
   upstreamCostUsd   Decimal          @default(0) @db.Decimal(18, 8)
   chargedAmountUsd  Decimal          @default(0) @db.Decimal(18, 8)
   latencyMs         Int?
+  firstTokenLatencyMs Int?
   errorMessage      String?
   upstreamRequestId String?
   clientIp          String?
@@ -155,7 +157,7 @@ model ApiRequest {
 
 model ModelPrice {
   id                      String   @id @default(cuid())
-  model                   String   @unique
+  model                   String
   upstreamProvider        String   @default("default")
   currency                String   @default("USD")
   upstreamInputPer1MTok   Decimal  @db.Decimal(18, 8)
@@ -172,6 +174,49 @@ model ModelPrice {
   updatedAt               DateTime @updatedAt
 
   @@index([enabled])
+  @@index([upstreamProvider, enabled])
+  @@unique([upstreamProvider, model])
+}
+
+model ModelPool {
+  id        String             @id @default(cuid())
+  model     String             @unique
+  status    String             @default("ACTIVE")
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @default(now()) @updatedAt
+
+  channels ModelPoolChannel[]
+
+  @@index([status])
+}
+
+model ModelPoolChannel {
+  id                  String    @id @default(cuid())
+  modelPoolId         String
+  upstreamProvider    String
+  status              String    @default("ACTIVE")
+  priority            Int       @default(100)
+  consecutiveFailures Int       @default(0)
+  lastCheckStatus     String?
+  lastCheckedAt       DateTime?
+  lastLatencyMs       Int?
+  lastFirstTokenLatencyMs Int?
+  lastError           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+
+  modelPool ModelPool @relation(fields: [modelPoolId], references: [id], onDelete: Cascade)
+
+  @@unique([modelPoolId, upstreamProvider])
+  @@index([upstreamProvider, status])
+  @@index([status, priority])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model UpstreamProvider {

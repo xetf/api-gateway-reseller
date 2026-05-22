@@ -1,8 +1,10 @@
+const projectRoot = process.env.PROJECT_ROOT || __dirname;
+
 module.exports = {
   apps: [
     {
       name: "api-gateway-api",
-      cwd: "/www/wwwroot/api-gateway-reseller",
+      cwd: projectRoot,
       script: "npm",
       args: "run start --workspace apps/api",
       env: {
@@ -11,7 +13,7 @@ module.exports = {
     },
     {
       name: "api-gateway-web",
-      cwd: "/www/wwwroot/api-gateway-reseller",
+      cwd: projectRoot,
       script: "npm",
       args: "run start --workspace apps/web",
       env: {

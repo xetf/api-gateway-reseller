@@ -16,16 +16,22 @@ type UsageLike = {
 
 export function normalizeUsage(raw: unknown): Usage {
   const usage = (raw ?? {}) as UsageLike;
-  const inputTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+  const totalInputTokens = usage.prompt_tokens ?? usage.input_tokens ?? 0;
   const cachedInputTokens =
-    usage.prompt_tokens_details?.cached_tokens ??
-    usage.input_tokens_details?.cached_tokens ??
-    0;
+    totalInputTokens > 0
+      ? Math.min(
+          usage.prompt_tokens_details?.cached_tokens ??
+            usage.input_tokens_details?.cached_tokens ??
+            0,
+          totalInputTokens,
+        )
+      : 0;
+  const inputTokens = Math.max(totalInputTokens - cachedInputTokens, 0);
   const outputTokens = usage.completion_tokens ?? usage.output_tokens ?? 0;
   const totalTokens =
     usage.total_tokens && usage.total_tokens > 0
       ? usage.total_tokens
-      : inputTokens + outputTokens;
+      : inputTokens + cachedInputTokens + outputTokens;
 
   return {
     inputTokens,

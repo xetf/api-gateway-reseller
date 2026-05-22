@@ -5,6 +5,17 @@ import { prisma } from "@gateway/db";
 import { z } from "zod";
 import { createRedeemCode } from "../lib/crypto.js";
 import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
+import {
+  checkModelPoolChannel,
+  getModelPoolChannelHealthTiming,
+  getModelPoolHealthCheckIntervalSeconds,
+  maxModelPoolHealthCheckIntervalSeconds,
+  minModelPoolHealthCheckIntervalSeconds,
+  setModelPoolHealthCheckIntervalSeconds,
+} from "../services/model-pool-health.js";
+
+const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
+const channelStatusSchema = z.enum(["ACTIVE", "FORCED_ACTIVE", "DISABLED", "UNAVAILABLE"]);
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
@@ -352,17 +363,20 @@ export async function adminRoutes(app: FastifyInstance) {
       take: query.take,
       select: {
         id: true,
+        upstreamProvider: true,
         model: true,
         endpoint: true,
         method: true,
         status: true,
         httpStatus: true,
         inputTokens: true,
+        cachedInputTokens: true,
         outputTokens: true,
         totalTokens: true,
         chargedAmountUsd: true,
         upstreamCostUsd: true,
         latencyMs: true,
+        firstTokenLatencyMs: true,
         errorMessage: true,
         createdAt: true,
         user: {
@@ -466,16 +480,291 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/model-prices", async () => {
     const modelPrices = await prisma.modelPrice.findMany({
-      orderBy: { model: "asc" },
+      orderBy: [{ upstreamProvider: "asc" }, { model: "asc" }],
     });
     return { modelPrices };
+  });
+
+  app.get("/admin/model-pools", async () => {
+    const serverNow = new Date();
+    const healthCheckIntervalSeconds = await getModelPoolHealthCheckIntervalSeconds();
+    const [pools, prices, providers] = await Promise.all([
+      prisma.modelPool.findMany({
+        orderBy: { model: "asc" },
+        include: {
+          channels: {
+            orderBy: [{ upstreamProvider: "asc" }],
+          },
+        },
+      }),
+      prisma.modelPrice.findMany({
+        orderBy: [{ model: "asc" }, { upstreamProvider: "asc" }],
+      }),
+      prisma.upstreamProvider.findMany({
+        orderBy: [{ priority: "asc" }, { name: "asc" }],
+        select: {
+          name: true,
+          status: true,
+          priority: true,
+        },
+      }),
+    ]);
+    const priceMap = new Map(prices.map((price) => [`${price.upstreamProvider}:${price.model}`, price]));
+    const providerMap = new Map(providers.map((provider) => [provider.name, provider]));
+    const availablePrices = prices.filter(
+      (price) =>
+        providerMap.has(price.upstreamProvider) &&
+        price.upstreamProvider.trim().toLowerCase() !== "default",
+    );
+
+    return {
+      modelPools: pools.map((pool) => {
+        const channels = pool.channels.map((channel) => {
+          const price = priceMap.get(`${channel.upstreamProvider}:${pool.model}`);
+          const provider = providerMap.get(channel.upstreamProvider);
+          const healthTiming = getModelPoolChannelHealthTiming(channel, healthCheckIntervalSeconds, serverNow);
+          return {
+            ...channel,
+            hasPrice: Boolean(price),
+            priceEnabled: price?.enabled ?? false,
+            providerStatus: provider?.status ?? "MISSING",
+            providerPriority: provider?.priority ?? null,
+            ...healthTiming,
+            effectiveStatus:
+              pool.status === "ACTIVE" &&
+              callableChannelStatuses.has(channel.status) &&
+              provider?.status === "ACTIVE" &&
+              price?.enabled
+                ? channel.status === "FORCED_ACTIVE"
+                  ? "FORCED_READY"
+                  : "READY"
+                : "UNAVAILABLE",
+          };
+        }).sort(compareModelPoolChannelsForAdmin);
+
+        return {
+          ...pool,
+          channels,
+          readyChannelCount: channels.filter((channel) => channel.effectiveStatus !== "UNAVAILABLE").length,
+          pricedChannelCount: availablePrices.filter((price) => price.model === pool.model).length,
+        };
+      }),
+      availableChannels: availablePrices.map((price) => ({
+        id: price.id,
+        model: price.model,
+        upstreamProvider: price.upstreamProvider,
+        priceEnabled: price.enabled,
+        providerStatus: providerMap.get(price.upstreamProvider)?.status ?? "MISSING",
+      })),
+      healthCheck: {
+        intervalSeconds: healthCheckIntervalSeconds,
+        minIntervalSeconds: minModelPoolHealthCheckIntervalSeconds,
+        maxIntervalSeconds: maxModelPoolHealthCheckIntervalSeconds,
+        serverNow: serverNow.toISOString(),
+      },
+    };
+  });
+
+  app.patch("/admin/model-pools/health-check", async (request) => {
+    const body = z
+      .object({
+        intervalSeconds: z
+          .number()
+          .int()
+          .min(minModelPoolHealthCheckIntervalSeconds)
+          .max(maxModelPoolHealthCheckIntervalSeconds),
+      })
+      .parse(request.body);
+    const intervalSeconds = await setModelPoolHealthCheckIntervalSeconds(body.intervalSeconds);
+
+    return {
+      healthCheck: {
+        intervalSeconds,
+        minIntervalSeconds: minModelPoolHealthCheckIntervalSeconds,
+        maxIntervalSeconds: maxModelPoolHealthCheckIntervalSeconds,
+        serverNow: new Date().toISOString(),
+      },
+    };
+  });
+
+  app.post("/admin/model-pools", async (request, reply) => {
+    const body = z
+      .object({
+        model: z.string().min(1).max(120),
+        status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
+      })
+      .parse(request.body);
+    const providers = await prisma.upstreamProvider.findMany({
+      select: { name: true },
+    });
+    const priceCount = await prisma.modelPrice.count({
+      where: {
+        model: body.model,
+        upstreamProvider: { in: providers.map((provider) => provider.name) },
+      },
+    });
+
+    if (priceCount === 0) {
+      return reply.status(400).send({ message: "Model must have upstream pricing before it can be added to the pool" });
+    }
+
+    const pool = await prisma.modelPool.upsert({
+      where: { model: body.model },
+      update: { status: body.status },
+      create: body,
+    });
+
+    return { modelPool: pool };
+  });
+
+  app.patch("/admin/model-pools/:id", async (request) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+      })
+      .parse(request.body);
+    const modelPool = await prisma.modelPool.update({
+      where: { id: params.id },
+      data: body,
+    });
+
+    return { modelPool };
+  });
+
+  app.delete("/admin/model-pools/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const modelPool = await prisma.modelPool.findUnique({
+      where: { id: params.id },
+      select: { id: true, model: true },
+    });
+
+    if (!modelPool) {
+      return reply.status(404).send({ message: "Model pool not found" });
+    }
+
+    await prisma.modelPool.delete({
+      where: { id: params.id },
+    });
+
+    return { ok: true, modelPool };
+  });
+
+  app.post("/admin/model-pools/:id/channels", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        upstreamProvider: z.string().min(1).max(80),
+        status: channelStatusSchema.default("ACTIVE"),
+      })
+      .parse(request.body);
+    const pool = await prisma.modelPool.findUnique({
+      where: { id: params.id },
+    });
+
+    if (!pool) {
+      return reply.status(404).send({ message: "Model pool not found" });
+    }
+
+    if (body.upstreamProvider.trim().toLowerCase() === "default") {
+      return reply.status(400).send({ message: "Default upstream cannot be added to the model pool" });
+    }
+
+    const [provider, price] = await Promise.all([
+      prisma.upstreamProvider.findUnique({
+        where: { name: body.upstreamProvider },
+      }),
+      prisma.modelPrice.findUnique({
+        where: {
+          upstreamProvider_model: {
+            upstreamProvider: body.upstreamProvider,
+            model: pool.model,
+          },
+        },
+      }),
+    ]);
+
+    if (!provider) {
+      return reply.status(400).send({ message: "Upstream provider must exist before it can be added to the model pool" });
+    }
+
+    if (!price) {
+      return reply.status(400).send({ message: "Only priced upstream channels can be added to the model pool" });
+    }
+
+    const channel = await prisma.modelPoolChannel.upsert({
+      where: {
+        modelPoolId_upstreamProvider: {
+          modelPoolId: pool.id,
+          upstreamProvider: body.upstreamProvider,
+        },
+      },
+      update: {
+        status: body.status,
+      },
+      create: {
+        modelPoolId: pool.id,
+        upstreamProvider: body.upstreamProvider,
+        status: body.status,
+      },
+    });
+
+    return { channel };
+  });
+
+  app.patch("/admin/model-pool-channels/:id", async (request) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        status: channelStatusSchema.optional(),
+        priority: z.number().int().min(1).max(10000).optional(),
+      })
+      .parse(request.body);
+    const channel = await prisma.modelPoolChannel.update({
+      where: { id: params.id },
+      data: {
+        ...body,
+        ...(body.status === "ACTIVE" ? { consecutiveFailures: 0 } : {}),
+      },
+    });
+
+    return { channel };
+  });
+
+  app.delete("/admin/model-pool-channels/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const channel = await prisma.modelPoolChannel.findUnique({
+      where: { id: params.id },
+      select: { id: true },
+    });
+
+    if (!channel) {
+      return reply.status(404).send({ message: "Model pool channel not found" });
+    }
+
+    await prisma.modelPoolChannel.delete({
+      where: { id: params.id },
+    });
+
+    return { ok: true };
+  });
+
+  app.post("/admin/model-pool-channels/:id/check", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const result = await checkModelPoolChannel(params.id);
+
+    if (!result) {
+      return reply.status(404).send({ message: "Model pool channel not found" });
+    }
+
+    return { result };
   });
 
   app.post("/admin/model-prices", async (request) => {
     const body = z
       .object({
         model: z.string().min(1).max(120),
-        upstreamProvider: z.string().default("default"),
+        upstreamProvider: z.string().min(1).max(80).default("default"),
         currency: z.string().default("USD"),
         upstreamInputPer1MTok: z.string().or(z.number()),
         upstreamOutputPer1MTok: z.string().or(z.number()),
@@ -491,7 +780,12 @@ export async function adminRoutes(app: FastifyInstance) {
       .parse(request.body);
 
     const modelPrice = await prisma.modelPrice.upsert({
-      where: { model: body.model },
+      where: {
+        upstreamProvider_model: {
+          upstreamProvider: body.upstreamProvider,
+          model: body.model,
+        },
+      },
       update: {
         upstreamProvider: body.upstreamProvider,
         currency: body.currency,
@@ -530,6 +824,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z
       .object({
+        model: z.string().min(1).max(120).optional(),
+        upstreamProvider: z.string().min(1).max(80).optional(),
+        currency: z.string().optional(),
         upstreamInputPer1MTok: z.string().or(z.number()).optional(),
         upstreamOutputPer1MTok: z.string().or(z.number()).optional(),
         upstreamCachedInputPer1MTok: z.string().or(z.number()).optional(),
@@ -556,6 +853,38 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     return { modelPrice };
+  });
+
+  app.delete("/admin/model-prices/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const modelPrice = await prisma.modelPrice.findUnique({
+      where: { id: params.id },
+      select: { id: true, model: true, upstreamProvider: true },
+    });
+
+    if (!modelPrice) {
+      return reply.status(404).send({ message: "Model price not found" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const pools = await tx.modelPool.findMany({
+        where: { model: modelPrice.model },
+        select: { id: true },
+      });
+
+      await tx.modelPoolChannel.deleteMany({
+        where: {
+          modelPoolId: { in: pools.map((pool) => pool.id) },
+          upstreamProvider: modelPrice.upstreamProvider,
+        },
+      });
+
+      await tx.modelPrice.delete({
+        where: { id: params.id },
+      });
+    });
+
+    return { ok: true };
   });
 
   app.get("/admin/upstream-providers", async () => {
@@ -598,7 +927,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return { provider: maskProviderKey(provider) };
   });
 
-  app.patch("/admin/upstream-providers/:id", async (request) => {
+  app.patch("/admin/upstream-providers/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z
       .object({
@@ -623,9 +952,39 @@ export async function adminRoutes(app: FastifyInstance) {
       delete data.apiKey;
     }
 
-    const provider = await prisma.upstreamProvider.update({
+    const existingProvider = await prisma.upstreamProvider.findUnique({
       where: { id: params.id },
-      data,
+      select: { name: true },
+    });
+
+    if (!existingProvider) {
+      return reply.status(404).send({ message: "Upstream provider not found" });
+    }
+
+    const provider = await prisma.$transaction(async (tx) => {
+      const updatedProvider = await tx.upstreamProvider.update({
+        where: { id: params.id },
+        data,
+      });
+
+      if (body.name && body.name !== existingProvider.name) {
+        await tx.modelPrice.deleteMany({
+          where: { upstreamProvider: body.name },
+        });
+        await tx.modelPoolChannel.deleteMany({
+          where: { upstreamProvider: body.name },
+        });
+        await tx.modelPrice.updateMany({
+          where: { upstreamProvider: existingProvider.name },
+          data: { upstreamProvider: body.name },
+        });
+        await tx.modelPoolChannel.updateMany({
+          where: { upstreamProvider: existingProvider.name },
+          data: { upstreamProvider: body.name },
+        });
+      }
+
+      return updatedProvider;
     });
 
     return { provider: maskProviderKey(provider) };
@@ -642,9 +1001,17 @@ export async function adminRoutes(app: FastifyInstance) {
       return reply.status(404).send({ message: "Upstream provider not found" });
     }
 
-    await prisma.upstreamProvider.delete({
-      where: { id: params.id },
-    });
+    await prisma.$transaction([
+      prisma.modelPoolChannel.deleteMany({
+        where: { upstreamProvider: provider.name },
+      }),
+      prisma.modelPrice.deleteMany({
+        where: { upstreamProvider: provider.name },
+      }),
+      prisma.upstreamProvider.delete({
+        where: { id: params.id },
+      }),
+    ]);
 
     return { ok: true, provider: maskProviderKey(provider) };
   });
@@ -658,6 +1025,41 @@ function maskProviderKey<T extends { apiKey: string }>(provider: T) {
     ...provider,
     apiKey: `${visibleStart}...${visibleEnd}`,
   };
+}
+
+function compareModelPoolChannelsForAdmin(
+  left: {
+    effectiveStatus: string;
+    lastFirstTokenLatencyMs: number | null;
+    lastLatencyMs: number | null;
+    priority: number;
+    upstreamProvider: string;
+  },
+  right: {
+    effectiveStatus: string;
+    lastFirstTokenLatencyMs: number | null;
+    lastLatencyMs: number | null;
+    priority: number;
+    upstreamProvider: string;
+  },
+) {
+  return (
+    modelPoolChannelAvailabilityRank(left.effectiveStatus) -
+      modelPoolChannelAvailabilityRank(right.effectiveStatus) ||
+    nullableNumberRank(left.lastFirstTokenLatencyMs) -
+      nullableNumberRank(right.lastFirstTokenLatencyMs) ||
+    nullableNumberRank(left.lastLatencyMs) - nullableNumberRank(right.lastLatencyMs) ||
+    left.priority - right.priority ||
+    left.upstreamProvider.localeCompare(right.upstreamProvider)
+  );
+}
+
+function modelPoolChannelAvailabilityRank(status: string) {
+  return status === "UNAVAILABLE" ? 1 : 0;
+}
+
+function nullableNumberRank(value: number | null | undefined) {
+  return value ?? Number.MAX_SAFE_INTEGER;
 }
 
 function isUniqueConstraintError(error: unknown) {

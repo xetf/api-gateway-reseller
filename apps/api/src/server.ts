@@ -12,6 +12,7 @@ import { usageRoutes } from "./routes/usage.js";
 import { redeemCodeRoutes } from "./routes/redeem-codes.js";
 import { proxyRoutes } from "./routes/proxy.js";
 import { adminRoutes } from "./routes/admin.js";
+import { startModelPoolHealthScheduler } from "./services/model-pool-health.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -40,11 +41,25 @@ const app = Fastify({
   },
   bodyLimit: 20 * 1024 * 1024,
 });
+let stopModelPoolHealthScheduler: (() => void) | undefined;
 
 app.decorate("redis", redis);
 
+const allowedOrigins = new Set(
+  env.CORS_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+
 await app.register(cors, {
-  origin: true,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error("Origin not allowed"), false);
+  },
   credentials: true,
   methods: ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type"],
@@ -95,6 +110,10 @@ await app.register(redeemCodeRoutes);
 await app.register(proxyRoutes);
 await app.register(adminRoutes);
 
+app.addHook("onClose", async () => {
+  stopModelPoolHealthScheduler?.();
+});
+
 async function start() {
   try {
     await redis.connect().catch((error: unknown) => {
@@ -104,6 +123,7 @@ async function start() {
       host: env.API_HOST,
       port: env.API_PORT,
     });
+    stopModelPoolHealthScheduler = startModelPoolHealthScheduler(app.log);
   } catch (error) {
     app.log.error(error);
     process.exit(1);

@@ -3,8 +3,9 @@ import { prisma } from "../src/index.js";
 
 const adminUsername = process.env.ADMIN_USERNAME ?? "admin";
 const adminEmail = process.env.ADMIN_EMAIL ?? "admin@example.com";
-const adminPassword = process.env.ADMIN_PASSWORD ?? "ayh20080407";
+const adminPassword = process.env.ADMIN_PASSWORD ?? "change-this-admin-password";
 const currency = process.env.DEFAULT_CURRENCY ?? "USD";
+const healthCheckIntervalSeconds = process.env.MODEL_POOL_HEALTH_INTERVAL_SECONDS ?? "30";
 
 async function main() {
   const passwordHash = await bcrypt.hash(adminPassword, 12);
@@ -29,97 +30,28 @@ async function main() {
 
   await prisma.wallet.upsert({
     where: { userId: admin.id },
-    update: {},
+    update: {
+      currency,
+    },
     create: {
       userId: admin.id,
-      balance: "100.00000000",
+      balance: "0.00000000",
       currency,
     },
   });
 
-  await prisma.upstreamProvider.upsert({
-    where: { name: "default" },
+  await prisma.systemSetting.upsert({
+    where: { key: "model_pool_health_interval_seconds" },
     update: {
-      baseUrl: process.env.UPSTREAM_BASE_URL ?? "https://api.openai.com",
-      apiKey: process.env.UPSTREAM_API_KEY ?? "sk-upstream-key",
-      timeoutMs: Number(process.env.UPSTREAM_TIMEOUT_MS ?? 120000),
-      status: "ACTIVE",
+      value: healthCheckIntervalSeconds,
     },
     create: {
-      name: "default",
-      baseUrl: process.env.UPSTREAM_BASE_URL ?? "https://api.openai.com",
-      apiKey: process.env.UPSTREAM_API_KEY ?? "sk-upstream-key",
-      timeoutMs: Number(process.env.UPSTREAM_TIMEOUT_MS ?? 120000),
-      status: "ACTIVE",
+      key: "model_pool_health_interval_seconds",
+      value: healthCheckIntervalSeconds,
     },
   });
 
-  const prices = [
-    {
-      model: "gpt-5.5",
-      upstreamInputPer1MTok: "5.00000000",
-      upstreamCachedInputPer1MTok: "0.50000000",
-      upstreamOutputPer1MTok: "30.00000000",
-      upstreamPriceMultiplier: "0.06000000",
-      customerInputPer1MTok: "5.00000000",
-      customerCachedInputPer1MTok: "0.50000000",
-      customerOutputPer1MTok: "30.00000000",
-      customerPriceMultiplier: "0.12000000",
-    },
-    {
-      model: "gpt-4o-mini",
-      upstreamInputPer1MTok: "0.15000000",
-      upstreamCachedInputPer1MTok: "0.00000000",
-      upstreamOutputPer1MTok: "0.60000000",
-      upstreamPriceMultiplier: "1.00000000",
-      customerInputPer1MTok: "0.30000000",
-      customerCachedInputPer1MTok: "0.00000000",
-      customerOutputPer1MTok: "1.20000000",
-      customerPriceMultiplier: "1.00000000",
-    },
-    {
-      model: "gpt-4o",
-      upstreamInputPer1MTok: "2.50000000",
-      upstreamCachedInputPer1MTok: "0.00000000",
-      upstreamOutputPer1MTok: "10.00000000",
-      upstreamPriceMultiplier: "1.00000000",
-      customerInputPer1MTok: "3.50000000",
-      customerCachedInputPer1MTok: "0.00000000",
-      customerOutputPer1MTok: "14.00000000",
-      customerPriceMultiplier: "1.00000000",
-    },
-    {
-      model: "text-embedding-3-small",
-      upstreamInputPer1MTok: "0.02000000",
-      upstreamCachedInputPer1MTok: "0.00000000",
-      upstreamOutputPer1MTok: "0.00000000",
-      upstreamPriceMultiplier: "1.00000000",
-      customerInputPer1MTok: "0.05000000",
-      customerCachedInputPer1MTok: "0.00000000",
-      customerOutputPer1MTok: "0.00000000",
-      customerPriceMultiplier: "1.00000000",
-    },
-  ];
-
-  for (const price of prices) {
-    await prisma.modelPrice.upsert({
-      where: { model: price.model },
-      update: {
-        ...price,
-        currency,
-        upstreamProvider: "default",
-        enabled: true,
-      },
-      create: {
-        ...price,
-        currency,
-        upstreamProvider: "default",
-        enabled: true,
-      },
-    });
-  }
-
-  console.log(`Seeded admin ${adminUsername} with wallet balance.`);
+  console.log(`Seeded blank deployment admin ${adminUsername}.`);
 }
 
 main()

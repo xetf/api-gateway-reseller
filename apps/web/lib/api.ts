@@ -10,7 +10,8 @@ function resolveApiBaseUrl() {
   if (typeof window !== "undefined") {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
-    return `${protocol}//${hostname}:4100`;
+    const port = configured ? new URL(configured).port || "4100" : "4100";
+    return `${protocol}//${hostname}:${port}`;
   }
 
   return "http://127.0.0.1:4100";

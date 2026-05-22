@@ -11,7 +11,23 @@
 - token 用量、上游成本、客户扣费记录
 - 用户后台与管理员后台
 
-## 快速启动
+## 一键部署空白版
+
+在新服务器上：
+
+```bash
+git clone <your-repository-url>
+cd api-gateway-reseller
+bash deploy.sh
+```
+
+脚本会创建 `.env`、启动 Postgres/Redis、安装依赖、执行数据库迁移、初始化空白管理员账号、构建项目并用 PM2 启动。
+
+初始化只会创建管理员账号、管理员 0 余额钱包和必要系统设置，不会创建上游、价格、模型池、用户数据或调用记录。
+
+更详细的生产部署说明见 [DEPLOY.md](./DEPLOY.md)。
+
+## 本地开发
 
 ```bash
 cp .env.example .env
@@ -65,6 +81,10 @@ curl http://127.0.0.1:4100/v1/chat/completions \
   }'
 ```
 
+## GitHub 发布提醒
+
+如果你是从已有生产服务器整理代码，请只上传这个发布包目录里的内容。不要上传外层生产目录、`.env`、数据库备份、`node_modules`、`dist`、`.next` 或任何真实 API Key。
+
 ## 生产部署提醒
 
 - 修改 `.env` 里的 `JWT_SECRET`、`ADMIN_PASSWORD`、数据库密码和上游 API Key。
@@ -72,4 +92,4 @@ curl http://127.0.0.1:4100/v1/chat/completions \
 - 钱包扣费使用账本流水，余额更新和流水写入在同一个数据库事务内。
 - 金额字段用 `Decimal`/PostgreSQL `numeric`，不要改成浮点数。
 - 本地开发默认使用 Docker Postgres `127.0.0.1:55432` 和机器已有 Redis `127.0.0.1:6379`。
-- 如果要使用 compose 里的 Redis，运行 `docker compose up -d redis`，并把 `.env` 的 `REDIS_URL` 改为 `redis://127.0.0.1:56379`。
+- Compose 里的 Redis 默认映射到 `127.0.0.1:56379`，避免和服务器已有 Redis 冲突。

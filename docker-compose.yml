@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: gateway
-      POSTGRES_PASSWORD: gateway_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateway_password}
       POSTGRES_DB: api_gateway
     ports:
       - "55432:5432"
