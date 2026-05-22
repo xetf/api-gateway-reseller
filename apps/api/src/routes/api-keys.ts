@@ -88,4 +88,27 @@ export async function apiKeyRoutes(app: FastifyInstance) {
 
     return { apiKey };
   });
+
+  app.delete("/api-keys/:id", { preHandler: requireUser }, async (request, reply) => {
+    const user = request.user as { sub: string };
+    const params = z.object({ id: z.string() }).parse(request.params);
+
+    const apiKey = await prisma.apiKey.findFirst({
+      where: {
+        id: params.id,
+        userId: user.sub,
+      },
+      select: { id: true, keyPrefix: true, keySecret: true, name: true },
+    });
+
+    if (!apiKey) {
+      return reply.status(404).send({ message: "API key not found" });
+    }
+
+    await prisma.apiKey.delete({
+      where: { id: params.id },
+    });
+
+    return { ok: true, apiKey };
+  });
 }

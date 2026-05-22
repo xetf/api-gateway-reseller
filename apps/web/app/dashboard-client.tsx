@@ -872,7 +872,7 @@ function AvailableModelsPanel({ models }: { models: AvailableModel[] }) {
         <div className="chip-row">
           {models.map((item) => (
             <span className="chip info-chip" key={item.model}>
-              {item.model} · {item.readyChannelCount} 个上游
+              {item.model}
             </span>
           ))}
         </div>
@@ -971,6 +971,26 @@ function Keys({
     }
   }
 
+  async function deleteKey(key: ApiKey) {
+    const confirmed = window.confirm(`确定删除 API Key「${key.name}」吗？删除后将无法继续使用。`);
+    if (!confirmed) {
+      return;
+    }
+
+    onError(null);
+    setBusyKeyId(key.id);
+    try {
+      await apiFetch(`/api-keys/${key.id}`, {
+        method: "DELETE",
+      });
+      onChanged();
+    } catch (deleteError) {
+      onError(errorToText(deleteError));
+    } finally {
+      setBusyKeyId(null);
+    }
+  }
+
   return (
     <>
       <div className="grid cols-2">
@@ -1040,32 +1060,13 @@ function Keys({
                         >
                           使用 / 配置
                         </button>
-                        {key.status === "ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : (
-                          <button
-                            className="button"
-                            disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                            onClick={() => updateKeyStatus(key, "ACTIVE")}
-                            type="button"
-                          >
-                            启用
-                          </button>
-                        )}
                         <button
                           className="button danger"
-                          disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                          onClick={() => updateKeyStatus(key, "REVOKED")}
+                          disabled={busyKeyId === key.id}
+                          onClick={() => deleteKey(key)}
                           type="button"
                         >
-                          吊销
+                          删除
                         </button>
                       </div>
                     </td>
@@ -1092,32 +1093,13 @@ function Keys({
                     >
                       使用 / 配置
                     </button>
-                    {key.status === "ACTIVE" ? (
-                      <button
-                        className="button secondary"
-                        disabled={busyKeyId === key.id}
-                        onClick={() => updateKeyStatus(key, "DISABLED")}
-                        type="button"
-                      >
-                        停用
-                      </button>
-                    ) : (
-                      <button
-                        className="button"
-                        disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                        onClick={() => updateKeyStatus(key, "ACTIVE")}
-                        type="button"
-                      >
-                        启用
-                      </button>
-                    )}
                     <button
                       className="button danger"
-                      disabled={busyKeyId === key.id || key.status === "REVOKED"}
-                      onClick={() => updateKeyStatus(key, "REVOKED")}
+                      disabled={busyKeyId === key.id}
+                      onClick={() => deleteKey(key)}
                       type="button"
                     >
-                      吊销
+                      删除
                     </button>
                   </>
                 }
