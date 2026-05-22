@@ -22,19 +22,6 @@ const inFlightChannelChecks = new Map<
     promise: Promise<ModelPoolChannel | null>;
   }
 >();
-const visibleCheckCooldowns = new Map<
-  string,
-  {
-    resultCheckedAtMs: number;
-    startedAtMs: number;
-  }
->();
-const pendingVisibleCheckCooldowns = new Map<
-  string,
-  {
-    resultCheckedAtMs: number;
-  }
->();
 let cachedHealthCheckIntervalSeconds = defaultModelPoolHealthCheckIntervalSeconds;
 let cachedHealthCheckIntervalLoadedAtMs = 0;
 const healthCheckIntervalCacheTtlMs = 5_000;
@@ -70,8 +57,6 @@ export async function setModelPoolHealthCheckIntervalSeconds(value: number) {
 
   cachedHealthCheckIntervalSeconds = intervalSeconds;
   cachedHealthCheckIntervalLoadedAtMs = Date.now();
-  visibleCheckCooldowns.clear();
-  pendingVisibleCheckCooldowns.clear();
 
   return intervalSeconds;
 }
@@ -100,8 +85,6 @@ export function getModelPoolChannelHealthTiming(
   const checkIntervalMs = checkIntervalSeconds * 1000;
 
   if (!checkedChannelStatusSet.has(channel.status)) {
-    visibleCheckCooldowns.delete(channel.id);
-    pendingVisibleCheckCooldowns.delete(channel.id);
     return {
       isChecking,
       checkingStartedAt: inFlightCheck?.startedAt.toISOString() ?? null,
@@ -135,22 +118,7 @@ export function getModelPoolChannelHealthTiming(
   }
 
   const nowMs = now.getTime();
-  const resultCheckedAtMs = channel.lastCheckedAt.getTime();
-  const existingCooldown = visibleCheckCooldowns.get(channel.id);
-  const startedAtMs =
-    existingCooldown?.resultCheckedAtMs === resultCheckedAtMs
-      ? existingCooldown.startedAtMs
-      : nowMs;
-
-  if (existingCooldown?.resultCheckedAtMs !== resultCheckedAtMs) {
-    visibleCheckCooldowns.set(channel.id, {
-      resultCheckedAtMs,
-      startedAtMs,
-    });
-    pendingVisibleCheckCooldowns.delete(channel.id);
-  }
-
-  const nextCheckAtMs = startedAtMs + checkIntervalMs;
+  const nextCheckAtMs = channel.lastCheckedAt.getTime() + checkIntervalMs;
 
   return {
     isChecking: false,
@@ -254,6 +222,9 @@ async function scheduleDueModelPoolChannels(logger?: HealthLogger) {
     void runChannelHealthCheck(channel.id).catch((error) => {
       logger?.error(error, "Model pool channel health check failed");
     });
+
+    // Keep checks staggered so channels do not permanently share one countdown cadence.
+    break;
   }
 
   return { checked, inFlight: inFlightChannelChecks.size };
@@ -317,19 +288,12 @@ async function runChannelHealthCheck(channelId: string) {
     return existing.promise;
   }
 
-  visibleCheckCooldowns.delete(channelId);
   const startedAt = new Date();
   const promise = performModelPoolChannelCheck(channelId);
   inFlightChannelChecks.set(channelId, { startedAt, promise });
 
   try {
-    const result = await promise;
-    if (result?.lastCheckedAt) {
-      pendingVisibleCheckCooldowns.set(channelId, {
-        resultCheckedAtMs: result.lastCheckedAt.getTime(),
-      });
-    }
-    return result;
+    return await promise;
   } finally {
     if (inFlightChannelChecks.get(channelId)?.promise === promise) {
       inFlightChannelChecks.delete(channelId);
@@ -347,21 +311,7 @@ function isModelPoolChannelDueForHealthCheck(channel: ModelPoolChannel, nowMs: n
   }
 
   const resultCheckedAtMs = channel.lastCheckedAt.getTime();
-  const pendingCooldown = pendingVisibleCheckCooldowns.get(channel.id);
-
-  if (pendingCooldown?.resultCheckedAtMs === resultCheckedAtMs) {
-    return false;
-  }
-
-  const visibleCooldown = visibleCheckCooldowns.get(channel.id);
-
-  if (visibleCooldown?.resultCheckedAtMs !== resultCheckedAtMs) {
-    return false;
-  }
-
-  const intervalStartedAtMs = visibleCooldown.startedAtMs;
-
-  return intervalStartedAtMs + intervalMs <= nowMs;
+  return resultCheckedAtMs + intervalMs <= nowMs;
 }
 
 async function markChannelSuccess(
