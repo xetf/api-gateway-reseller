@@ -7,6 +7,7 @@ import { sendApiError } from "../lib/errors.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
+import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.js";
 import { buildUpstreamUrl, getDefaultProvider, getProviderForModel } from "../services/upstream.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
@@ -79,16 +80,14 @@ export async function proxyRoutes(app: FastifyInstance) {
       }
     }
 
-    const modelRoute = billable && model ? await getProviderForModel(model) : null;
+    const modelRoute = billable && model ? await getProviderForModel(user.id, model) : null;
     const provider = modelRoute?.provider ?? await getDefaultProvider();
     const price = modelRoute?.price ?? null;
+    const channelId = modelRoute?.channelId;
+    const billableModel = billable ? model : undefined;
 
     if (billable && (!price || !price.enabled)) {
       return sendApiError(reply, 400, `Model ${model} is not enabled on any active upstream`);
-    }
-
-    if (!provider) {
-      return sendApiError(reply, 400, "No active upstream provider is configured");
     }
 
     const start = performance.now();
@@ -146,6 +145,15 @@ export async function proxyRoutes(app: FastifyInstance) {
           upstreamResponse.status,
           Math.round(performance.now() - start),
         );
+        if (billable && model) {
+          await recordStickyModelPoolResult({
+            userId: user.id,
+            model,
+            channelId,
+            failed: true,
+            latencyMs: Math.round(performance.now() - start),
+          });
+        }
         reply.status(upstreamResponse.status);
         reply.header(
           "content-type",
@@ -163,6 +171,8 @@ export async function proxyRoutes(app: FastifyInstance) {
           apiRequestId: apiRequest.id,
           userId: user.id,
           priceId: price.id,
+          model: billableModel ?? price.model,
+          channelId,
           startedAt: start,
         });
       }
@@ -203,6 +213,12 @@ export async function proxyRoutes(app: FastifyInstance) {
         usage,
         startedAt: start,
       });
+      await recordStickyModelPoolResult({
+        userId: user.id,
+        model: billableModel ?? price.model,
+        channelId,
+        latencyMs: Math.round(performance.now() - start),
+      });
 
       reply.status(upstreamResponse.status);
       reply.header("content-type", contentType || "application/json");
@@ -210,6 +226,15 @@ export async function proxyRoutes(app: FastifyInstance) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upstream request failed";
       await markRequestFailed(apiRequest, message, 502, Math.round(performance.now() - start));
+      if (billable && model) {
+        await recordStickyModelPoolResult({
+          userId: user.id,
+          model,
+          channelId,
+          failed: true,
+          latencyMs: Math.round(performance.now() - start),
+        });
+      }
       return sendApiError(reply, 502, message, "upstream_error");
     }
     });
@@ -349,10 +374,12 @@ async function proxyStream(params: {
   upstreamResponse: Response;
   apiRequestId: string;
   userId: string;
+  model: string;
+  channelId?: string;
   priceId: string;
   startedAt: number;
 }) {
-  const { reply, upstreamResponse, apiRequestId, userId, priceId, startedAt } =
+  const { reply, upstreamResponse, apiRequestId, userId, model, channelId, priceId, startedAt } =
     params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
@@ -423,9 +450,23 @@ async function proxyStream(params: {
           where: { id: apiRequestId },
           data: { firstTokenLatencyMs },
         });
+        await recordStickyModelPoolResult({
+          userId,
+          model,
+          channelId,
+          firstTokenLatencyMs,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
         await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
+        await recordStickyModelPoolResult({
+          userId,
+          model,
+          channelId,
+          failed: true,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
         controller.error(error);
         return;
       } finally {

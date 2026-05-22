@@ -1,7 +1,12 @@
 import { prisma } from "@gateway/db";
 import { env } from "../env.js";
+import {
+  clearStickyModelPoolChannel,
+  getStickyModelPoolChannel,
+  setStickyModelPoolChannel,
+} from "./model-pool-stickiness.js";
 
-type Provider = NonNullable<Awaited<ReturnType<typeof getDefaultProvider>>>;
+type Provider = Awaited<ReturnType<typeof getDefaultProvider>>;
 
 export async function getDefaultProvider() {
   const provider = await prisma.upstreamProvider.findFirst({
@@ -17,10 +22,6 @@ export async function getDefaultProvider() {
     return provider;
   }
 
-  if (!env.UPSTREAM_API_KEY) {
-    return null;
-  }
-
   return {
     id: "env",
     name: "default",
@@ -34,7 +35,7 @@ export async function getDefaultProvider() {
   };
 }
 
-export async function getProviderForModel(model: string): Promise<{
+export async function getProviderForModel(userId: string, model: string): Promise<{
   provider: Provider;
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId?: string;
@@ -61,30 +62,65 @@ export async function getProviderForModel(model: string): Promise<{
     return null;
   }
 
+  const stickyChannelId = await getStickyModelPoolChannel(userId, model);
+  if (stickyChannelId) {
+    const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyChannelId);
+    if (stickyChannel) {
+      const stickyRoute = await getRouteForChannel(model, stickyChannel);
+
+      if (stickyRoute) {
+        await setStickyModelPoolChannel(userId, model, stickyChannel.id);
+        return stickyRoute;
+      }
+    }
+
+    await clearStickyModelPoolChannel(userId, model, stickyChannelId);
+  }
+
   for (const channel of modelPool.channels) {
-    const provider = await prisma.upstreamProvider.findFirst({
-      where: {
-        name: channel.upstreamProvider,
-        status: "ACTIVE",
-      },
-    });
-
-    if (!provider) {
-      continue;
+    const route = await getRouteForChannel(model, channel);
+    if (route) {
+      await setStickyModelPoolChannel(userId, model, channel.id);
+      return route;
     }
+  }
 
-    const price = await prisma.modelPrice.findUnique({
-      where: {
-        upstreamProvider_model: {
-          upstreamProvider: channel.upstreamProvider,
-          model,
-        },
+  return null;
+}
+
+async function getRouteForChannel(
+  model: string,
+  channel: {
+    id: string;
+    upstreamProvider: string;
+  },
+): Promise<{
+  provider: Provider;
+  price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+  channelId: string;
+} | null> {
+  const provider = await prisma.upstreamProvider.findFirst({
+    where: {
+      name: channel.upstreamProvider,
+      status: "ACTIVE",
+    },
+  });
+
+  if (!provider) {
+    return null;
+  }
+
+  const price = await prisma.modelPrice.findUnique({
+    where: {
+      upstreamProvider_model: {
+        upstreamProvider: channel.upstreamProvider,
+        model,
       },
-    });
+    },
+  });
 
-    if (price?.enabled) {
-      return { provider, price, channelId: channel.id };
-    }
+  if (price?.enabled) {
+    return { provider, price, channelId: channel.id };
   }
 
   return null;
