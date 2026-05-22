@@ -15,6 +15,7 @@ The script will:
 - create `.env` if it does not exist
 - generate secure `JWT_SECRET` and database password values
 - ask for the initial admin account
+- ask for the public server IP/domain and write public API URLs into `.env`
 - start Postgres and Redis with Docker Compose
 - install dependencies
 - run Prisma migrations with `migrate deploy`
@@ -57,6 +58,8 @@ Important variables live in `.env`:
 
 Do not commit `.env` to GitHub.
 
+For a public server, set `PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_API_BASE_URL` to the public IP/domain, for example `http://YOUR_SERVER_IP:4100`, not `127.0.0.1`.
+
 If you access the first deployment by server IP, make sure `CORS_ORIGINS` includes the frontend origin, for example `http://YOUR_SERVER_IP:4101`. The default `deploy.sh` flow adds this automatically when the public API base URL contains your server IP.
 
 ## PM2 Commands
@@ -68,6 +71,8 @@ pm2 logs api-gateway-web
 pm2 restart api-gateway-api api-gateway-web
 pm2 save
 ```
+
+On some panel/custom Node environments, PM2 may be installed outside the shell `PATH`. `deploy.sh` locates PM2 through `command -v pm2`, `npm prefix -g`, and `npm bin -g`, then uses the absolute binary path.
 
 ## Nginx / Domain
 

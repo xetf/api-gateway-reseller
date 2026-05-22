@@ -6,6 +6,7 @@ cd "$PROJECT_ROOT"
 
 MODE="install"
 SKIP_DOCKER="false"
+PM2_BIN=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -100,6 +101,41 @@ try {
 NODE
 }
 
+detect_server_ip() {
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s' "${ip:-SERVER_IP}"
+}
+
+resolve_pm2_bin() {
+  local candidate npm_prefix npm_bin
+
+  if command_exists pm2; then
+    command -v pm2
+    return
+  fi
+
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  if [ -n "$npm_prefix" ]; then
+    candidate="${npm_prefix}/bin/pm2"
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  fi
+
+  npm_bin="$(npm bin -g 2>/dev/null || true)"
+  if [ -n "$npm_bin" ]; then
+    candidate="${npm_bin}/pm2"
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  fi
+
+  return 1
+}
+
 require_node() {
   command_exists node || die "Node.js 20+ is required. Install Node first, then rerun deploy.sh."
   command_exists npm || die "npm is required. Install npm first, then rerun deploy.sh."
@@ -121,12 +157,20 @@ require_docker() {
 }
 
 ensure_pm2() {
-  if command_exists pm2; then
+  if PM2_BIN="$(resolve_pm2_bin)"; then
+    log "Using PM2: $PM2_BIN"
     return
   fi
 
   log "Installing PM2"
   npm install -g pm2
+
+  if PM2_BIN="$(resolve_pm2_bin)"; then
+    log "Using PM2: $PM2_BIN"
+    return
+  fi
+
+  die "PM2 was installed, but the pm2 binary was not found. Check npm global bin path: $(npm prefix -g 2>/dev/null || echo unknown)/bin"
 }
 
 write_env_file() {
@@ -136,7 +180,7 @@ write_env_file() {
   fi
 
   log "Creating .env"
-  local postgres_password jwt_secret admin_email admin_username admin_password api_port web_port api_base web_base frontend_origin cors_origins
+  local postgres_password jwt_secret admin_email admin_username admin_password api_port web_port server_host default_api_base api_base web_base frontend_origin cors_origins
 
   postgres_password="$(random_hex 16)"
   jwt_secret="$(random_secret)"
@@ -146,7 +190,10 @@ write_env_file() {
   admin_password="$(read_with_default "Admin password" "$(random_hex 8)")"
   api_port="$(read_with_default "API port" "4100")"
   web_port="$(read_with_default "Web port" "4101")"
-  api_base="$(read_with_default "Public API base URL" "http://127.0.0.1:${api_port}")"
+  server_host="$(read_with_default "Server public IP or domain" "$(detect_server_ip)")"
+  default_api_base="http://${server_host}:${api_port}"
+  warn "For public access, use the server public IP/domain here, not 127.0.0.1."
+  api_base="$(read_with_default "Public API base URL" "$default_api_base")"
   web_base="$api_base"
   frontend_origin="$(frontend_origin_from_api_base "$api_base" "$web_port" || printf 'http://127.0.0.1:%s' "$web_port")"
   cors_origins="http://127.0.0.1:${web_port},http://localhost:${web_port},${frontend_origin}"
@@ -186,6 +233,19 @@ load_env() {
   # shellcheck disable=SC1091
   source .env
   set +a
+}
+
+warn_public_url_config() {
+  local public_api_base_url="${PUBLIC_API_BASE_URL:-}"
+  local next_public_api_base_url="${NEXT_PUBLIC_API_BASE_URL:-}"
+
+  if [[ "$public_api_base_url" == *"127.0.0.1"* || "$public_api_base_url" == *"localhost"* ]]; then
+    warn "PUBLIC_API_BASE_URL is local-only. For public access, set it to your server IP/domain, for example http://YOUR_SERVER_IP:${API_PORT:-4100}."
+  fi
+
+  if [[ "$next_public_api_base_url" == *"127.0.0.1"* || "$next_public_api_base_url" == *"localhost"* ]]; then
+    warn "NEXT_PUBLIC_API_BASE_URL is local-only. Browsers on other machines need your public API URL."
+  fi
 }
 
 start_infra() {
@@ -235,8 +295,8 @@ build_and_migrate() {
 
 start_pm2() {
   log "Starting PM2 apps"
-  PROJECT_ROOT="$PROJECT_ROOT" pm2 startOrReload ecosystem.config.cjs --update-env
-  pm2 save
+  PROJECT_ROOT="$PROJECT_ROOT" "$PM2_BIN" startOrReload ecosystem.config.cjs --update-env
+  "$PM2_BIN" save
 }
 
 print_summary() {
@@ -261,9 +321,9 @@ Admin login:
   email: ${admin_email}
 
 Useful commands:
-  pm2 status
-  pm2 logs api-gateway-api
-  pm2 logs api-gateway-web
+  ${PM2_BIN:-pm2} status
+  ${PM2_BIN:-pm2} logs api-gateway-api
+  ${PM2_BIN:-pm2} logs api-gateway-web
   bash deploy.sh --update
 
 Next step:
@@ -279,6 +339,7 @@ main() {
 
   write_env_file
   load_env
+  warn_public_url_config
   start_infra
   wait_for_postgres
   install_dependencies
