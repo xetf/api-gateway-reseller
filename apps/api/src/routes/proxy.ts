@@ -7,6 +7,7 @@ import { sendApiError } from "../lib/errors.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
+import { recordModelPoolUserCallResult } from "../services/model-pool-call-failures.js";
 import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.js";
 import { buildUpstreamUrl, getDefaultProvider, getProviderForModel } from "../services/upstream.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
@@ -15,6 +16,7 @@ const proxiedEndpoints = new Set([
   "/v1/chat/completions",
   "/v1/embeddings",
   "/v1/completions",
+  "/v1/images/generations",
 ]);
 
 type ProxyBody = {
@@ -33,6 +35,7 @@ const proxyRoutePatterns = [
   "/chat/completions",
   "/embeddings",
   "/completions",
+  "/images/generations",
 ];
 
 export async function proxyRoutes(app: FastifyInstance) {
@@ -158,6 +161,13 @@ export async function proxyRoutes(app: FastifyInstance) {
             failed: true,
             latencyMs: Math.round(performance.now() - start),
           });
+          await recordModelPoolUserCallResult({
+            userId: user.id,
+            model,
+            channelId,
+            failed: true,
+            logger: app.log,
+          });
         }
         reply.status(upstreamResponse.status);
         reply.header(
@@ -179,6 +189,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           model: billableModel ?? price.model,
           channelId,
           startedAt: start,
+          logger: app.log,
         });
       }
 
@@ -224,6 +235,13 @@ export async function proxyRoutes(app: FastifyInstance) {
         channelId,
         latencyMs: Math.round(performance.now() - start),
       });
+      await recordModelPoolUserCallResult({
+        userId: user.id,
+        model: billableModel ?? price.model,
+        channelId,
+        failed: false,
+        logger: app.log,
+      });
 
       reply.status(upstreamResponse.status);
       reply.header("content-type", contentType || "application/json");
@@ -238,6 +256,13 @@ export async function proxyRoutes(app: FastifyInstance) {
           channelId,
           failed: true,
           latencyMs: Math.round(performance.now() - start),
+        });
+        await recordModelPoolUserCallResult({
+          userId: user.id,
+          model,
+          channelId,
+          failed: true,
+          logger: app.log,
         });
       }
       return sendApiError(reply, 502, message, "upstream_error");
@@ -334,7 +359,8 @@ function normalizeEndpoint(endpoint: string) {
   if (
     endpoint === "/chat/completions" ||
     endpoint === "/embeddings" ||
-    endpoint === "/completions"
+    endpoint === "/completions" ||
+    endpoint === "/images/generations"
   ) {
     return `/v1${endpoint}`;
   }
@@ -385,6 +411,7 @@ function isBillableEndpoint(endpoint: string, method: string) {
     (endpoint === "/v1/chat/completions" ||
       endpoint === "/v1/completions" ||
       endpoint === "/v1/embeddings" ||
+      endpoint === "/v1/images/generations" ||
       endpoint === "/v1/responses" ||
       endpoint === "/v1/responses/compact" ||
       endpoint === "/v1/responses/input_tokens")
@@ -430,6 +457,9 @@ function redactBodyForLog(body: ProxyBody) {
   if (typeof clone.input === "string" && clone.input.length > 500) {
     clone.input = `${clone.input.slice(0, 500)}...`;
   }
+  if (typeof clone.prompt === "string" && clone.prompt.length > 500) {
+    clone.prompt = `${clone.prompt.slice(0, 500)}...`;
+  }
   if (Array.isArray(clone.messages)) {
     clone.messages = clone.messages.slice(-6);
   }
@@ -459,9 +489,12 @@ async function proxyStream(params: {
   channelId?: string;
   priceId: string;
   startedAt: number;
+  logger?: {
+    warn: (value: unknown, message?: string) => void;
+    info?: (value: unknown, message?: string) => void;
+  };
 }) {
-  const { reply, upstreamResponse, apiRequestId, userId, model, channelId, priceId, startedAt } =
-    params;
+  const { reply, upstreamResponse, apiRequestId, userId, model, channelId, priceId, startedAt, logger } = params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
   });
@@ -520,12 +553,12 @@ async function proxyStream(params: {
         };
 
         await chargeForRequest({
-        requestId: apiRequestId,
-        userId,
-        price,
-        usage,
-        startedAt,
-      });
+          requestId: apiRequestId,
+          userId,
+          price,
+          usage,
+          startedAt,
+        });
 
         await prisma.apiRequest.update({
           where: { id: apiRequestId },
@@ -538,6 +571,13 @@ async function proxyStream(params: {
           firstTokenLatencyMs,
           latencyMs: Math.round(performance.now() - startedAt),
         });
+        await recordModelPoolUserCallResult({
+          userId,
+          model,
+          channelId,
+          failed: false,
+          logger,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
         await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
@@ -548,10 +588,17 @@ async function proxyStream(params: {
           failed: true,
           latencyMs: Math.round(performance.now() - startedAt),
         });
+        await recordModelPoolUserCallResult({
+          userId,
+          model,
+          channelId,
+          failed: true,
+          logger,
+        });
         controller.error(error);
         return;
       } finally {
-        controller.close();
+        safeCloseStreamController(controller);
       }
     },
   });
@@ -607,7 +654,7 @@ async function proxyPassthroughStream(params: {
         controller.error(error);
         return;
       } finally {
-        controller.close();
+        safeCloseStreamController(controller);
       }
     },
   });
@@ -619,6 +666,20 @@ async function proxyPassthroughStream(params: {
   );
   reply.header("cache-control", "no-cache");
   return reply.send(Readable.fromWeb(stream as unknown as import("node:stream/web").ReadableStream));
+}
+
+function safeCloseStreamController(controller: ReadableStreamDefaultController<Uint8Array>) {
+  try {
+    controller.close();
+  } catch (error) {
+    if (!isClosedControllerError(error)) {
+      throw error;
+    }
+  }
+}
+
+function isClosedControllerError(error: unknown) {
+  return error instanceof TypeError && error.message.includes("Controller is already closed");
 }
 
 function parseUsageFromSseBuffer(buffer: string): Usage | null {

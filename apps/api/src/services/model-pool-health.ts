@@ -7,6 +7,10 @@ type HealthLogger = {
   info?: (value: unknown, message?: string) => void;
 };
 
+type ChannelHealthCheckOptions = {
+  unavailableOnFailure?: boolean;
+};
+
 export const defaultModelPoolHealthCheckIntervalSeconds = 30;
 export const minModelPoolHealthCheckIntervalSeconds = 5;
 export const maxModelPoolHealthCheckIntervalSeconds = 3600;
@@ -130,11 +134,17 @@ export function getModelPoolChannelHealthTiming(
   };
 }
 
-export async function checkModelPoolChannel(channelId: string) {
-  return runChannelHealthCheck(channelId);
+export async function checkModelPoolChannel(
+  channelId: string,
+  options: ChannelHealthCheckOptions = {},
+) {
+  return runChannelHealthCheck(channelId, options);
 }
 
-async function performModelPoolChannelCheck(channelId: string): Promise<ModelPoolChannel | null> {
+async function performModelPoolChannelCheck(
+  channelId: string,
+  options: ChannelHealthCheckOptions,
+): Promise<ModelPoolChannel | null> {
   const channel = await prisma.modelPoolChannel.findUnique({
     where: { id: channelId },
     include: { modelPool: true },
@@ -159,15 +169,15 @@ async function performModelPoolChannelCheck(channelId: string): Promise<ModelPoo
   ]);
 
   if (channel.modelPool.status !== "ACTIVE") {
-    return markChannelFailure(channel, "Model pool is disabled");
+    return markChannelFailure(channel, "Model pool is disabled", undefined, options);
   }
 
   if (!provider || provider.status !== "ACTIVE") {
-    return markChannelFailure(channel, "Upstream provider is missing or disabled");
+    return markChannelFailure(channel, "Upstream provider is missing or disabled", undefined, options);
   }
 
   if (!price || !price.enabled) {
-    return markChannelFailure(channel, "Model price is missing or disabled");
+    return markChannelFailure(channel, "Model price is missing or disabled", undefined, options);
   }
 
   const startedAt = performance.now();
@@ -187,14 +197,14 @@ async function performModelPoolChannelCheck(channelId: string): Promise<ModelPoo
     const latencyMs = Math.round(performance.now() - startedAt);
 
     if (!result.ok) {
-      return markChannelFailure(channel, result.message, latencyMs);
+      return markChannelFailure(channel, result.message, latencyMs, options);
     }
 
     return markChannelSuccess(channel, latencyMs, result.firstTokenLatencyMs);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Health check failed";
     const latencyMs = Math.round(performance.now() - startedAt);
-    return markChannelFailure(channel, message, latencyMs);
+    return markChannelFailure(channel, message, latencyMs, options);
   } finally {
     clearTimeout(timeout);
   }
@@ -284,15 +294,22 @@ export function startModelPoolHealthScheduler(logger?: HealthLogger) {
   return () => clearInterval(timer);
 }
 
-async function runChannelHealthCheck(channelId: string) {
+async function runChannelHealthCheck(
+  channelId: string,
+  options: ChannelHealthCheckOptions = {},
+) {
   const existing = inFlightChannelChecks.get(channelId);
 
   if (existing) {
-    return existing.promise;
+    if (!options.unavailableOnFailure) {
+      return existing.promise;
+    }
+
+    return existing.promise.then(forceUnavailableAfterFailedCheck);
   }
 
   const startedAt = new Date();
-  const promise = performModelPoolChannelCheck(channelId);
+  const promise = performModelPoolChannelCheck(channelId, options);
   inFlightChannelChecks.set(channelId, { startedAt, promise });
 
   try {
@@ -341,16 +358,18 @@ async function markChannelFailure(
   channel: ModelPoolChannel,
   message: string,
   latencyMs?: number,
+  options: ChannelHealthCheckOptions = {},
 ) {
   const consecutiveFailures = channel.consecutiveFailures + 1;
   const shouldKeepCallable = channel.status === "FORCED_ACTIVE";
+  const shouldMarkUnavailable = options.unavailableOnFailure || consecutiveFailures >= 2;
 
   return prisma.modelPoolChannel.update({
     where: { id: channel.id },
     data: {
       status: shouldKeepCallable
         ? "FORCED_ACTIVE"
-        : consecutiveFailures >= 2
+        : shouldMarkUnavailable
           ? "UNAVAILABLE"
           : channel.status,
       priority: Math.min(10_000, channel.priority + 1000),
@@ -361,6 +380,22 @@ async function markChannelFailure(
       lastFirstTokenLatencyMs: null,
       lastError: message.slice(0, 1000),
     },
+  });
+}
+
+async function forceUnavailableAfterFailedCheck(channel: ModelPoolChannel | null) {
+  if (
+    !channel ||
+    channel.status === "FORCED_ACTIVE" ||
+    channel.status === "UNAVAILABLE" ||
+    channel.lastCheckStatus !== "FAILED"
+  ) {
+    return channel;
+  }
+
+  return prisma.modelPoolChannel.update({
+    where: { id: channel.id },
+    data: { status: "UNAVAILABLE" },
   });
 }
 
