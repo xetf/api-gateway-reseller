@@ -74,6 +74,32 @@ read_with_default() {
   printf '%s' "${value:-$default_value}"
 }
 
+origin_from_url() {
+  node - "$1" <<'NODE'
+try {
+  const url = new URL(process.argv[2]);
+  console.log(url.origin);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
+frontend_origin_from_api_base() {
+  local api_base="$1"
+  local web_port="$2"
+
+  node - "$api_base" "$web_port" <<'NODE'
+try {
+  const url = new URL(process.argv[2]);
+  url.port = process.argv[3];
+  console.log(url.origin);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
 require_node() {
   command_exists node || die "Node.js 20+ is required. Install Node first, then rerun deploy.sh."
   command_exists npm || die "npm is required. Install npm first, then rerun deploy.sh."
@@ -110,7 +136,7 @@ write_env_file() {
   fi
 
   log "Creating .env"
-  local postgres_password jwt_secret admin_email admin_username admin_password api_port web_port api_base web_base
+  local postgres_password jwt_secret admin_email admin_username admin_password api_port web_port api_base web_base frontend_origin cors_origins
 
   postgres_password="$(random_hex 16)"
   jwt_secret="$(random_secret)"
@@ -122,6 +148,8 @@ write_env_file() {
   web_port="$(read_with_default "Web port" "4101")"
   api_base="$(read_with_default "Public API base URL" "http://127.0.0.1:${api_port}")"
   web_base="$api_base"
+  frontend_origin="$(frontend_origin_from_api_base "$api_base" "$web_port" || printf 'http://127.0.0.1:%s' "$web_port")"
+  cors_origins="http://127.0.0.1:${web_port},http://localhost:${web_port},${frontend_origin}"
 
   cat > .env <<ENV
 POSTGRES_PASSWORD="${postgres_password}"
@@ -131,7 +159,7 @@ REDIS_URL="redis://127.0.0.1:56379"
 API_PORT=${api_port}
 API_HOST="0.0.0.0"
 PUBLIC_API_BASE_URL="${api_base}"
-CORS_ORIGINS="http://127.0.0.1:${web_port},http://localhost:${web_port}"
+CORS_ORIGINS="${cors_origins}"
 
 WEB_PORT=${web_port}
 NEXT_PUBLIC_API_BASE_URL="${web_base}"

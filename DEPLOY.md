@@ -57,6 +57,8 @@ Important variables live in `.env`:
 
 Do not commit `.env` to GitHub.
 
+If you access the first deployment by server IP, make sure `CORS_ORIGINS` includes the frontend origin, for example `http://YOUR_SERVER_IP:4101`. The default `deploy.sh` flow adds this automatically when the public API base URL contains your server IP.
+
 ## PM2 Commands
 
 ```bash

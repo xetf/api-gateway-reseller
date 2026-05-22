@@ -9,5 +9,6 @@ coverage
 *.bak
 *.dump
 *.sql
+!packages/db/prisma/migrations/**/migration.sql
 backups/
 .DS_Store
