@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { Decimal } from "decimal.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "@gateway/db";
 import { hashSecret } from "../lib/crypto.js";
@@ -81,6 +82,27 @@ export async function requireApiKey(
 
   if (count > apiKey.rateLimitPerMinute) {
     return sendApiError(reply, 429, "Rate limit exceeded", "rate_limit_error");
+  }
+
+  if (apiKey.dailyLimitUsd && new Decimal(apiKey.dailyLimitUsd.toString()).gt(0)) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const usage = await prisma.apiRequest.aggregate({
+      where: {
+        apiKeyId: apiKey.id,
+        status: "SUCCESS",
+        createdAt: {
+          gte: today,
+        },
+      },
+      _sum: {
+        chargedAmountUsd: true,
+      },
+    });
+    const usedUsd = new Decimal(usage._sum.chargedAmountUsd?.toString() ?? "0");
+    if (usedUsd.gte(apiKey.dailyLimitUsd.toString())) {
+      return sendApiError(reply, 429, "API key daily quota exceeded", "insufficient_quota");
+    }
   }
 
   await prisma.apiKey.update({

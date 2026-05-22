@@ -46,6 +46,8 @@ type ApiKey = {
   keySecret?: string | null;
   status: "ACTIVE" | "DISABLED" | "REVOKED" | string;
   rateLimitPerMinute: number;
+  dailyLimitUsd?: string | null;
+  concurrencyLimit: number;
   allowedModels: string[];
   lastUsedAt?: string | null;
   createdAt: string;
@@ -927,9 +929,16 @@ function Keys({
 }) {
   const [name, setName] = useState("default");
   const [rateLimit, setRateLimit] = useState(60);
+  const [dailyLimitUsd, setDailyLimitUsd] = useState("");
+  const [concurrencyLimit, setConcurrencyLimit] = useState(0);
   const [secret, setSecret] = useState<string | null>(null);
   const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
   const [configKey, setConfigKey] = useState<ApiKey | null>(null);
+  const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editRateLimit, setEditRateLimit] = useState(60);
+  const [editDailyLimitUsd, setEditDailyLimitUsd] = useState("");
+  const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
 
   async function createKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -940,6 +949,8 @@ function Keys({
         body: JSON.stringify({
           name,
           rateLimitPerMinute: Number(rateLimit),
+          dailyLimitUsd: normalizeOptionalNumberText(dailyLimitUsd),
+          concurrencyLimit: Number(concurrencyLimit),
           allowedModels: [],
         }),
       });
@@ -952,6 +963,41 @@ function Keys({
       onChanged();
     } catch (createError) {
       onError(errorToText(createError));
+    }
+  }
+
+  function beginEditKey(key: ApiKey) {
+    setEditingKey(key);
+    setEditName(key.name);
+    setEditRateLimit(key.rateLimitPerMinute);
+    setEditDailyLimitUsd(limitValue(key.dailyLimitUsd));
+    setEditConcurrencyLimit(key.concurrencyLimit ?? 0);
+  }
+
+  async function saveEditingKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingKey) {
+      return;
+    }
+
+    onError(null);
+    setBusyKeyId(editingKey.id);
+    try {
+      await apiFetch(`/api-keys/${editingKey.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName,
+          rateLimitPerMinute: Number(editRateLimit),
+          dailyLimitUsd: normalizeOptionalNumberText(editDailyLimitUsd),
+          concurrencyLimit: Number(editConcurrencyLimit),
+        }),
+      });
+      setEditingKey(null);
+      onChanged();
+    } catch (editError) {
+      onError(errorToText(editError));
+    } finally {
+      setBusyKeyId(null);
     }
   }
 
@@ -1012,6 +1058,29 @@ function Keys({
                 type="number"
               />
             </label>
+            <label className="field">
+              <span>每日限额 USD</span>
+              <input
+                className="input"
+                value={dailyLimitUsd}
+                min={0}
+                onChange={(event) => setDailyLimitUsd(event.target.value)}
+                placeholder="留空不限"
+                step="0.00000001"
+                type="number"
+              />
+            </label>
+            <label className="field">
+              <span>并发限制</span>
+              <input
+                className="input"
+                value={concurrencyLimit}
+                min={0}
+                max={10000}
+                onChange={(event) => setConcurrencyLimit(Number(event.target.value))}
+                type="number"
+              />
+            </label>
             <button className="button" type="submit">
               <Plus size={17} />
               创建
@@ -1034,6 +1103,8 @@ function Keys({
                   <th>API Key</th>
                   <th>状态</th>
                   <th>限流</th>
+                  <th>限额</th>
+                  <th>并发</th>
                   <th>创建时间</th>
                   <th>操作</th>
                 </tr>
@@ -1049,6 +1120,8 @@ function Keys({
                       <StatusPill status={key.status} />
                     </td>
                     <td>{key.rateLimitPerMinute}/min</td>
+                    <td>{formatDailyLimit(key.dailyLimitUsd)}</td>
+                    <td>{formatConcurrencyLimit(key.concurrencyLimit)}</td>
                     <td>{dateTime(key.createdAt)}</td>
                     <td>
                       <div className="button-row compact">
@@ -1059,6 +1132,14 @@ function Keys({
                           type="button"
                         >
                           使用 / 配置
+                        </button>
+                        <button
+                          className="button secondary"
+                          disabled={busyKeyId === key.id}
+                          onClick={() => beginEditKey(key)}
+                          type="button"
+                        >
+                          编辑
                         </button>
                         {key.status === "ACTIVE" ? (
                           <button
@@ -1092,7 +1173,7 @@ function Keys({
                     </td>
                   </tr>
                 ))}
-                {apiKeys.length === 0 ? <EmptyRow colSpan={6} /> : null}
+                {apiKeys.length === 0 ? <EmptyRow colSpan={8} /> : null}
               </tbody>
             </table>
           </div>
@@ -1112,6 +1193,14 @@ function Keys({
                       type="button"
                     >
                       使用 / 配置
+                    </button>
+                    <button
+                      className="button secondary"
+                      disabled={busyKeyId === key.id}
+                      onClick={() => beginEditKey(key)}
+                      type="button"
+                    >
+                      编辑
                     </button>
                     {key.status === "ACTIVE" ? (
                       <button
@@ -1148,6 +1237,8 @@ function Keys({
                   <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
                 </MobileField>
                 <MobileField label="限流">{key.rateLimitPerMinute}/min</MobileField>
+                <MobileField label="每日限额">{formatDailyLimit(key.dailyLimitUsd)}</MobileField>
+                <MobileField label="并发">{formatConcurrencyLimit(key.concurrencyLimit)}</MobileField>
                 <MobileField label="创建时间">{dateTime(key.createdAt)}</MobileField>
               </MobileRecord>
             ))}
@@ -1157,6 +1248,60 @@ function Keys({
       </div>
       {configKey?.keySecret ? (
         <ApiKeyConfigModal apiKey={configKey.keySecret} onClose={() => setConfigKey(null)} />
+      ) : null}
+      {editingKey ? (
+        <ModalShell title="编辑 API Key" description={editingKey.keyPrefix} onClose={() => setEditingKey(null)} wide>
+          <form className="form" onSubmit={saveEditingKey}>
+            <div className="modal-body">
+              <label className="field">
+                <span>名称</span>
+                <input className="input" value={editName} onChange={(event) => setEditName(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>每分钟限流</span>
+                <input
+                  className="input"
+                  value={editRateLimit}
+                  min={1}
+                  max={10000}
+                  onChange={(event) => setEditRateLimit(Number(event.target.value))}
+                  type="number"
+                />
+              </label>
+              <label className="field">
+                <span>每日限额 USD</span>
+                <input
+                  className="input"
+                  value={editDailyLimitUsd}
+                  min={0}
+                  onChange={(event) => setEditDailyLimitUsd(event.target.value)}
+                  placeholder="留空不限"
+                  step="0.00000001"
+                  type="number"
+                />
+              </label>
+              <label className="field">
+                <span>并发限制</span>
+                <input
+                  className="input"
+                  value={editConcurrencyLimit}
+                  min={0}
+                  max={10000}
+                  onChange={(event) => setEditConcurrencyLimit(Number(event.target.value))}
+                  type="number"
+                />
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setEditingKey(null)} type="button">
+                取消
+              </button>
+              <button className="button" disabled={busyKeyId === editingKey.id} type="submit">
+                保存
+              </button>
+            </div>
+          </form>
+        </ModalShell>
       ) : null}
     </>
   );
@@ -4076,6 +4221,42 @@ function money(value: string | number | null | undefined) {
     return "0.00000000";
   }
   return numeric.toFixed(8);
+}
+
+function limitValue(value: string | number | null | undefined) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "";
+  }
+
+  return String(value);
+}
+
+function normalizeOptionalNumberText(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function formatDailyLimit(value: string | number | null | undefined) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "不限";
+  }
+
+  return `$${money(numeric)}`;
+}
+
+function formatConcurrencyLimit(value: number | null | undefined) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "不限";
+  }
+
+  return `${numeric}`;
 }
 
 function seconds(value: number | null | undefined) {

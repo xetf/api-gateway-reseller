@@ -91,6 +91,11 @@ export async function proxyRoutes(app: FastifyInstance) {
     }
 
     const start = performance.now();
+    const concurrencyLock = await acquireApiKeyConcurrency(app, apiKey.id, apiKey.concurrencyLimit);
+    if (!concurrencyLock.ok) {
+      return sendApiError(reply, 429, "API key concurrency limit exceeded", "rate_limit_error");
+    }
+    bindConcurrencyRelease(reply, concurrencyLock.release);
 
     const apiRequest = await prisma.apiRequest.create({
       data: {
@@ -238,6 +243,76 @@ export async function proxyRoutes(app: FastifyInstance) {
       return sendApiError(reply, 502, message, "upstream_error");
     }
     });
+  }
+}
+
+function bindConcurrencyRelease(reply: FastifyReply, release: () => Promise<void>) {
+  let released = false;
+  const releaseOnce = () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    void release();
+  };
+
+  reply.raw.once("finish", releaseOnce);
+  reply.raw.once("close", releaseOnce);
+  reply.raw.once("error", releaseOnce);
+}
+
+async function acquireApiKeyConcurrency(
+  app: FastifyInstance,
+  apiKeyId: string,
+  limit: number,
+) {
+  if (limit <= 0) {
+    return {
+      ok: true as const,
+      release: async () => {},
+    };
+  }
+
+  const key = `concurrency:${apiKeyId}`;
+
+  try {
+    const count = await app.redis.incr(key);
+    if (count === 1) {
+      await app.redis.expire(key, 120);
+    }
+
+    if (count > limit) {
+      await app.redis.decr(key);
+      return {
+        ok: false as const,
+        release: async () => {},
+      };
+    }
+
+    let released = false;
+    return {
+      ok: true as const,
+      release: async () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        try {
+          const current = await app.redis.decr(key);
+          if (current <= 0) {
+            await app.redis.del(key);
+          }
+        } catch (error) {
+          app.log.warn({ error, apiKeyId }, "Failed to release API key concurrency slot");
+        }
+      },
+    };
+  } catch (error) {
+    app.log.warn({ error, apiKeyId }, "Redis concurrency check failed, allowing request");
+    return {
+      ok: true as const,
+      release: async () => {},
+    };
   }
 }
 

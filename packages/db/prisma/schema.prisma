@@ -76,6 +76,7 @@ model ApiKey {
   allowedModels      String[]     @default([])
   rateLimitPerMinute Int          @default(60)
   dailyLimitUsd      Decimal?     @db.Decimal(18, 8)
+  concurrencyLimit   Int          @default(0)
   expiresAt          DateTime?
   lastUsedAt         DateTime?
   createdAt          DateTime     @default(now())
