@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createApiKey } from "../lib/crypto.js";
 import { requireUser } from "../services/auth.js";
 
-const dailyLimitUsdSchema = z
+const moneyLimitSchema = z
   .union([z.string(), z.number(), z.null()])
   .optional()
   .transform((value, context) => {
@@ -20,7 +20,7 @@ const dailyLimitUsdSchema = z
     if (!Number.isFinite(numeric) || numeric < 0) {
       context.addIssue({
         code: "custom",
-        message: "dailyLimitUsd must be a non-negative number",
+        message: "Limit must be a non-negative number",
       });
       return z.NEVER;
     }
@@ -28,10 +28,36 @@ const dailyLimitUsdSchema = z
     return numeric.toFixed(8);
   });
 
+const expiresAtSchema = z
+  .union([z.string(), z.null()])
+  .optional()
+  .transform((value, context) => {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null || value.trim() === "") {
+      return null;
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      context.addIssue({
+        code: "custom",
+        message: "expiresAt must be a valid date",
+      });
+      return z.NEVER;
+    }
+
+    return date;
+  });
+
 const createKeySchema = z.object({
   name: z.string().min(1).max(80),
   rateLimitPerMinute: z.number().int().positive().max(10000).default(60),
-  dailyLimitUsd: dailyLimitUsdSchema,
+  totalLimitUsd: moneyLimitSchema,
+  dailyLimitUsd: moneyLimitSchema,
+  expiresAt: expiresAtSchema,
   concurrencyLimit: z.number().int().min(0).max(10000).default(0),
   allowedModels: z.array(z.string()).default([]),
 });
@@ -51,6 +77,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         status: true,
         rateLimitPerMinute: true,
         dailyLimitUsd: true,
+        totalLimitUsd: true,
+        expiresAt: true,
         concurrencyLimit: true,
         allowedModels: true,
         lastUsedAt: true,
@@ -74,7 +102,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         keyPrefix: generated.prefix,
         keySecret: generated.key,
         rateLimitPerMinute: body.rateLimitPerMinute,
-        dailyLimitUsd: body.dailyLimitUsd ?? null,
+        totalLimitUsd: body.totalLimitUsd ?? body.dailyLimitUsd ?? null,
+        expiresAt: body.expiresAt,
         concurrencyLimit: body.concurrencyLimit,
         allowedModels: body.allowedModels,
       },
@@ -86,6 +115,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         status: true,
         rateLimitPerMinute: true,
         dailyLimitUsd: true,
+        totalLimitUsd: true,
+        expiresAt: true,
         concurrencyLimit: true,
         allowedModels: true,
         createdAt: true,
@@ -106,18 +137,26 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         name: z.string().min(1).max(80).optional(),
         status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]).optional(),
         rateLimitPerMinute: z.number().int().positive().max(10000).optional(),
-        dailyLimitUsd: dailyLimitUsdSchema,
+        totalLimitUsd: moneyLimitSchema,
+        dailyLimitUsd: moneyLimitSchema,
+        expiresAt: expiresAtSchema,
         concurrencyLimit: z.number().int().min(0).max(10000).optional(),
         allowedModels: z.array(z.string()).optional(),
       })
       .parse(request.body);
+    const data = {
+      ...body,
+      totalLimitUsd:
+        body.totalLimitUsd === undefined ? body.dailyLimitUsd : body.totalLimitUsd,
+      dailyLimitUsd: undefined,
+    };
 
     const apiKey = await prisma.apiKey.update({
       where: {
         id: params.id,
         userId: user.sub,
       },
-      data: body,
+      data,
     });
 
     return { apiKey };

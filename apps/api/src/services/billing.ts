@@ -91,6 +91,39 @@ export async function chargeForRequest(params: {
       },
     });
 
+    if (apiRequest.apiKeyId) {
+      const apiKey = await tx.apiKey.findUnique({
+        where: { id: apiRequest.apiKeyId },
+        select: {
+          id: true,
+          totalLimitUsd: true,
+          status: true,
+        },
+      });
+
+      if (apiKey?.status === "ACTIVE" && apiKey.totalLimitUsd) {
+        const limit = new Decimal(apiKey.totalLimitUsd.toString());
+        if (limit.gt(0)) {
+          const usage = await tx.apiRequest.aggregate({
+            where: {
+              apiKeyId: apiKey.id,
+              status: "SUCCESS",
+            },
+            _sum: {
+              chargedAmountUsd: true,
+            },
+          });
+          const usedUsd = new Decimal(usage._sum.chargedAmountUsd?.toString() ?? "0");
+          if (usedUsd.gte(limit)) {
+            await tx.apiKey.update({
+              where: { id: apiKey.id },
+              data: { status: "DISABLED" },
+            });
+          }
+        }
+      }
+    }
+
     return apiRequest;
   });
 }

@@ -70,8 +70,12 @@ export async function requireApiKey(
     return sendApiError(reply, 401, "Invalid API key", "authentication_error");
   }
 
-  if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
-    return sendApiError(reply, 401, "API key expired", "authentication_error");
+  if (apiKey.expiresAt && apiKey.expiresAt <= new Date()) {
+    await prisma.apiKey.update({
+      where: { id: apiKey.id },
+      data: { status: "DISABLED" },
+    });
+    return sendApiError(reply, 401, "API key expired and has been disabled", "authentication_error");
   }
 
   const rateLimitKey = `ratelimit:${apiKey.id}:${Math.floor(Date.now() / 60000)}`;
@@ -84,24 +88,23 @@ export async function requireApiKey(
     return sendApiError(reply, 429, "Rate limit exceeded", "rate_limit_error");
   }
 
-  if (apiKey.dailyLimitUsd && new Decimal(apiKey.dailyLimitUsd.toString()).gt(0)) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  if (apiKey.totalLimitUsd && new Decimal(apiKey.totalLimitUsd.toString()).gt(0)) {
     const usage = await prisma.apiRequest.aggregate({
       where: {
         apiKeyId: apiKey.id,
         status: "SUCCESS",
-        createdAt: {
-          gte: today,
-        },
       },
       _sum: {
         chargedAmountUsd: true,
       },
     });
     const usedUsd = new Decimal(usage._sum.chargedAmountUsd?.toString() ?? "0");
-    if (usedUsd.gte(apiKey.dailyLimitUsd.toString())) {
-      return sendApiError(reply, 429, "API key daily quota exceeded", "insufficient_quota");
+    if (usedUsd.gte(apiKey.totalLimitUsd.toString())) {
+      await prisma.apiKey.update({
+        where: { id: apiKey.id },
+        data: { status: "DISABLED" },
+      });
+      return sendApiError(reply, 429, "API key total quota exceeded and has been disabled", "insufficient_quota");
     }
   }
 

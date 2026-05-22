@@ -47,8 +47,10 @@ type ApiKey = {
   status: "ACTIVE" | "DISABLED" | "REVOKED" | string;
   rateLimitPerMinute: number;
   dailyLimitUsd?: string | null;
+  totalLimitUsd?: string | null;
   concurrencyLimit: number;
   allowedModels: string[];
+  expiresAt?: string | null;
   lastUsedAt?: string | null;
   createdAt: string;
 };
@@ -929,16 +931,18 @@ function Keys({
 }) {
   const [name, setName] = useState("default");
   const [rateLimit, setRateLimit] = useState(60);
-  const [dailyLimitUsd, setDailyLimitUsd] = useState("");
+  const [totalLimitUsd, setTotalLimitUsd] = useState("");
   const [concurrencyLimit, setConcurrencyLimit] = useState(0);
+  const [expiresAt, setExpiresAt] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
   const [configKey, setConfigKey] = useState<ApiKey | null>(null);
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
   const [editName, setEditName] = useState("");
   const [editRateLimit, setEditRateLimit] = useState(60);
-  const [editDailyLimitUsd, setEditDailyLimitUsd] = useState("");
+  const [editTotalLimitUsd, setEditTotalLimitUsd] = useState("");
   const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
+  const [editExpiresAt, setEditExpiresAt] = useState("");
 
   async function createKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -949,8 +953,9 @@ function Keys({
         body: JSON.stringify({
           name,
           rateLimitPerMinute: Number(rateLimit),
-          dailyLimitUsd: normalizeOptionalNumberText(dailyLimitUsd),
+          totalLimitUsd: normalizeOptionalNumberText(totalLimitUsd),
           concurrencyLimit: Number(concurrencyLimit),
+          expiresAt: normalizeOptionalDateInput(expiresAt),
           allowedModels: [],
         }),
       });
@@ -970,8 +975,9 @@ function Keys({
     setEditingKey(key);
     setEditName(key.name);
     setEditRateLimit(key.rateLimitPerMinute);
-    setEditDailyLimitUsd(limitValue(key.dailyLimitUsd));
+    setEditTotalLimitUsd(limitValue(key.totalLimitUsd ?? key.dailyLimitUsd));
     setEditConcurrencyLimit(key.concurrencyLimit ?? 0);
+    setEditExpiresAt(dateInputValue(key.expiresAt));
   }
 
   async function saveEditingKey(event: FormEvent<HTMLFormElement>) {
@@ -988,8 +994,9 @@ function Keys({
         body: JSON.stringify({
           name: editName,
           rateLimitPerMinute: Number(editRateLimit),
-          dailyLimitUsd: normalizeOptionalNumberText(editDailyLimitUsd),
+          totalLimitUsd: normalizeOptionalNumberText(editTotalLimitUsd),
           concurrencyLimit: Number(editConcurrencyLimit),
+          expiresAt: normalizeOptionalDateInput(editExpiresAt),
         }),
       });
       setEditingKey(null);
@@ -1059,12 +1066,12 @@ function Keys({
               />
             </label>
             <label className="field">
-              <span>每日限额 USD</span>
+              <span>总限额 USD</span>
               <input
                 className="input"
-                value={dailyLimitUsd}
+                value={totalLimitUsd}
                 min={0}
-                onChange={(event) => setDailyLimitUsd(event.target.value)}
+                onChange={(event) => setTotalLimitUsd(event.target.value)}
                 placeholder="留空不限"
                 step="0.00000001"
                 type="number"
@@ -1079,6 +1086,15 @@ function Keys({
                 max={10000}
                 onChange={(event) => setConcurrencyLimit(Number(event.target.value))}
                 type="number"
+              />
+            </label>
+            <label className="field">
+              <span>过期时间</span>
+              <input
+                className="input"
+                value={expiresAt}
+                onChange={(event) => setExpiresAt(event.target.value)}
+                type="datetime-local"
               />
             </label>
             <button className="button" type="submit">
@@ -1105,6 +1121,7 @@ function Keys({
                   <th>限流</th>
                   <th>限额</th>
                   <th>并发</th>
+                  <th>过期</th>
                   <th>创建时间</th>
                   <th>操作</th>
                 </tr>
@@ -1120,8 +1137,9 @@ function Keys({
                       <StatusPill status={key.status} />
                     </td>
                     <td>{key.rateLimitPerMinute}/min</td>
-                    <td>{formatDailyLimit(key.dailyLimitUsd)}</td>
+                    <td>{formatTotalLimit(key.totalLimitUsd ?? key.dailyLimitUsd)}</td>
                     <td>{formatConcurrencyLimit(key.concurrencyLimit)}</td>
+                    <td>{key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}</td>
                     <td>{dateTime(key.createdAt)}</td>
                     <td>
                       <div className="button-row compact">
@@ -1173,7 +1191,7 @@ function Keys({
                     </td>
                   </tr>
                 ))}
-                {apiKeys.length === 0 ? <EmptyRow colSpan={8} /> : null}
+                {apiKeys.length === 0 ? <EmptyRow colSpan={9} /> : null}
               </tbody>
             </table>
           </div>
@@ -1237,8 +1255,9 @@ function Keys({
                   <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
                 </MobileField>
                 <MobileField label="限流">{key.rateLimitPerMinute}/min</MobileField>
-                <MobileField label="每日限额">{formatDailyLimit(key.dailyLimitUsd)}</MobileField>
+                <MobileField label="总限额">{formatTotalLimit(key.totalLimitUsd ?? key.dailyLimitUsd)}</MobileField>
                 <MobileField label="并发">{formatConcurrencyLimit(key.concurrencyLimit)}</MobileField>
+                <MobileField label="过期">{key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}</MobileField>
                 <MobileField label="创建时间">{dateTime(key.createdAt)}</MobileField>
               </MobileRecord>
             ))}
@@ -1269,12 +1288,12 @@ function Keys({
                 />
               </label>
               <label className="field">
-                <span>每日限额 USD</span>
+                <span>总限额 USD</span>
                 <input
                   className="input"
-                  value={editDailyLimitUsd}
+                  value={editTotalLimitUsd}
                   min={0}
-                  onChange={(event) => setEditDailyLimitUsd(event.target.value)}
+                  onChange={(event) => setEditTotalLimitUsd(event.target.value)}
                   placeholder="留空不限"
                   step="0.00000001"
                   type="number"
@@ -1289,6 +1308,15 @@ function Keys({
                   max={10000}
                   onChange={(event) => setEditConcurrencyLimit(Number(event.target.value))}
                   type="number"
+                />
+              </label>
+              <label className="field">
+                <span>过期时间</span>
+                <input
+                  className="input"
+                  value={editExpiresAt}
+                  onChange={(event) => setEditExpiresAt(event.target.value)}
+                  type="datetime-local"
                 />
               </label>
             </div>
@@ -4241,7 +4269,30 @@ function normalizeOptionalNumberText(value: string) {
   return trimmed;
 }
 
-function formatDailyLimit(value: string | number | null | undefined) {
+function normalizeOptionalDateInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return new Date(trimmed).toISOString();
+}
+
+function dateInputValue(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function formatTotalLimit(value: string | number | null | undefined) {
   const numeric = Number(value ?? 0);
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return "不限";
