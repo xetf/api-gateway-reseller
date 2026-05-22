@@ -290,6 +290,11 @@ async function acquireApiKeyConcurrency(
     }
 
     let released = false;
+    const refreshTtl = setInterval(() => {
+      void app.redis.expire(key, 120).catch((error: unknown) => {
+        app.log.warn({ error, apiKeyId }, "Failed to refresh API key concurrency lock");
+      });
+    }, 30_000);
     return {
       ok: true as const,
       release: async () => {
@@ -297,6 +302,7 @@ async function acquireApiKeyConcurrency(
           return;
         }
         released = true;
+        clearInterval(refreshTtl);
         try {
           const current = await app.redis.decr(key);
           if (current <= 0) {

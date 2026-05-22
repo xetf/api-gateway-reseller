@@ -3,6 +3,11 @@ import { prisma } from "@gateway/db";
 import { z } from "zod";
 import { createApiKey } from "../lib/crypto.js";
 import { requireUser } from "../services/auth.js";
+import {
+  disableApiKeyIfTotalLimitReached,
+  disableExpiredOrOverLimitApiKeys,
+  getApiKeyTotalUsageUsd,
+} from "../services/api-key-limits.js";
 
 const moneyLimitSchema = z
   .union([z.string(), z.number(), z.null()])
@@ -65,6 +70,7 @@ const createKeySchema = z.object({
 export async function apiKeyRoutes(app: FastifyInstance) {
   app.get("/api-keys", { preHandler: requireUser }, async (request) => {
     const user = request.user as { sub: string };
+    await disableExpiredOrOverLimitApiKeys(user.sub);
 
     const apiKeys = await prisma.apiKey.findMany({
       where: { userId: user.sub },
@@ -129,7 +135,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
     };
   });
 
-  app.patch("/api-keys/:id", { preHandler: requireUser }, async (request) => {
+  app.patch("/api-keys/:id", { preHandler: requireUser }, async (request, reply) => {
     const user = request.user as { sub: string };
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z
@@ -144,12 +150,46 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         allowedModels: z.array(z.string()).optional(),
       })
       .parse(request.body);
+    const shouldActivate = body.status === "ACTIVE";
     const data = {
       ...body,
       totalLimitUsd:
         body.totalLimitUsd === undefined ? body.dailyLimitUsd : body.totalLimitUsd,
       dailyLimitUsd: undefined,
+      status: shouldActivate ? undefined : body.status,
     };
+
+    const existing = await prisma.apiKey.findFirst({
+      where: {
+        id: params.id,
+        userId: user.sub,
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+        totalLimitUsd: true,
+      },
+    });
+
+    if (!existing) {
+      return reply.status(404).send({ message: "API key not found" });
+    }
+
+    if (shouldActivate) {
+      const nextExpiresAt = body.expiresAt !== undefined ? body.expiresAt : existing.expiresAt;
+      if (nextExpiresAt && nextExpiresAt <= new Date()) {
+        return reply.status(400).send({ message: "Cannot enable an expired API key" });
+      }
+
+      const nextTotalLimitUsd =
+        data.totalLimitUsd === undefined ? existing.totalLimitUsd?.toString() : data.totalLimitUsd;
+      if (nextTotalLimitUsd) {
+        const usedUsd = await getApiKeyTotalUsageUsd(existing.id);
+        if (usedUsd.gte(nextTotalLimitUsd)) {
+          return reply.status(400).send({ message: "Cannot enable an API key over its total quota" });
+        }
+      }
+    }
 
     const apiKey = await prisma.apiKey.update({
       where: {
@@ -158,6 +198,26 @@ export async function apiKeyRoutes(app: FastifyInstance) {
       },
       data,
     });
+
+    if (shouldActivate) {
+      const activatedApiKey = await prisma.apiKey.update({
+        where: { id: apiKey.id },
+        data: { status: "ACTIVE" },
+      });
+      return { apiKey: activatedApiKey };
+    }
+
+    if (apiKey.status === "ACTIVE" && apiKey.expiresAt && apiKey.expiresAt <= new Date()) {
+      const disabledApiKey = await prisma.apiKey.update({
+        where: { id: apiKey.id },
+        data: { status: "DISABLED" },
+      });
+      return { apiKey: disabledApiKey };
+    }
+
+    if (apiKey.status === "ACTIVE" && (await disableApiKeyIfTotalLimitReached(apiKey))) {
+      return { apiKey: { ...apiKey, status: "DISABLED" } };
+    }
 
     return { apiKey };
   });
