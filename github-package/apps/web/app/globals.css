@@ -1281,6 +1281,106 @@ td .pill {
   text-align: center;
 }
 
+.pool-channel-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pool-channel-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 2fr) minmax(156px, 0.44fr);
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 9px;
+}
+
+.pool-channel-main {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pool-channel-title,
+.pool-channel-statuses {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pool-channel-title strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.pool-channel-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(82px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.channel-fact {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 7px;
+  background: var(--soft);
+  padding: 7px 8px;
+}
+
+.channel-fact.wide {
+  grid-column: span 2;
+}
+
+.channel-fact span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.channel-fact strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.pool-channel-actions {
+  display: flex;
+  align-content: flex-start;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pool-channel-actions .button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.pool-channel-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .mobile-record {
   position: relative;
   display: grid;
@@ -1400,6 +1500,19 @@ td .pill {
   .admin-tool-grid,
   .pricing-layout {
     grid-template-columns: 1fr;
+  }
+
+  .pool-channel-row {
+    grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.7fr);
+  }
+
+  .pool-channel-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .pool-channel-facts {
+    grid-template-columns: repeat(4, minmax(86px, 1fr));
   }
 }
 
@@ -1573,10 +1686,22 @@ td .pill {
   .search-input {
     width: 100%;
   }
+
+  .pool-channel-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pool-channel-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
   .table-wrap {
+    display: none;
+  }
+
+  .pool-channel-list {
     display: none;
   }
 

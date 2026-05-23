@@ -4133,116 +4133,94 @@ function AdminModelPools({
                   </div>
                 </div>
 
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>上游</th>
-                        <th>可调用</th>
-                        <th>池状态</th>
-                        <th>价格</th>
-                        <th>上游状态</th>
-                        <th>自动检测</th>
-                        <th>检测接口</th>
-                        <th>Key</th>
-                        <th>惩罚</th>
-                        <th>恢复</th>
-                        <th>优先级</th>
-                        <th>连续失败</th>
-                        <th>上次检测</th>
-                        <th>下次检测</th>
-                        <th>平均首字</th>
-                        <th>平均总耗时</th>
-                        <th>错误</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pool.channels.map((channel) => (
-                        <tr key={channel.id}>
-                          <td>{channel.upstreamProvider}</td>
-                          <td>
-                            <StatusPill status={channel.effectiveStatus} strong />
-                          </td>
-                          <td>
-                            <StatusPill status={channel.status} />
-                          </td>
-                          <td>
-                            <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
-                          </td>
-                          <td>
-                            <StatusPill status={channel.providerStatus} />
-                          </td>
-                          <td>
-                            <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
-                          </td>
-                          <td>{modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}</td>
-                          <td>{channel.activeKeyCount}</td>
-                          <td>{penaltyCountdown(channel, healthCheck, nowMs)}</td>
-                          <td>{channel.recoverySuccesses}/2</td>
-                          <td>{channel.priority}</td>
-                          <td>{channel.consecutiveFailures}</td>
-                          <td>{channel.lastCheckedAt ? dateTime(channel.lastCheckedAt) : "-"}</td>
-                          <td>{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</td>
-                          <td>{seconds(channel.lastFirstTokenLatencyMs)}</td>
-                          <td>{seconds(channel.lastLatencyMs)}</td>
-                          <td className="muted-cell">{channel.lastError ?? "-"}</td>
-                          <td>
-                            <div className="button-row compact">
-                              <button
-                                className="button secondary"
-                                disabled={busyId === channel.id}
-                                onClick={() => checkChannel(channel)}
-                                type="button"
-                              >
-                                检测
-                              </button>
-                              {channel.status !== "FORCED_ACTIVE" ? (
-                                <button
-                                  className="button"
-                                  disabled={busyId === channel.id}
-                                  onClick={() => setChannelStatus(channel, "FORCED_ACTIVE")}
-                                  type="button"
-                                >
-                                  人工可用
-                                </button>
-                              ) : null}
-                              {channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE" ? (
-                                <button
-                                  className="button secondary"
-                                  disabled={busyId === channel.id}
-                                  onClick={() => setChannelStatus(channel, "DISABLED")}
-                                  type="button"
-                                >
-                                  停用
-                                </button>
-                              ) : (
-                                <button
-                                  className="button secondary"
-                                  disabled={busyId === channel.id}
-                                  onClick={() => setChannelStatus(channel, "ACTIVE")}
-                                  type="button"
-                                >
-                                  自动可用
-                                </button>
-                              )}
-                              <button
-                                className="button danger"
-                                disabled={busyId === channel.id}
-                                onClick={() => deleteChannel(channel)}
-                                type="button"
-                              >
-                                <Trash2 size={15} />
-                                删除
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {pool.channels.length === 0 ? <EmptyRow colSpan={18} /> : null}
-                    </tbody>
-                </table>
-              </div>
+                <div className="pool-channel-list">
+                  {pool.channels.map((channel) => (
+                    <article className="pool-channel-row" key={channel.id}>
+                      <div className="pool-channel-main">
+                        <div className="pool-channel-title">
+                          <strong>{channel.upstreamProvider}</strong>
+                          <StatusPill status={channel.effectiveStatus} strong />
+                        </div>
+                        <div className="pool-channel-statuses">
+                          <StatusPill status={channel.status} />
+                          <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
+                          <StatusPill status={channel.providerStatus} />
+                          <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
+                        </div>
+                      </div>
+                      <div className="pool-channel-facts">
+                        <ChannelFact label="检测接口">
+                          {modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}
+                        </ChannelFact>
+                        <ChannelFact label="ACTIVE Key">{channel.activeKeyCount}</ChannelFact>
+                        <ChannelFact label="惩罚">{penaltyCountdown(channel, healthCheck, nowMs)}</ChannelFact>
+                        <ChannelFact label="恢复">{channel.recoverySuccesses}/2</ChannelFact>
+                        <ChannelFact label="优先级">{channel.priority}</ChannelFact>
+                        <ChannelFact label="连续失败">{channel.consecutiveFailures}</ChannelFact>
+                        <ChannelFact label="上次检测">
+                          {channel.lastCheckedAt ? dateTime(channel.lastCheckedAt) : "-"}
+                        </ChannelFact>
+                        <ChannelFact label="下次检测">
+                          {nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}
+                        </ChannelFact>
+                        <ChannelFact label="平均首字">{seconds(channel.lastFirstTokenLatencyMs)}</ChannelFact>
+                        <ChannelFact label="平均总耗时">{seconds(channel.lastLatencyMs)}</ChannelFact>
+                        <ChannelFact label="错误" wide>
+                          {channel.lastError ?? "-"}
+                        </ChannelFact>
+                      </div>
+                      <div className="pool-channel-actions">
+                        <button
+                          className="button secondary"
+                          disabled={busyId === channel.id}
+                          onClick={() => checkChannel(channel)}
+                          type="button"
+                        >
+                          检测
+                        </button>
+                        {channel.status !== "FORCED_ACTIVE" ? (
+                          <button
+                            className="button"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "FORCED_ACTIVE")}
+                            type="button"
+                          >
+                            人工可用
+                          </button>
+                        ) : null}
+                        {channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "DISABLED")}
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : (
+                          <button
+                            className="button secondary"
+                            disabled={busyId === channel.id}
+                            onClick={() => setChannelStatus(channel, "ACTIVE")}
+                            type="button"
+                          >
+                            自动可用
+                          </button>
+                        )}
+                        <button
+                          className="button danger"
+                          disabled={busyId === channel.id}
+                          onClick={() => deleteChannel(channel)}
+                          type="button"
+                        >
+                          <Trash2 size={15} />
+                          删除
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {pool.channels.length === 0 ? <div className="pool-channel-empty">暂无上游渠道</div> : null}
+                </div>
               <div className="mobile-record-list">
                 {pool.channels.map((channel) => (
                   <MobileRecord
@@ -5555,6 +5533,23 @@ function MobileField({
 }) {
   return (
     <div className={wide ? "mobile-field wide" : "mobile-field"}>
+      <span>{label}</span>
+      <strong>{children}</strong>
+    </div>
+  );
+}
+
+function ChannelFact({
+  label,
+  children,
+  wide = false,
+}: {
+  label: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <div className={wide ? "channel-fact wide" : "channel-fact"}>
       <span>{label}</span>
       <strong>{children}</strong>
     </div>
