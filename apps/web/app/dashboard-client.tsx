@@ -5910,6 +5910,56 @@ function ChannelFact({
   );
 }
 
+type ChannelStatusTone = "ok" | "warn" | "neutral";
+
+function compactStatusTone(status: string): ChannelStatusTone {
+  if (status === "ACTIVE" || status === "READY" || status === "FORCED_ACTIVE" || status === "FORCED_READY" || status === "HEALTHY" || status === "SUCCESS" || status === "AUTO_CHECK_ON") {
+    return "ok";
+  }
+  if (
+    status === "DISABLED" ||
+    status === "UNAVAILABLE" ||
+    status === "PENALIZED" ||
+    status === "FAILED" ||
+    status === "UNHEALTHY" ||
+    status === "MISSING" ||
+    status === "REVOKED" ||
+    status === "AUTO_CHECK_OFF"
+  ) {
+    return "warn";
+  }
+  return "neutral";
+}
+
+function compactStatusLabel(status: string) {
+  const labelMap: Record<string, string> = {
+    ACTIVE: "启用",
+    AUTO_CHECK_OFF: "自检关",
+    AUTO_CHECK_ON: "自检开",
+    DISABLED: "停用",
+    FAILED: "失败",
+    FORCED_ACTIVE: "人工",
+    FORCED_READY: "人工",
+    HEALTHY: "正常",
+    MISSING: "缺失",
+    PENALIZED: "惩罚",
+    READY: "可调",
+    REVOKED: "失效",
+    SUCCESS: "成功",
+    UNAVAILABLE: "不可用",
+    UNHEALTHY: "异常",
+    WAITING: "等待",
+  };
+  return labelMap[status] ?? status;
+}
+
+function channelScheduleLabel(status: string) {
+  if (status === "ACTIVE") {
+    return "自动";
+  }
+  return compactStatusLabel(status);
+}
+
 function ModelPoolChannelCard({
   channel,
   pool,
@@ -5931,33 +5981,46 @@ function ModelPoolChannelCard({
   onDelete: (channel: ModelPoolChannel) => void;
   onSetStatus: (channel: ModelPoolChannel, status: ModelPoolChannelStatus) => void;
 }) {
+  const priceStatus = channel.hasPrice && channel.priceEnabled ? "ACTIVE" : channel.hasPrice ? "DISABLED" : "MISSING";
+  const errorText = channel.lastError?.trim();
+  const statusItems = [
+    { label: "通道", value: compactStatusLabel(channel.effectiveStatus), tone: compactStatusTone(channel.effectiveStatus) },
+    { label: "调度", value: channelScheduleLabel(channel.status), tone: compactStatusTone(channel.status) },
+    { label: "定价", value: priceStatus === "ACTIVE" ? "已开" : priceStatus === "DISABLED" ? "停用" : "缺失", tone: compactStatusTone(priceStatus) },
+    { label: "上游", value: compactStatusLabel(channel.providerStatus), tone: compactStatusTone(channel.providerStatus) },
+  ];
+
   return (
-    <article className={rank ? "pool-channel-row callable" : "pool-channel-row unavailable"}>
+    <article className={`${rank ? "pool-channel-row callable" : "pool-channel-row unavailable"}${errorText ? " has-error" : ""}`}>
       <div className="pool-channel-main">
-        <div className="pool-channel-title">
-          {rank ? <span className="rank-pill">#{rank}</span> : null}
-          <strong>{channel.upstreamProvider}</strong>
-          <StatusPill status={channel.effectiveStatus} strong />
+        <div className="pool-channel-top">
+          <div className="pool-channel-title">
+            {rank ? <span className="rank-pill">#{rank}</span> : null}
+            <strong>{channel.upstreamProvider}</strong>
+          </div>
+          <span className={`channel-state-dot ${compactStatusTone(channel.effectiveStatus)}`} aria-hidden="true" />
         </div>
-        <div className="pool-channel-statuses">
-          <StatusPill status={channel.status} />
-          <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
-          <StatusPill status={channel.providerStatus} />
+        <div className="pool-channel-status-strip" aria-label="渠道状态">
+          {statusItems.map((item) => (
+            <span className={`compact-status ${item.tone}`} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </span>
+          ))}
         </div>
       </div>
       <div className="pool-channel-facts">
-        <ChannelFact label="Key">{channel.activeKeyCount}</ChannelFact>
-        <ChannelFact label="惩罚">{penaltyCountdown(channel, healthCheck, nowMs)}</ChannelFact>
-        <ChannelFact label="失败">{channel.consecutiveFailures}</ChannelFact>
-        <ChannelFact label="恢复">{channel.recoverySuccesses}/2</ChannelFact>
-        <ChannelFact label="首字">{seconds(channel.lastFirstTokenLatencyMs)}</ChannelFact>
-        <ChannelFact label="总耗时">{seconds(channel.lastLatencyMs)}</ChannelFact>
-        <ChannelFact label="优先级">{channel.priority}</ChannelFact>
-        <ChannelFact label="下次">{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</ChannelFact>
-        <ChannelFact label="错误" wide>
-          {channel.lastError ?? "-"}
-        </ChannelFact>
+        <ChannelFact label="Key/惩罚">{channel.activeKeyCount} / {penaltyCountdown(channel, healthCheck, nowMs)}</ChannelFact>
+        <ChannelFact label="失败/恢复">{channel.consecutiveFailures} / {channel.recoverySuccesses}/2</ChannelFact>
+        <ChannelFact label="首字/总耗">{seconds(channel.lastFirstTokenLatencyMs)} / {seconds(channel.lastLatencyMs)}</ChannelFact>
+        <ChannelFact label="优先/下次">{channel.priority} / {nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</ChannelFact>
       </div>
+      {errorText ? (
+        <div className="pool-channel-error">
+          <span>错误</span>
+          <strong>{errorText}</strong>
+        </div>
+      ) : null}
       <div className="pool-channel-actions">
         <button
           className="button secondary"
