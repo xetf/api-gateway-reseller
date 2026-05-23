@@ -4182,7 +4182,7 @@ function AdminModelPools({
                     </div>
                   </section>
                 </div>
-              <div className="mobile-record-list">
+              <div className="mobile-record-list model-pool-channel-records">
                 {pool.channels.map((channel) => (
                   <MobileRecord
                     key={channel.id}
@@ -4992,6 +4992,57 @@ function UpstreamProviders({
                         {(provider.keys ?? []).length === 0 ? <EmptyRow colSpan={8} /> : null}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="mobile-record-list">
+                    {(provider.keys ?? []).map((key) => (
+                      <MobileRecord
+                        key={key.id}
+                        title={displayUpstreamProviderKeyName(key.name)}
+                        meta={key.keyPrefix || key.key}
+                        badges={<StatusPill status={key.status} />}
+                        actions={
+                          <>
+                            {key.status === "ACTIVE" ? (
+                              <button
+                                className="button secondary"
+                                disabled={busyKeyId === key.id}
+                                onClick={() => setProviderKeyStatus(key, "DISABLED")}
+                                type="button"
+                              >
+                                停用
+                              </button>
+                            ) : (
+                              <button
+                                className="button"
+                                disabled={busyKeyId === key.id}
+                                onClick={() => setProviderKeyStatus(key, "ACTIVE")}
+                                type="button"
+                              >
+                                启用
+                              </button>
+                            )}
+                            <button
+                              className="button danger"
+                              disabled={busyKeyId === key.id}
+                              onClick={() => deleteProviderKey(key)}
+                              type="button"
+                            >
+                              删除
+                            </button>
+                          </>
+                        }
+                      >
+                        <MobileField label="优先级">{key.priority}</MobileField>
+                        <MobileField label="最近检测" wide>
+                          {key.lastCheckedAt ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}` : "-"}
+                        </MobileField>
+                        <MobileField label="最近使用">{key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}</MobileField>
+                        <MobileField label="错误" wide>
+                          {key.lastError ?? "-"}
+                        </MobileField>
+                      </MobileRecord>
+                    ))}
+                    {(provider.keys ?? []).length === 0 ? <MobileEmpty>暂无 Key</MobileEmpty> : null}
                   </div>
 
                   <div className="section-head compact-head">

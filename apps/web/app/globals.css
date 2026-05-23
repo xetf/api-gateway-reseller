@@ -1896,6 +1896,144 @@ td .button-row.compact {
 }
 
 @media (max-width: 720px) {
+  .shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: grid;
+    gap: 8px;
+    border-bottom: 1px solid var(--line);
+    background: rgb(251 252 254 / 96%);
+    padding: 8px 10px 10px;
+    box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
+    backdrop-filter: blur(14px);
+  }
+
+  .brand {
+    margin-bottom: 0;
+  }
+
+  .nav {
+    display: flex;
+    gap: 7px;
+    margin-inline: -10px;
+    overflow-x: auto;
+    padding: 0 10px 2px;
+    scroll-padding-inline: 10px;
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav button {
+    flex: 0 0 108px;
+    min-height: 42px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 8px;
+    text-align: center;
+  }
+
+  .nav button span {
+    justify-items: center;
+  }
+
+  .main {
+    padding: 10px 10px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    gap: 8px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: #ffffff;
+    margin-bottom: 10px;
+    padding: 10px;
+    box-shadow: var(--panel-shadow);
+  }
+
+  .topbar h1 {
+    font-size: 21px;
+  }
+
+  .topbar p {
+    margin-top: 4px;
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .topbar-side {
+    gap: 8px;
+  }
+
+  .account-chip {
+    min-height: 34px;
+  }
+
+  .action-panel,
+  .card,
+  .provider-panel,
+  .subpanel,
+  .pricing-preview {
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .action-panel {
+    gap: 10px;
+  }
+
+  .action-panel-tools {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .action-panel-tools form.button-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .admin-page .button-row:not(.compact),
+  .provider-head > .button-row,
+  .section-head > .button-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    width: 100%;
+  }
+
+  .admin-page .action-panel-tools form.button-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-page .button-row:not(.compact) .button,
+  .admin-page .button-row:not(.compact) .input,
+  .provider-head > .button-row .button,
+  .provider-head > .button-row .input,
+  .section-head > .button-row .button,
+  .section-head > .button-row .input,
+  .section-head > .button {
+    width: 100%;
+  }
+
+  .inline-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    width: 100%;
+    white-space: normal;
+  }
+
+  .section-head {
+    flex-direction: column;
+  }
+
   .model-pool-scroll {
     max-height: none;
     overflow: visible;
@@ -1907,18 +2045,75 @@ td .button-row.compact {
   }
 
   .pool-channel-groups {
+    display: grid;
+    gap: 8px;
+  }
+
+  .pool-channel-list {
+    grid-template-columns: 1fr;
+  }
+
+  .pool-channel-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  }
+
+  .pool-channel-actions .button {
+    width: 100%;
+    min-height: 32px;
+    white-space: normal;
+  }
+
+  .model-pool-channel-records {
     display: none;
   }
 
   .mobile-record-list {
     display: grid;
+    gap: 10px;
+    margin-top: 8px;
+  }
+
+  .mobile-record {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .mobile-record-head {
+    display: grid;
+    grid-template-columns: 1fr;
     gap: 6px;
-    margin-top: 6px;
+  }
+
+  .mobile-record-badges {
+    justify-content: flex-start;
+  }
+
+  .mobile-field-grid {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 6px;
+  }
+
+  .mobile-actions {
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 6px;
+  }
+
+  .mobile-actions .button {
+    min-height: 34px;
+    padding: 6px 8px;
+    line-height: 1.25;
+    white-space: normal;
   }
 
   .section-head .input,
   .section-head .button {
     width: 100%;
+  }
+
+  .batch-panel-head {
+    flex-direction: column;
+    gap: 8px;
   }
 
   .provider-title {
@@ -1957,8 +2152,9 @@ td .button-row.compact {
   }
 
   .sidebar {
-    position: static;
-    padding: 8px 10px 6px;
+    position: sticky;
+    top: 0;
+    padding: 7px 10px 9px;
   }
 
   .brand {
@@ -1972,13 +2168,13 @@ td .button-row.compact {
   }
 
   .nav {
-    gap: 8px;
-    margin-inline: -2px;
+    gap: 6px;
+    margin-inline: -10px;
   }
 
   .nav button {
-    flex-basis: min(122px, 38vw);
-    min-height: 38px;
+    flex-basis: 104px;
+    min-height: 40px;
     gap: 8px;
     padding-inline: 8px;
   }
@@ -2108,7 +2304,7 @@ td .button-row.compact {
 
   .button-row:not(.compact) .button,
   .action-panel-tools .button {
-    flex: 1 1 140px;
+    flex: 1 1 132px;
   }
 
   .button {
@@ -2185,6 +2381,28 @@ td .button-row.compact {
     border-radius: 12px 12px 0 0;
   }
 
+  .form-modal {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .form-modal > .form {
+    min-height: 0;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .form-modal > .modal-body,
+  .form-modal > .form > .modal-body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .config-modal,
   .form-modal {
     min-height: min(360px, 70dvh);
@@ -2210,6 +2428,7 @@ td .button-row.compact {
   .modal-footer {
     display: grid;
     grid-template-columns: 1fr;
+    flex: 0 0 auto;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   }
 
@@ -2273,17 +2492,17 @@ td .button-row.compact {
   }
 
   .mobile-field-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 6px;
   }
 
   .mobile-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 6px;
   }
 
   .mobile-actions .button {
-    min-height: 32px;
+    min-height: 34px;
     padding: 0 7px;
     font-size: 12px;
   }
@@ -2322,7 +2541,7 @@ td .button-row.compact {
 
 @media (max-width: 420px) {
   .nav button {
-    flex-basis: 138px;
+    flex-basis: 102px;
   }
 
   .topbar h1 {
@@ -2351,6 +2570,14 @@ td .button-row.compact {
   .topbar-side .button {
     width: 40px;
     min-width: 40px;
+  }
+
+  .mobile-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .button-row.compact {
