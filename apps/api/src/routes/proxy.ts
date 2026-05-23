@@ -39,6 +39,7 @@ const proxyRoutePatterns = [
 ];
 const streamFirstTokenTimeoutMs = 30_000;
 const streamFirstTokenTimeoutMessage = "Stream first token timeout after 30 seconds";
+const missingUsageMessage = "Upstream response did not include billable token usage";
 
 export async function proxyRoutes(app: FastifyInstance) {
   for (const pattern of proxyRoutePatterns) {
@@ -247,6 +248,7 @@ export async function proxyRoutes(app: FastifyInstance) {
       }
 
       const usage = usageFromOpenAIResponse(responseBody);
+      assertBillableUsage(usage);
       await chargeForRequest({
         requestId: apiRequest.id,
         userId: user.id,
@@ -661,19 +663,16 @@ async function proxyStream(params: {
           throw createFirstTokenTimeoutError();
         }
 
-        const usage = streamUsage ?? {
-          inputTokens: 0,
-          cachedInputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          raw: null,
-        };
+        if (!streamUsage) {
+          throw createMissingUsageError();
+        }
+        assertBillableUsage(streamUsage);
 
         await chargeForRequest({
           requestId: apiRequestId,
           userId,
           price,
-          usage,
+          usage: streamUsage,
           startedAt,
         });
 
@@ -845,6 +844,20 @@ function createFirstTokenTimeoutError() {
 
 function isFirstTokenTimeoutError(error: unknown) {
   return error instanceof Error && error.name === "FirstTokenTimeoutError";
+}
+
+function createMissingUsageError() {
+  const error = new Error(missingUsageMessage);
+  error.name = "MissingUsageError";
+  return error;
+}
+
+function assertBillableUsage(usage: Usage) {
+  if (usage.totalTokens > 0) {
+    return;
+  }
+
+  throw createMissingUsageError();
 }
 
 function parseUsageFromSseBuffer(buffer: string): Usage | null {
