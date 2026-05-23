@@ -1510,22 +1510,24 @@ td .button-row.compact {
 
 .pool-channel-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 5px;
 }
 
 .pool-channel-groups {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 8px;
 }
 
 .pool-channel-section {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 8px;
+  padding: 7px;
   background: #f8fafc;
 }
 
@@ -1543,28 +1545,28 @@ td .button-row.compact {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   color: #344054;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
 .pool-channel-section-head strong {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .pool-channel-row {
   display: grid;
   grid-template-columns: 1fr;
   align-content: start;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #ffffff;
-  padding: 7px;
-  box-shadow: 0 4px 12px rgb(15 23 42 / 4%);
+  padding: 6px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
 }
 
 .pool-channel-row.callable {
@@ -1578,7 +1580,7 @@ td .button-row.compact {
 .pool-channel-main {
   display: grid;
   align-content: start;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -1587,15 +1589,15 @@ td .button-row.compact {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .pool-channel-title strong {
   min-width: 0;
   color: #0f172a;
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
@@ -1603,30 +1605,30 @@ td .button-row.compact {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 25px;
-  height: 22px;
+  min-width: 22px;
+  height: 19px;
   border-radius: 999px;
   background: #027a48;
   color: #ffffff;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 850;
 }
 
 .pool-channel-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .channel-fact {
   display: grid;
   align-content: start;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: var(--soft);
-  padding: 5px 6px;
+  padding: 4px 5px;
 }
 
 .channel-fact.wide {
@@ -1635,15 +1637,15 @@ td .button-row.compact {
 
 .channel-fact span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 760;
 }
 
 .channel-fact strong {
   min-width: 0;
   color: #111827;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10px;
+  line-height: 1.25;
   font-weight: 650;
   overflow-wrap: anywhere;
 }
@@ -1654,16 +1656,16 @@ td .button-row.compact {
   align-items: flex-start;
   justify-content: flex-start;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
   margin-top: auto;
   min-width: 0;
 }
 
 .pool-channel-actions .button {
-  min-height: 28px;
-  padding: 0 8px;
+  min-height: 25px;
+  padding: 0 6px;
   box-shadow: none;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .pool-channel-empty {
@@ -1796,7 +1798,7 @@ td .button-row.compact {
   }
 
   .pool-channel-list {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
   }
 }
 
@@ -2143,6 +2145,7 @@ td .button-row.compact {
 
   .pool-channel-groups {
     display: grid;
+    grid-template-columns: 1fr;
     gap: 8px;
   }
 
