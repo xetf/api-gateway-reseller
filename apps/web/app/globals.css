@@ -223,11 +223,13 @@ a {
 .admin-page {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .grid {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .metric-row {
@@ -246,6 +248,7 @@ a {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
+  min-width: 0;
   padding: 16px;
   box-shadow: var(--panel-shadow);
 }
@@ -418,7 +421,9 @@ a {
 
 .table-wrap {
   overflow-x: auto;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: #ffffff;
@@ -434,6 +439,92 @@ table {
   width: 100%;
   border-collapse: collapse;
   min-width: 760px;
+}
+
+.requests-card {
+  overflow: hidden;
+}
+
+.audit-card {
+  width: 100%;
+  max-width: 100%;
+}
+
+.audit-table-wrap {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+}
+
+.audit-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 6px 7px;
+  font-size: 11px;
+}
+
+.audit-table th {
+  font-size: 11px;
+}
+
+.audit-table th:nth-child(1),
+.audit-table td:nth-child(1) {
+  width: 120px;
+}
+
+.audit-table th:nth-child(2),
+.audit-table td:nth-child(2) {
+  width: 110px;
+}
+
+.audit-table th:nth-child(3),
+.audit-table td:nth-child(3) {
+  width: 115px;
+}
+
+.audit-table th:nth-child(4),
+.audit-table td:nth-child(4) {
+  width: 100px;
+}
+
+.audit-table th:nth-child(5),
+.audit-table td:nth-child(5) {
+  width: 64px;
+}
+
+.audit-table th:nth-child(6),
+.audit-table td:nth-child(6),
+.audit-table th:nth-child(7),
+.audit-table td:nth-child(7),
+.audit-table th:nth-child(8),
+.audit-table td:nth-child(8),
+.audit-table th:nth-child(9),
+.audit-table td:nth-child(9) {
+  width: 52px;
+}
+
+.audit-table th:nth-child(10),
+.audit-table td:nth-child(10),
+.audit-table th:nth-child(11),
+.audit-table td:nth-child(11),
+.audit-table th:nth-child(12),
+.audit-table td:nth-child(12) {
+  width: 70px;
+}
+
+.audit-table th:nth-child(13),
+.audit-table td:nth-child(13),
+.audit-table th:nth-child(14),
+.audit-table td:nth-child(14) {
+  width: 60px;
+}
+
+.audit-table th:nth-child(15),
+.audit-table td:nth-child(15) {
+  width: 120px;
 }
 
 th,

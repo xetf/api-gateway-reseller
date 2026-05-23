@@ -1571,10 +1571,10 @@ function Requests({
   showCost?: boolean;
 }) {
   return (
-    <section className="card">
+    <section className={showCost ? "card requests-card audit-card" : "card requests-card"}>
       <h2 className="section-title">{compact ? "最近调用" : showCost ? "全站调用" : "调用记录"}</h2>
-      <div className="table-wrap">
-        <table>
+      <div className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"}>
+        <table className={showCost ? "audit-table" : undefined}>
           <thead>
 	            <tr>
 	              {showCost ? <th>用户</th> : null}
