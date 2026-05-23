@@ -956,6 +956,22 @@ tbody tr:hover td {
   min-width: 0;
 }
 
+.unified-price-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.unified-price-switch {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 6px 10px;
+}
+
 .unified-price-row-head strong {
   display: block;
   min-width: 0;
@@ -2166,6 +2182,10 @@ td .button-row.compact {
     display: grid;
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .unified-price-row-actions {
+    justify-content: flex-start;
   }
 
   .unified-price-preview {
