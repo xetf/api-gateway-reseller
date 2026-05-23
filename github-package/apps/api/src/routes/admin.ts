@@ -1285,6 +1285,50 @@ export async function adminRoutes(app: FastifyInstance) {
     return { modelPrice };
   });
 
+  app.put("/admin/model-prices/unified", async (request) => {
+    const body = z
+      .object({
+        updates: z
+          .array(
+            z.object({
+              model: z.string().min(1).max(120),
+              customerInputPer1MTok: z.string().or(z.number()),
+              customerCachedInputPer1MTok: z.string().or(z.number()).default("0"),
+              customerOutputPer1MTok: z.string().or(z.number()),
+              customerPriceMultiplier: z.string().or(z.number()).default("1"),
+            }),
+          )
+          .min(1),
+      })
+      .parse(request.body);
+
+    const updatesByModel = new Map(
+      body.updates.map((update) => [
+        update.model,
+        {
+          customerInputPer1MTok: String(update.customerInputPer1MTok),
+          customerCachedInputPer1MTok: String(update.customerCachedInputPer1MTok),
+          customerOutputPer1MTok: String(update.customerOutputPer1MTok),
+          customerPriceMultiplier: String(update.customerPriceMultiplier),
+        },
+      ]),
+    );
+
+    const results = await prisma.$transaction(
+      Array.from(updatesByModel.entries()).map(([model, data]) =>
+        prisma.modelPrice.updateMany({
+          where: { model },
+          data,
+        }),
+      ),
+    );
+
+    return {
+      updated: results.reduce((total, result) => total + result.count, 0),
+      models: updatesByModel.size,
+    };
+  });
+
   app.put("/admin/model-prices/:id", async (request) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z

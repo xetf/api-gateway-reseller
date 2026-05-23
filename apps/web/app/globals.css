@@ -934,6 +934,57 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.unified-price-list {
+  display: grid;
+  gap: 10px;
+}
+
+.unified-price-row {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.unified-price-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.unified-price-row-head strong {
+  display: block;
+  min-width: 0;
+  color: #111827;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.unified-price-row-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.unified-price-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.unified-price-preview .info-line {
+  border: 1px solid var(--soft-line);
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
 .compact-textarea {
   min-height: 98px;
 }
@@ -2104,6 +2155,22 @@ td .button-row.compact {
     padding: 6px 8px;
     line-height: 1.25;
     white-space: normal;
+  }
+
+  .unified-price-row {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .unified-price-row-head {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .unified-price-preview {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .section-head .input,
