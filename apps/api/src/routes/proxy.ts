@@ -37,6 +37,8 @@ const proxyRoutePatterns = [
   "/completions",
   "/images/generations",
 ];
+const streamFirstTokenTimeoutMs = 30_000;
+const streamFirstTokenTimeoutMessage = "Stream first token timeout after 30 seconds";
 
 export async function proxyRoutes(app: FastifyInstance) {
   for (const pattern of proxyRoutePatterns) {
@@ -123,10 +125,18 @@ export async function proxyRoutes(app: FastifyInstance) {
     });
 
     const upstreamBody = buildUpstreamBody(endpoint, body);
+    const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
+    let streamFirstTokenFetchTimedOut = false;
 
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
+      const firstTokenFetchTimeout = requestedStream
+        ? startFirstTokenTimeout(start, () => {
+            streamFirstTokenFetchTimedOut = true;
+            controller.abort(createFirstTokenTimeoutError());
+          })
+        : undefined;
 
       const upstreamResponse = await fetch(
         buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
@@ -142,7 +152,12 @@ export async function proxyRoutes(app: FastifyInstance) {
             : JSON.stringify(upstreamBody),
           signal: controller.signal,
         },
-      ).finally(() => clearTimeout(timeout));
+      ).finally(() => {
+        clearTimeout(timeout);
+        if (firstTokenFetchTimeout) {
+          clearTimeout(firstTokenFetchTimeout);
+        }
+      });
 
       await prisma.apiRequest.update({
         where: { id: apiRequest.id },
@@ -258,8 +273,15 @@ export async function proxyRoutes(app: FastifyInstance) {
       reply.header("content-type", contentType || "application/json");
       return reply.send(responseBody);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Upstream request failed";
-      await markRequestFailed(apiRequest, message, 502, Math.round(performance.now() - start));
+      const effectiveError = streamFirstTokenFetchTimedOut ? createFirstTokenTimeoutError() : error;
+      const message = effectiveError instanceof Error ? effectiveError.message : "Upstream request failed";
+      const statusCode = isFirstTokenTimeoutError(effectiveError) ? 504 : 502;
+      await markRequestFailed(
+        apiRequest,
+        message,
+        statusCode,
+        Math.round(performance.now() - start),
+      );
       if (billable && model) {
         await recordStickyModelPoolResult({
           callerIdentity: callerIpIdentity,
@@ -277,7 +299,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           logger: app.log,
         });
       }
-      return sendApiError(reply, 502, message, "upstream_error");
+      return sendApiError(reply, statusCode, message, statusCode === 504 ? "timeout_error" : "upstream_error");
     }
     });
   }
@@ -459,13 +481,14 @@ function shouldStreamResponse(
   requestUrl: string,
 ) {
   const contentType = upstreamResponse.headers.get("content-type") ?? "";
+
+  return requestAsksForStream(body, requestUrl) || contentType.includes("text/event-stream");
+}
+
+function requestAsksForStream(body: ProxyBody, requestUrl: string) {
   const url = new URL(requestUrl, "http://gateway.local");
 
-  return (
-    body.stream === true ||
-    url.searchParams.get("stream") === "true" ||
-    contentType.includes("text/event-stream")
-  );
+  return body.stream === true || url.searchParams.get("stream") === "true";
 }
 
 function redactBodyForLog(body: ProxyBody) {
@@ -568,9 +591,39 @@ async function proxyStream(params: {
     async start(controller) {
       const reader = upstreamResponse.body?.getReader();
       if (!reader) {
-        controller.close();
+        const error = new Error("Stream body missing");
+        await markRequestFailed({ id: apiRequestId }, error.message, 502, Math.round(performance.now() - startedAt));
+        await recordStickyModelPoolResult({
+          callerIdentity,
+          model,
+          channelId,
+          failed: true,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+        await recordModelPoolUserCallResult({
+          userId,
+          apiKeyId,
+          model,
+          channelId,
+          failed: true,
+          logger,
+        });
+        controller.error(error);
         return;
       }
+      let firstTokenTimedOut = false;
+      const firstTokenTimeout = startFirstTokenTimeout(startedAt, () => {
+        if (firstTokenLatencyMs !== null) {
+          return;
+        }
+
+        firstTokenTimedOut = true;
+        void reader.cancel(createFirstTokenTimeoutError()).catch(() => undefined);
+      });
+      const markFirstTokenSeen = () => {
+        firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+        clearTimeout(firstTokenTimeout);
+      };
 
       try {
         while (true) {
@@ -583,7 +636,7 @@ async function proxyStream(params: {
             const text = decoder.decode(value, { stream: true });
             pending += text;
             if (firstTokenLatencyMs === null && sseBufferHasOutputToken(pending)) {
-              firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+              markFirstTokenSeen();
             }
             streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
             const lastEventBoundary = pending.lastIndexOf("\n\n");
@@ -598,10 +651,14 @@ async function proxyStream(params: {
         if (trailing) {
           pending += trailing;
           if (firstTokenLatencyMs === null && sseBufferHasOutputToken(pending)) {
-            firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+            markFirstTokenSeen();
           }
           streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
           controller.enqueue(encoder.encode(trailing));
+        }
+
+        if (firstTokenTimedOut && firstTokenLatencyMs === null) {
+          throw createFirstTokenTimeoutError();
         }
 
         const usage = streamUsage ?? {
@@ -641,7 +698,12 @@ async function proxyStream(params: {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
-        await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
+        await markRequestFailed(
+          { id: apiRequestId },
+          message,
+          isFirstTokenTimeoutError(error) ? 504 : 502,
+          Math.round(performance.now() - startedAt),
+        );
         await recordStickyModelPoolResult({
           callerIdentity,
           model,
@@ -660,6 +722,7 @@ async function proxyStream(params: {
         controller.error(error);
         return;
       } finally {
+        clearTimeout(firstTokenTimeout);
         safeCloseStreamController(controller);
       }
     },
@@ -686,9 +749,20 @@ async function proxyPassthroughStream(params: {
     async start(controller) {
       const reader = upstreamResponse.body?.getReader();
       if (!reader) {
-        controller.close();
+        const error = new Error("Stream body missing");
+        await markRequestFailed({ id: apiRequestId }, error.message, 502, Math.round(performance.now() - startedAt));
+        controller.error(error);
         return;
       }
+      let firstTokenTimedOut = false;
+      const firstTokenTimeout = startFirstTokenTimeout(startedAt, () => {
+        if (firstTokenLatencyMs !== null) {
+          return;
+        }
+
+        firstTokenTimedOut = true;
+        void reader.cancel(createFirstTokenTimeoutError()).catch(() => undefined);
+      });
 
       try {
         while (true) {
@@ -697,9 +771,16 @@ async function proxyPassthroughStream(params: {
             break;
           }
           if (value) {
-            firstTokenLatencyMs ??= Math.round(performance.now() - startedAt);
+            if (firstTokenLatencyMs === null) {
+              firstTokenLatencyMs = Math.round(performance.now() - startedAt);
+              clearTimeout(firstTokenTimeout);
+            }
             controller.enqueue(value);
           }
+        }
+
+        if (firstTokenTimedOut && firstTokenLatencyMs === null) {
+          throw createFirstTokenTimeoutError();
         }
 
         await prisma.apiRequest.update({
@@ -712,10 +793,16 @@ async function proxyPassthroughStream(params: {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
-        await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
+        await markRequestFailed(
+          { id: apiRequestId },
+          message,
+          isFirstTokenTimeoutError(error) ? 504 : 502,
+          Math.round(performance.now() - startedAt),
+        );
         controller.error(error);
         return;
       } finally {
+        clearTimeout(firstTokenTimeout);
         safeCloseStreamController(controller);
       }
     },
@@ -742,6 +829,22 @@ function safeCloseStreamController(controller: ReadableStreamDefaultController<U
 
 function isClosedControllerError(error: unknown) {
   return error instanceof TypeError && error.message.includes("Controller is already closed");
+}
+
+function startFirstTokenTimeout(startedAt: number, onTimeout: () => void) {
+  const elapsedMs = performance.now() - startedAt;
+  const remainingMs = Math.max(0, streamFirstTokenTimeoutMs - elapsedMs);
+  return setTimeout(onTimeout, remainingMs);
+}
+
+function createFirstTokenTimeoutError() {
+  const error = new Error(streamFirstTokenTimeoutMessage);
+  error.name = "FirstTokenTimeoutError";
+  return error;
+}
+
+function isFirstTokenTimeoutError(error: unknown) {
+  return error instanceof Error && error.name === "FirstTokenTimeoutError";
 }
 
 function parseUsageFromSseBuffer(buffer: string): Usage | null {
