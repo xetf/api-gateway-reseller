@@ -1665,7 +1665,7 @@ function WalletView({
         <Metric label="币种" value={wallet?.currency ?? "USD"} />
         <Metric label="流水数量" value={String(transactions.length)} />
       </div>
-      <section className="card model-pool-list-card">
+      <section className="card">
         <h2 className="section-title">兑换余额</h2>
         <form className="form inline-form" onSubmit={redeem}>
           <label className="field">
@@ -4007,7 +4007,7 @@ function AdminModelPools({
         </div>
       </section>
 
-      <section className="card">
+      <section className="card model-pool-list-card">
         <div className="section-head">
           <div>
             <h2 className="section-title">模型池列表</h2>
