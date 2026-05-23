@@ -529,6 +529,14 @@ table {
   overflow: hidden;
 }
 
+.requests-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .audit-card {
   width: 100%;
   max-width: 100%;
@@ -618,6 +626,28 @@ table {
 .audit-table th:nth-child(16),
 .audit-table td:nth-child(16) {
   width: 120px;
+}
+
+.audit-table th:nth-child(7),
+.audit-table td:nth-child(7) {
+  width: 64px;
+}
+
+.audit-table .pill {
+  min-height: 18px;
+  max-width: 100%;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.audit-load-state {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 th,
@@ -2139,6 +2169,14 @@ td .button-row.compact {
     display: grid;
     gap: 10px;
     margin-top: 8px;
+  }
+
+  .audit-mobile-list {
+    max-height: min(720px, calc(100vh - 260px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
   }
 
   .mobile-record {

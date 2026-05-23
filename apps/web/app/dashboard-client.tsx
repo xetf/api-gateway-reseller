@@ -18,7 +18,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
 import { apiBaseUrl, apiFetch, clearToken, getToken, setToken } from "../lib/api";
 
 type User = {
@@ -114,6 +114,12 @@ type Summary = {
     chargedAmountUsd: number;
   };
   requests: ApiRequest[];
+};
+
+type AdminRequestsPage = {
+  requests: ApiRequest[];
+  hasMore: boolean;
+  nextCursor?: string | null;
 };
 
 type AdminOverview = {
@@ -529,6 +535,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminRequests, setAdminRequests] = useState<ApiRequest[]>([]);
+  const [adminRequestsNextCursor, setAdminRequestsNextCursor] = useState<string | null>(null);
+  const [adminRequestsHasMore, setAdminRequestsHasMore] = useState(false);
+  const [adminRequestsLoadingMore, setAdminRequestsLoadingMore] = useState(false);
   const [upstreamProviders, setUpstreamProviders] = useState<UpstreamProvider[]>([]);
   const [modelPrices, setModelPrices] = useState<ModelPrice[]>([]);
   const [modelPools, setModelPools] = useState<ModelPool[]>([]);
@@ -547,6 +556,8 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const loadingModelPoolsRef = useRef(false);
+  const loadingAdminRequestsRef = useRef(false);
+  const adminRequestsLoadedFiltersRef = useRef<RequestFilters>(requestFilters);
 
   useEffect(() => {
     const saved = getToken();
@@ -603,6 +614,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setModelPoolHealthCheck(null);
       setRedeemCodes([]);
       setAdminRequests([]);
+      setAdminRequestsNextCursor(null);
+      setAdminRequestsHasMore(false);
+      setAdminRequestsLoadingMore(false);
 
       void Promise.allSettled([
         loadData("可用模型", async () => {
@@ -679,13 +693,61 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         setRedeemCodes(result.codes);
       }),
       loadData("调用记录", async () => {
-        const result = await apiFetch<{ requests: ApiRequest[] }>(
-          `/admin/requests${toQueryString(requestFilters)}`,
-          { token: authToken },
-        );
-        setAdminRequests(result.requests);
+        await refreshAdminRequests({ authToken, filters: requestFilters });
       }),
     ]);
+  }
+
+  async function refreshAdminRequests({
+    authToken = token,
+    filters = requestFilters,
+    append = false,
+    cursor = null,
+  }: {
+    authToken?: string | null;
+    filters?: RequestFilters;
+    append?: boolean;
+    cursor?: string | null;
+  } = {}) {
+    if (!authToken || loadingAdminRequestsRef.current) {
+      return;
+    }
+
+    loadingAdminRequestsRef.current = true;
+    if (append) {
+      setAdminRequestsLoadingMore(true);
+    } else {
+      adminRequestsLoadedFiltersRef.current = filters;
+      setAdminRequestsNextCursor(null);
+      setAdminRequestsHasMore(false);
+    }
+
+    try {
+      const result = await apiFetch<AdminRequestsPage>(
+        `/admin/requests${toQueryString(filters, { take: "120", cursor: cursor ?? undefined })}`,
+        { token: authToken },
+      );
+      setAdminRequests((current) => (append ? mergeRequests(current, result.requests) : result.requests));
+      setAdminRequestsNextCursor(result.nextCursor ?? null);
+      setAdminRequestsHasMore(result.hasMore);
+    } catch (loadError) {
+      setError(`调用记录加载失败：${errorToText(loadError)}`);
+    } finally {
+      loadingAdminRequestsRef.current = false;
+      setAdminRequestsLoadingMore(false);
+    }
+  }
+
+  function loadMoreAdminRequests() {
+    if (!adminRequestsHasMore || !adminRequestsNextCursor || adminRequestsLoadingMore) {
+      return;
+    }
+
+    void refreshAdminRequests({
+      filters: adminRequestsLoadedFiltersRef.current,
+      append: true,
+      cursor: adminRequestsNextCursor,
+    });
   }
 
   const refreshModelPools = useCallback(async (authToken = token) => {
@@ -894,7 +956,10 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               users={adminUsers}
               filters={requestFilters}
               onFiltersChange={setRequestFilters}
-              onSearch={() => refreshAll()}
+              hasMore={adminRequestsHasMore}
+              loadingMore={adminRequestsLoadingMore}
+              onLoadMore={loadMoreAdminRequests}
+              onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
             />
           ) : null}
         </div>
@@ -1759,15 +1824,39 @@ function Requests({
   requests,
   compact = false,
   showCost = false,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: {
   requests: ApiRequest[];
   compact?: boolean;
   showCost?: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
+  function handleScroll(event: UIEvent<HTMLDivElement>) {
+    if (!onLoadMore || !hasMore || loadingMore) {
+      return;
+    }
+
+    const target = event.currentTarget;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 180) {
+      onLoadMore();
+    }
+  }
+
   return (
     <section className={showCost ? "card requests-card audit-card" : "card requests-card"}>
-      <h2 className="section-title">{compact ? "最近调用" : showCost ? "全站调用" : "调用记录"}</h2>
-      <div className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"}>
+      <div className="requests-head">
+        <h2 className="section-title">{compact ? "最近调用" : showCost ? "全站调用" : "调用记录"}</h2>
+        {showCost ? (
+          <span className="section-subtitle">
+            已加载 {requests.length} 条{hasMore ? " · 向下滚动继续加载" : " · 已到底"}
+          </span>
+        ) : null}
+      </div>
+      <div className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"} onScroll={handleScroll}>
         <table className={showCost ? "audit-table" : undefined}>
           <thead>
 	            <tr>
@@ -1820,7 +1909,7 @@ function Requests({
           </tbody>
         </table>
       </div>
-      <div className="mobile-record-list">
+      <div className={showCost ? "mobile-record-list audit-mobile-list" : "mobile-record-list"} onScroll={handleScroll}>
         {requests.map((item) => (
           <MobileRecord
             key={item.id}
@@ -1866,6 +1955,11 @@ function Requests({
         ))}
         {requests.length === 0 ? <MobileEmpty>暂无调用记录</MobileEmpty> : null}
       </div>
+      {showCost ? (
+        <div className="audit-load-state">
+          {loadingMore ? "加载更多调用记录..." : hasMore ? "继续向下滚动加载更多" : "已加载全部调用记录"}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1874,14 +1968,20 @@ function AdminRequests({
   requests,
   users,
   filters,
+  hasMore,
+  loadingMore,
   onFiltersChange,
+  onLoadMore,
   onSearch,
 }: {
   requests: ApiRequest[];
   users: AdminUser[];
   filters: RequestFilters;
+  hasMore: boolean;
+  loadingMore: boolean;
   onFiltersChange: (filters: RequestFilters) => void;
-  onSearch: () => void;
+  onLoadMore: () => void;
+  onSearch: (filters: RequestFilters) => void;
 }) {
   function update<K extends keyof RequestFilters>(key: K, value: RequestFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
@@ -1889,7 +1989,7 @@ function AdminRequests({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSearch();
+    onSearch(filters);
   }
 
   return (
@@ -1903,15 +2003,16 @@ function AdminRequests({
           <button
             className="button secondary"
             onClick={() => {
-              onFiltersChange({
+              const nextFilters: RequestFilters = {
                 q: "",
                 userId: "",
                 model: "",
                 status: "",
                 dateFrom: "",
                 dateTo: "",
-              });
-              window.setTimeout(onSearch, 0);
+              };
+              onFiltersChange(nextFilters);
+              onSearch(nextFilters);
             }}
             type="button"
           >
@@ -1984,7 +2085,13 @@ function AdminRequests({
           </button>
         </form>
       </section>
-      <Requests requests={requests} showCost />
+      <Requests
+        requests={requests}
+        showCost
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+      />
     </div>
   );
 }
@@ -6216,7 +6323,7 @@ function parseModelList(value: string) {
   );
 }
 
-function toQueryString(filters: RequestFilters) {
+function toQueryString(filters: RequestFilters, extras: Record<string, string | undefined> = {}) {
   const params = new URLSearchParams();
   if (filters.q.trim()) {
     params.set("q", filters.q.trim());
@@ -6236,8 +6343,27 @@ function toQueryString(filters: RequestFilters) {
   if (filters.dateTo) {
     params.set("dateTo", new Date(filters.dateTo).toISOString());
   }
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined && value !== "") {
+      params.set(key, value);
+    }
+  }
   const text = params.toString();
   return text ? `?${text}` : "";
+}
+
+function mergeRequests(current: ApiRequest[], incoming: ApiRequest[]) {
+  const seen = new Set(current.map((item) => item.id));
+  const next = [...current];
+
+  for (const item of incoming) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      next.push(item);
+    }
+  }
+
+  return next;
 }
 
 function formatNumber(value: number) {

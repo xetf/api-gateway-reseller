@@ -689,7 +689,8 @@ export async function adminRoutes(app: FastifyInstance) {
         status: z.enum(["PENDING", "SUCCESS", "FAILED"]).optional(),
         dateFrom: z.string().datetime().optional(),
         dateTo: z.string().datetime().optional(),
-        take: z.coerce.number().int().min(1).max(500).default(200),
+        cursor: z.string().optional(),
+        take: z.coerce.number().int().min(1).max(300).default(120),
       })
       .parse(request.query);
     const andFilters = [];
@@ -753,10 +754,11 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     }
 
-    const requests = await prisma.apiRequest.findMany({
+    const rows = await prisma.apiRequest.findMany({
       where: andFilters.length > 0 ? { AND: andFilters } : undefined,
-      orderBy: { createdAt: "desc" },
-      take: query.take,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: query.take + 1,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       select: {
         id: true,
         upstreamProvider: true,
@@ -797,8 +799,14 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       },
     });
+    const hasMore = rows.length > query.take;
+    const requests = hasMore ? rows.slice(0, query.take) : rows;
 
-    return { requests };
+    return {
+      requests,
+      hasMore,
+      nextCursor: hasMore ? requests.at(-1)?.id ?? null : null,
+    };
   });
 
   app.get("/admin/redeem-codes", async () => {
