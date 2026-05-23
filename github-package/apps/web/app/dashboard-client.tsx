@@ -4697,7 +4697,7 @@ function UpstreamProviders({
   const [unifiedPriceDrafts, setUnifiedPriceDrafts] = useState<Record<string, UnifiedPriceDraft>>({});
   const [unifiedPriceSelections, setUnifiedPriceSelections] = useState<Record<string, boolean>>({});
   const [unifiedPriceSaving, setUnifiedPriceSaving] = useState(false);
-  const unifiedPriceGroups = buildUnifiedPriceGroups(modelPrices);
+  const unifiedPriceGroups = buildUnifiedPriceGroups(modelPrices, providers);
   const selectedUnifiedPriceCount = unifiedPriceGroups.filter((group) => unifiedPriceSelections[group.model]).length;
   const upstreamEffective = {
     input: multiplied(upstreamInput, upstreamMultiplier),
@@ -6254,10 +6254,15 @@ function modelPoolHealthCheckEndpointLabel(value: string | null | undefined) {
     : "Responses";
 }
 
-function buildUnifiedPriceGroups(modelPrices: ModelPrice[]): UnifiedPriceGroup[] {
+function buildUnifiedPriceGroups(modelPrices: ModelPrice[], providers: UpstreamProvider[]): UnifiedPriceGroup[] {
+  const providerNames = new Set(providers.map((provider) => provider.name));
   const groups = new Map<string, ModelPrice[]>();
 
   for (const price of modelPrices) {
+    if (!providerNames.has(price.upstreamProvider)) {
+      continue;
+    }
+
     groups.set(price.model, [...(groups.get(price.model) ?? []), price]);
   }
 
