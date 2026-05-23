@@ -645,8 +645,8 @@ async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
       path: "/v1/responses",
       body: {
         model: input.model,
-        input: "ok",
-        max_output_tokens: 1,
+        instructions: "Reply with ok.",
+        input: [{ role: "user", content: "ok" }],
         store: false,
         stream: true,
       },
