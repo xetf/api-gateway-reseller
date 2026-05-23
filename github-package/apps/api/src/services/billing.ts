@@ -2,6 +2,7 @@ import { Decimal } from "decimal.js";
 import { performance } from "node:perf_hooks";
 import { prisma, type ApiRequest, type ModelPrice } from "@gateway/db";
 import { calculateCharges } from "../lib/money.js";
+import { applyUnifiedCustomerPricing } from "./unified-pricing.js";
 import type { Usage } from "../types.js";
 
 export async function ensureWalletCanStart(userId: string) {
@@ -30,7 +31,8 @@ export async function chargeForRequest(params: {
   startedAt?: number;
 }) {
   const { requestId, userId, price, usage, startedAt } = params;
-  const { upstreamCostUsd, chargedAmountUsd } = calculateCharges(price, usage);
+  const chargePrice = await applyUnifiedCustomerPricing(price);
+  const { upstreamCostUsd, chargedAmountUsd } = calculateCharges(chargePrice, usage);
 
   return prisma.$transaction(async (tx) => {
     const wallet = await tx.wallet.findUnique({

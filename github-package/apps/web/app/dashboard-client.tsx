@@ -290,11 +290,17 @@ type UnifiedPriceDraft = {
   customerPriceMultiplier: string;
 };
 
+type UnifiedPriceSetting = UnifiedPriceDraft & {
+  model: string;
+  enabled: boolean;
+};
+
 type UnifiedPriceGroup = {
   model: string;
   prices: ModelPrice[];
   providerNames: string[];
-  hasDifferentCustomerPricing: boolean;
+  setting?: UnifiedPriceSetting;
+  hasDifferentOriginalCustomerPricing: boolean;
 };
 
 type AvailableModel = {
@@ -540,6 +546,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [adminRequestsLoadingMore, setAdminRequestsLoadingMore] = useState(false);
   const [upstreamProviders, setUpstreamProviders] = useState<UpstreamProvider[]>([]);
   const [modelPrices, setModelPrices] = useState<ModelPrice[]>([]);
+  const [unifiedPriceSettings, setUnifiedPriceSettings] = useState<UnifiedPriceSetting[]>([]);
   const [modelPools, setModelPools] = useState<ModelPool[]>([]);
   const [poolAvailableChannels, setPoolAvailableChannels] = useState<AvailablePoolChannel[]>([]);
   const [modelPoolHealthCheck, setModelPoolHealthCheck] = useState<ModelPoolHealthCheck | null>(null);
@@ -609,6 +616,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setAdminUsers([]);
       setUpstreamProviders([]);
       setModelPrices([]);
+      setUnifiedPriceSettings([]);
       setModelPools([]);
       setPoolAvailableChannels([]);
       setModelPoolHealthCheck(null);
@@ -677,11 +685,12 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         setUpstreamProviders(result.providers);
       }),
       loadData("价格", async () => {
-        const result = await apiFetch<{ modelPrices: ModelPrice[] }>(
+        const result = await apiFetch<{ modelPrices: ModelPrice[]; unifiedPriceSettings?: UnifiedPriceSetting[] }>(
           "/admin/model-prices",
           { token: authToken },
         );
         setModelPrices(result.modelPrices);
+        setUnifiedPriceSettings(result.unifiedPriceSettings ?? []);
       }),
       loadData("模型池", async () => {
         await refreshModelPools(authToken);
@@ -921,6 +930,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <UpstreamProviders
               providers={upstreamProviders}
               modelPrices={modelPrices}
+              unifiedPriceSettings={unifiedPriceSettings}
               onChanged={() => refreshAll()}
               onError={setError}
             />
@@ -4658,11 +4668,13 @@ function AdminRedeemCodes({
 function UpstreamProviders({
   providers,
   modelPrices,
+  unifiedPriceSettings,
   onChanged,
   onError,
 }: {
   providers: UpstreamProvider[];
   modelPrices: ModelPrice[];
+  unifiedPriceSettings: UnifiedPriceSetting[];
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
@@ -4697,7 +4709,7 @@ function UpstreamProviders({
   const [unifiedPriceDrafts, setUnifiedPriceDrafts] = useState<Record<string, UnifiedPriceDraft>>({});
   const [unifiedPriceSelections, setUnifiedPriceSelections] = useState<Record<string, boolean>>({});
   const [unifiedPriceSaving, setUnifiedPriceSaving] = useState(false);
-  const unifiedPriceGroups = buildUnifiedPriceGroups(modelPrices, providers);
+  const unifiedPriceGroups = buildUnifiedPriceGroups(modelPrices, providers, unifiedPriceSettings);
   const selectedUnifiedPriceCount = unifiedPriceGroups.filter((group) => unifiedPriceSelections[group.model]).length;
   const upstreamEffective = {
     input: multiplied(upstreamInput, upstreamMultiplier),
@@ -4817,10 +4829,13 @@ function UpstreamProviders({
 
   function openUnifiedPriceModal() {
     const nextDrafts = Object.fromEntries(
-      unifiedPriceGroups.map((group) => [group.model, unifiedPriceDraftFromPrice(group.prices[0])]),
+      unifiedPriceGroups.map((group) => [
+        group.model,
+        group.setting ? unifiedPriceDraftFromSetting(group.setting) : unifiedPriceDraftFromPrice(group.prices[0]),
+      ]),
     );
     const nextSelections = Object.fromEntries(
-      unifiedPriceGroups.map((group) => [group.model, group.hasDifferentCustomerPricing]),
+      unifiedPriceGroups.map((group) => [group.model, group.setting?.enabled ?? false]),
     );
     setUnifiedPriceDrafts(nextDrafts);
     setUnifiedPriceSelections(nextSelections);
@@ -4857,18 +4872,20 @@ function UpstreamProviders({
     event.preventDefault();
     onError(null);
 
-    const selectedGroups = unifiedPriceGroups.filter((group) => unifiedPriceSelections[group.model]);
-    const updates = selectedGroups.map((group) => ({
+    const updates = unifiedPriceGroups.map((group) => ({
       model: group.model,
-      ...(unifiedPriceDrafts[group.model] ?? unifiedPriceDraftFromPrice(group.prices[0])),
+      enabled: unifiedPriceSelections[group.model] ?? false,
+      ...(unifiedPriceDrafts[group.model] ??
+        (group.setting ? unifiedPriceDraftFromSetting(group.setting) : unifiedPriceDraftFromPrice(group.prices[0]))),
     }));
 
     if (updates.length === 0) {
-      onError("请至少开启一个模型的统一定价。");
+      onError("暂无可配置统一售价模式的模型。");
       return;
     }
 
     const invalidUpdate = updates.find((update) =>
+      update.enabled &&
       [
         update.customerInputPer1MTok,
         update.customerCachedInputPer1MTok,
@@ -5060,6 +5077,44 @@ function UpstreamProviders({
 
   function pricesForProvider(providerName: string) {
     return modelPrices.filter((price) => price.upstreamProvider === providerName);
+  }
+
+  function unifiedSettingForModel(modelId: string) {
+    return unifiedPriceSettings.find((setting) => setting.model === modelId);
+  }
+
+  function effectiveCustomerDraft(price: ModelPrice) {
+    const setting = unifiedSettingForModel(price.model);
+    return setting?.enabled ? unifiedPriceDraftFromSetting(setting) : unifiedPriceDraftFromPrice(price);
+  }
+
+  function renderCustomerPrice(price: ModelPrice) {
+    const setting = unifiedSettingForModel(price.model);
+    const draft = effectiveCustomerDraft(price);
+
+    return (
+      <div className="price-cell-stack">
+        {setting?.enabled ? <span className="pill ok">统一模式</span> : null}
+        <span>
+          x{draft.customerPriceMultiplier}:{" "}
+          {priceTriplet(
+            multiplied(draft.customerInputPer1MTok, draft.customerPriceMultiplier),
+            multiplied(draft.customerCachedInputPer1MTok, draft.customerPriceMultiplier),
+            multiplied(draft.customerOutputPer1MTok, draft.customerPriceMultiplier),
+          )}
+        </span>
+        {setting?.enabled ? (
+          <span className="muted-cell">
+            普通价 x{price.customerPriceMultiplier}:{" "}
+            {priceTriplet(
+              multiplied(price.customerInputPer1MTok, price.customerPriceMultiplier),
+              multiplied(price.customerCachedInputPer1MTok, price.customerPriceMultiplier),
+              multiplied(price.customerOutputPer1MTok, price.customerPriceMultiplier),
+            )}
+          </span>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -5310,14 +5365,7 @@ function UpstreamProviders({
                                 multiplied(price.upstreamOutputPer1MTok, price.upstreamPriceMultiplier),
                               )}
                             </td>
-                            <td>
-                              x{price.customerPriceMultiplier}:{" "}
-                              {priceTriplet(
-                                multiplied(price.customerInputPer1MTok, price.customerPriceMultiplier),
-                                multiplied(price.customerCachedInputPer1MTok, price.customerPriceMultiplier),
-                                multiplied(price.customerOutputPer1MTok, price.customerPriceMultiplier),
-                              )}
-                            </td>
+                            <td>{renderCustomerPrice(price)}</td>
                             <td>
                               <div className="button-row compact">
                                 <button className="button secondary" onClick={() => editPrice(price)} type="button">
@@ -5385,12 +5433,7 @@ function UpstreamProviders({
                           )}
                         </MobileField>
                         <MobileField label="站点售价" wide>
-                          x{price.customerPriceMultiplier}:{" "}
-                          {priceTriplet(
-                            multiplied(price.customerInputPer1MTok, price.customerPriceMultiplier),
-                            multiplied(price.customerCachedInputPer1MTok, price.customerPriceMultiplier),
-                            multiplied(price.customerOutputPer1MTok, price.customerPriceMultiplier),
-                          )}
+                          {renderCustomerPrice(price)}
                         </MobileField>
                       </MobileRecord>
                     ))}
@@ -5522,15 +5565,15 @@ function UpstreamProviders({
 
       {unifiedPriceModalOpen ? (
         <ModalShell
-          title="统一站点定价"
-          description="按模型 ID 同步所有上游的站点售价；上游原价和上游倍率保持原本设置。"
+          title="统一售价模式"
+          description="按模型 ID 开关统一站点售价；原有每条上游站点售价会保留，关闭后立即回到普通模式。"
           onClose={() => setUnifiedPriceModalOpen(false)}
           wide
         >
           <form className="form" onSubmit={saveUnifiedPrices}>
             <div className="modal-body">
               <div className="notice">
-                只会更新站点输入价、站点缓存价、站点输出价和站点倍率；不会修改任何上游价格。
+                这里只保存模型级统一售价模式，不会覆盖各上游价格行里的原始站点售价，也不会修改任何上游成本价格。
               </div>
               <div className="unified-price-list">
                 {unifiedPriceGroups.map((group) => {
@@ -5560,10 +5603,13 @@ function UpstreamProviders({
                               onChange={(event) => setUnifiedPriceSelected(group.model, event.target.checked)}
                               type="checkbox"
                             />
-                            开启统一定价
+                            统一模式
                           </label>
-                          <span className={group.hasDifferentCustomerPricing ? "pill warn" : "pill ok"}>
-                            {group.hasDifferentCustomerPricing ? "待统一" : "已一致"}
+                          <span className={selected ? "pill ok" : "pill"}>
+                            {selected ? "已开启" : "普通模式"}
+                          </span>
+                          <span className={group.hasDifferentOriginalCustomerPricing ? "pill warn" : "pill ok"}>
+                            {group.hasDifferentOriginalCustomerPricing ? "原价有差异" : "原价一致"}
                           </span>
                         </div>
                       </div>
@@ -5618,9 +5664,9 @@ function UpstreamProviders({
                         </label>
                       </div>
                       <div className="unified-price-preview">
-                        <InfoLine label="统一后输入" value={`$${money(effectiveInput)}`} />
-                        <InfoLine label="统一后缓存" value={`$${money(effectiveCachedInput)}`} />
-                        <InfoLine label="统一后输出" value={`$${money(effectiveOutput)}`} />
+                        <InfoLine label="统一模式输入" value={`$${money(effectiveInput)}`} />
+                        <InfoLine label="统一模式缓存" value={`$${money(effectiveCachedInput)}`} />
+                        <InfoLine label="统一模式输出" value={`$${money(effectiveOutput)}`} />
                       </div>
                     </section>
                   );
@@ -5632,9 +5678,9 @@ function UpstreamProviders({
               <button className="button secondary" onClick={() => setUnifiedPriceModalOpen(false)} type="button">
                 取消
               </button>
-              <button className="button" disabled={unifiedPriceSaving || selectedUnifiedPriceCount === 0} type="submit">
+              <button className="button" disabled={unifiedPriceSaving || unifiedPriceGroups.length === 0} type="submit">
                 <Save size={17} />
-                应用 {selectedUnifiedPriceCount} 个模型
+                保存模式（开启 {selectedUnifiedPriceCount} 个）
               </button>
             </div>
           </form>
@@ -5653,6 +5699,11 @@ function UpstreamProviders({
         >
           <form className="form" onSubmit={saveModelPrice}>
             <div className="modal-body">
+              {unifiedSettingForModel(model)?.enabled ? (
+                <div className="notice">
+                  当前模型已开启统一模式；这里编辑的是普通模式下该上游自己的站点售价，关闭统一模式后会继续使用。
+                </div>
+              ) : null}
               <div className="button-row">
                 <button
                   className="button secondary"
@@ -6317,8 +6368,13 @@ function modelPoolHealthCheckEndpointLabel(value: string | null | undefined) {
     : "Responses";
 }
 
-function buildUnifiedPriceGroups(modelPrices: ModelPrice[], providers: UpstreamProvider[]): UnifiedPriceGroup[] {
+function buildUnifiedPriceGroups(
+  modelPrices: ModelPrice[],
+  providers: UpstreamProvider[],
+  settings: UnifiedPriceSetting[],
+): UnifiedPriceGroup[] {
   const providerNames = new Set(providers.map((provider) => provider.name));
+  const settingsByModel = new Map(settings.map((setting) => [setting.model, setting]));
   const groups = new Map<string, ModelPrice[]>();
 
   for (const price of modelPrices) {
@@ -6336,9 +6392,19 @@ function buildUnifiedPriceGroups(modelPrices: ModelPrice[], providers: UpstreamP
       providerNames: Array.from(new Set(prices.map((price) => price.upstreamProvider))).sort((left, right) =>
         left.localeCompare(right),
       ),
-      hasDifferentCustomerPricing: prices.some((price) => !sameUnifiedPriceDraft(price, prices[0])),
+      setting: settingsByModel.get(model),
+      hasDifferentOriginalCustomerPricing: prices.some((price) => !sameUnifiedPriceDraft(price, prices[0])),
     }))
     .sort((left, right) => left.model.localeCompare(right.model));
+}
+
+function unifiedPriceDraftFromSetting(setting: UnifiedPriceSetting): UnifiedPriceDraft {
+  return {
+    customerInputPer1MTok: setting.customerInputPer1MTok,
+    customerCachedInputPer1MTok: setting.customerCachedInputPer1MTok,
+    customerOutputPer1MTok: setting.customerOutputPer1MTok,
+    customerPriceMultiplier: setting.customerPriceMultiplier,
+  };
 }
 
 function unifiedPriceDraftFromPrice(price: ModelPrice | undefined): UnifiedPriceDraft {

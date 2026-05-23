@@ -4,11 +4,26 @@ import type { Usage } from "../types.js";
 
 const ONE_MILLION = new Decimal(1_000_000);
 
+type PriceValue = { toString(): string } | string | number;
+
+export type ChargePrice = Omit<
+  ModelPrice,
+  | "customerInputPer1MTok"
+  | "customerCachedInputPer1MTok"
+  | "customerOutputPer1MTok"
+  | "customerPriceMultiplier"
+> & {
+  customerInputPer1MTok: PriceValue;
+  customerCachedInputPer1MTok: PriceValue;
+  customerOutputPer1MTok: PriceValue;
+  customerPriceMultiplier: PriceValue;
+};
+
 export function toDecimal(value: Decimal.Value) {
   return new Decimal(value);
 }
 
-export function calculateCharges(price: ModelPrice, usage: Usage) {
+export function calculateCharges(price: ChargePrice, usage: Usage) {
   const inputTokens = new Decimal(usage.inputTokens);
   const cachedInputTokens = new Decimal(usage.cachedInputTokens);
   const outputTokens = new Decimal(usage.outputTokens);

@@ -30,6 +30,10 @@ import {
   upstreamKeyInflightKey,
   upstreamKeyPrefix,
 } from "../services/upstream-provider-keys.js";
+import {
+  listUnifiedPriceSettings,
+  saveUnifiedPriceSettings,
+} from "../services/unified-pricing.js";
 
 const exec = promisify(execCallback);
 let lastCpuSnapshot = {
@@ -901,7 +905,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const modelPrices = await prisma.modelPrice.findMany({
       orderBy: [{ upstreamProvider: "asc" }, { model: "asc" }],
     });
-    return { modelPrices };
+    const unifiedPriceSettings = await listUnifiedPriceSettings(modelPrices.map((price) => price.model));
+
+    return { modelPrices, unifiedPriceSettings };
   });
 
   app.get("/admin/model-pools", async () => {
@@ -1300,6 +1306,7 @@ export async function adminRoutes(app: FastifyInstance) {
           .array(
             z.object({
               model: z.string().min(1).max(120),
+              enabled: z.boolean(),
               customerInputPer1MTok: z.string().or(z.number()),
               customerCachedInputPer1MTok: z.string().or(z.number()).default("0"),
               customerOutputPer1MTok: z.string().or(z.number()),
@@ -1314,6 +1321,8 @@ export async function adminRoutes(app: FastifyInstance) {
       body.updates.map((update) => [
         update.model,
         {
+          model: update.model,
+          enabled: update.enabled,
           customerInputPer1MTok: String(update.customerInputPer1MTok),
           customerCachedInputPer1MTok: String(update.customerCachedInputPer1MTok),
           customerOutputPer1MTok: String(update.customerOutputPer1MTok),
@@ -1322,18 +1331,18 @@ export async function adminRoutes(app: FastifyInstance) {
       ]),
     );
 
-    const results = await prisma.$transaction(
-      Array.from(updatesByModel.entries()).map(([model, data]) =>
-        prisma.modelPrice.updateMany({
-          where: { model },
-          data,
-        }),
-      ),
-    );
+    const pricedModels = await prisma.modelPrice.findMany({
+      where: { model: { in: Array.from(updatesByModel.keys()) } },
+      select: { model: true },
+    });
+    const pricedModelSet = new Set(pricedModels.map((price) => price.model));
+    const validUpdates = Array.from(updatesByModel.values()).filter((update) => pricedModelSet.has(update.model));
+    const unifiedPriceSettings = validUpdates.length > 0 ? await saveUnifiedPriceSettings(validUpdates) : [];
 
     return {
-      updated: results.reduce((total, result) => total + result.count, 0),
-      models: updatesByModel.size,
+      updated: validUpdates.length,
+      models: validUpdates.length,
+      unifiedPriceSettings,
     };
   });
 
