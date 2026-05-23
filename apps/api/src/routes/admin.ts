@@ -3,6 +3,10 @@ import { Prisma } from "@prisma/client";
 import { Decimal } from "decimal.js";
 import { prisma } from "@gateway/db";
 import { z } from "zod";
+import { exec as execCallback } from "node:child_process";
+import { cpus, freemem, loadavg, totalmem } from "node:os";
+import { performance } from "node:perf_hooks";
+import { promisify } from "node:util";
 import { createRedeemCode } from "../lib/crypto.js";
 import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
 import {
@@ -13,6 +17,13 @@ import {
   minModelPoolHealthCheckIntervalSeconds,
   setModelPoolHealthCheckIntervalSeconds,
 } from "../services/model-pool-health.js";
+
+const exec = promisify(execCallback);
+let lastCpuSnapshot = {
+  measuredAtMs: performance.now(),
+  usage: process.cpuUsage(),
+};
+let lastSystemCpuSnapshot = getSystemCpuSnapshot();
 
 const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
 const channelStatusSchema = z.enum(["ACTIVE", "FORCED_ACTIVE", "DISABLED", "UNAVAILABLE"]);
@@ -52,6 +63,32 @@ export async function adminRoutes(app: FastifyInstance) {
       upstreamCost: upstreamCost.toFixed(8),
       grossProfit: revenue.minus(upstreamCost).toFixed(8),
       totalTokens: requestAgg._sum.totalTokens ?? 0,
+    };
+  });
+
+  app.get("/admin/server-status", async () => {
+    const [redisPing, dbPing, pm2Status, modelPool, apiKeyStats] = await Promise.all([
+      pingRedis(app),
+      pingDatabase(),
+      getPm2Status(),
+      getModelPoolStatus(app),
+      getApiKeyRuntimeStats(app),
+    ]);
+
+    return {
+      server: {
+        nodeVersion: process.version,
+        uptimeSeconds: Math.floor(process.uptime()),
+        memory: process.memoryUsage(),
+        system: getSystemStatus(),
+        cpu: getProcessCpuStatus(),
+        redis: redisPing,
+        database: dbPing,
+        pm2: pm2Status,
+      },
+      modelPool,
+      apiKeys: apiKeyStats,
+      checkedAt: new Date().toISOString(),
     };
   });
 
@@ -346,6 +383,12 @@ export async function adminRoutes(app: FastifyInstance) {
             },
           },
           {
+            clientIp: {
+              contains: query.q,
+              mode: "insensitive" as const,
+            },
+          },
+          {
             user: {
               email: {
                 contains: query.q,
@@ -364,6 +407,7 @@ export async function adminRoutes(app: FastifyInstance) {
       select: {
         id: true,
         upstreamProvider: true,
+        clientIp: true,
         apiKey: {
           select: {
             id: true,
@@ -1079,6 +1123,260 @@ function modelPoolChannelAvailabilityRank(status: string) {
 
 function nullableNumberRank(value: number | null | undefined) {
   return value ?? Number.MAX_SAFE_INTEGER;
+}
+
+async function pingRedis(app: FastifyInstance) {
+  try {
+    const startedAt = Date.now();
+    const pong = await app.redis.ping();
+    return {
+      ok: pong === "PONG",
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: null,
+      error: error instanceof Error ? error.message : "Redis ping failed",
+    };
+  }
+}
+
+async function pingDatabase() {
+  try {
+    const startedAt = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    return {
+      ok: true,
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: null,
+      error: error instanceof Error ? error.message : "Database ping failed",
+    };
+  }
+}
+
+function getSystemStatus() {
+  const totalMemoryBytes = totalmem();
+  const freeMemoryBytes = freemem();
+  const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes);
+  const cpuCount = cpus().length || 1;
+  const cpuSnapshot = getSystemCpuSnapshot();
+  const totalDelta = cpuSnapshot.total - lastSystemCpuSnapshot.total;
+  const idleDelta = cpuSnapshot.idle - lastSystemCpuSnapshot.idle;
+  const usagePercent = totalDelta > 0
+    ? Number((Math.max(0, 1 - idleDelta / totalDelta) * 100).toFixed(2))
+    : 0;
+  lastSystemCpuSnapshot = cpuSnapshot;
+
+  return {
+    cpuCount,
+    cpuUsagePercent: usagePercent,
+    loadAverage: loadavg(),
+    totalMemoryBytes,
+    freeMemoryBytes,
+    usedMemoryBytes,
+    memoryUsagePercent: totalMemoryBytes > 0
+      ? Number(((usedMemoryBytes / totalMemoryBytes) * 100).toFixed(2))
+      : 0,
+  };
+}
+
+function getSystemCpuSnapshot() {
+  return cpus().reduce(
+    (total, cpu) => {
+      const cpuTotal = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
+      return {
+        idle: total.idle + cpu.times.idle,
+        total: total.total + cpuTotal,
+      };
+    },
+    { idle: 0, total: 0 },
+  );
+}
+
+function getProcessCpuStatus() {
+  const measuredAtMs = performance.now();
+  const usage = process.cpuUsage();
+  const elapsedMs = Math.max(1, measuredAtMs - lastCpuSnapshot.measuredAtMs);
+  const userDiffMs = (usage.user - lastCpuSnapshot.usage.user) / 1000;
+  const systemDiffMs = (usage.system - lastCpuSnapshot.usage.system) / 1000;
+  const cpuCount = cpus().length || 1;
+  const percent = ((userDiffMs + systemDiffMs) / elapsedMs) * 100 / cpuCount;
+
+  lastCpuSnapshot = {
+    measuredAtMs,
+    usage,
+  };
+
+  return {
+    percent: Number(Math.max(0, percent).toFixed(2)),
+    userMs: Math.round(usage.user / 1000),
+    systemMs: Math.round(usage.system / 1000),
+  };
+}
+
+async function getPm2Status() {
+  try {
+    const { stdout } = await exec("pm2 jlist");
+    const processes = JSON.parse(stdout) as Array<{
+      pm2_env?: { name?: string; status?: string };
+      pm2_env_status?: string;
+      pm_id?: number;
+      monit?: { cpu?: number; memory?: number };
+      pid?: number;
+      name?: string;
+    }>;
+
+    return {
+      ok: true,
+      processes: processes
+        .map((process) => ({
+          name: process.pm2_env?.name ?? process.name ?? `pm2-${process.pm_id ?? "unknown"}`,
+          pid: process.pid ?? null,
+          status: process.pm2_env?.status ?? process.pm2_env_status ?? "unknown",
+          cpu: process.monit?.cpu ?? null,
+          memory: process.monit?.memory ?? null,
+        }))
+        .filter((process) => process.name.includes("api-gateway")),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      processes: [],
+      error: error instanceof Error ? error.message : "PM2 status failed",
+    };
+  }
+}
+
+async function getModelPoolStatus(app: FastifyInstance) {
+  const [channels, healthCheckIntervalSeconds] = await Promise.all([
+    prisma.modelPoolChannel.findMany({
+      where: {
+        modelPool: {
+          status: "ACTIVE",
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        priority: true,
+        consecutiveFailures: true,
+        lastCheckStatus: true,
+        lastCheckedAt: true,
+        lastLatencyMs: true,
+        lastFirstTokenLatencyMs: true,
+        modelPool: {
+          select: {
+            model: true,
+          },
+        },
+      },
+    }),
+    getModelPoolHealthCheckIntervalSeconds(),
+  ]);
+
+  const activeChannels = channels.filter((channel) => channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE");
+  const unavailableChannels = channels.filter((channel) => channel.status === "UNAVAILABLE");
+  const inflightCounts = await readRedisCounts(
+    app,
+    channels.map((channel) => `modelpool:balance:inflight:${channel.id}`),
+  );
+  const channelSummaries = channels.map((channel, index) => ({
+    id: channel.id,
+    model: channel.modelPool.model,
+    status: channel.status,
+    priority: channel.priority,
+    consecutiveFailures: channel.consecutiveFailures,
+    lastCheckStatus: channel.lastCheckStatus,
+    lastCheckedAt: channel.lastCheckedAt,
+    lastLatencyMs: channel.lastLatencyMs,
+    lastFirstTokenLatencyMs: channel.lastFirstTokenLatencyMs,
+    inflightRequests: inflightCounts[index] ?? 0,
+  }));
+
+  return {
+    healthCheckIntervalSeconds,
+    totalChannels: channels.length,
+    activeChannels: activeChannels.length,
+    unavailableChannels: unavailableChannels.length,
+    inflightRequests: inflightCounts.reduce((total, value) => total + value, 0),
+    autoCheckEnabledPools: await prisma.modelPool.count({
+      where: { autoHealthCheckEnabled: true, status: "ACTIVE" },
+    }),
+    channels: channelSummaries.slice(0, 20),
+  };
+}
+
+async function getApiKeyRuntimeStats(app: FastifyInstance) {
+  const minuteBucket = Math.floor(Date.now() / 60000);
+  const [apiKeys, limitedKeys] = await Promise.all([
+    prisma.apiKey.findMany({
+      where: {
+        status: "ACTIVE",
+        OR: [{ concurrencyLimit: { gt: 0 } }, { rateLimitPerMinute: { gt: 0 } }],
+      },
+      select: {
+        id: true,
+        name: true,
+        keyPrefix: true,
+        concurrencyLimit: true,
+        rateLimitPerMinute: true,
+      },
+      take: 50,
+      orderBy: { lastUsedAt: "desc" },
+    }),
+    prisma.apiKey.count({
+      where: {
+        status: "ACTIVE",
+        OR: [{ concurrencyLimit: { gt: 0 } }, { rateLimitPerMinute: { gt: 0 } }],
+      },
+    }),
+  ]);
+  const concurrencyCounts = await readRedisCounts(
+    app,
+    apiKeys.map((apiKey) => `concurrency:${apiKey.id}`),
+  );
+  const minuteCounts = await readRedisCounts(
+    app,
+    apiKeys.map((apiKey) => `ratelimit:${apiKey.id}:${minuteBucket}`),
+  );
+  const sample = apiKeys.slice(0, 10).map((apiKey, index) => ({
+    id: apiKey.id,
+    name: apiKey.name,
+    keyPrefix: apiKey.keyPrefix,
+    concurrencyLimit: apiKey.concurrencyLimit,
+    currentConcurrency: concurrencyCounts[index] ?? 0,
+    rateLimitPerMinute: apiKey.rateLimitPerMinute,
+    currentMinuteRequests: minuteCounts[index] ?? 0,
+  }));
+
+  return {
+    monitoredKeys: apiKeys.length,
+    limitedKeys,
+    activeConcurrency: concurrencyCounts.reduce((total, value) => total + value, 0),
+    currentMinuteRequests: minuteCounts.reduce((total, value) => total + value, 0),
+    sample,
+  };
+}
+
+async function readRedisCounts(app: FastifyInstance, keys: string[]) {
+  if (keys.length === 0) {
+    return [];
+  }
+
+  try {
+    const values = await app.redis.mget(...keys);
+    return values.map((value) => {
+      const numberValue = Number(value ?? 0);
+      return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 0;
+    });
+  } catch {
+    return keys.map(() => 0);
+  }
 }
 
 function isUniqueConstraintError(error: unknown) {

@@ -126,6 +126,7 @@ export async function usageRoutes(app: FastifyInstance) {
 const publicRequestSelect = {
   id: true,
   upstreamProvider: true,
+  clientIp: true,
   apiKey: {
     select: {
       id: true,

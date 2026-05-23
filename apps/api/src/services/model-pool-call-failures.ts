@@ -9,24 +9,25 @@ type Logger = {
 const consecutiveFailureThreshold = 2;
 const failureCounterTtlSeconds = 600;
 
-function failureKey(userId: string, model: string, channelId: string) {
-  return `modelpool:user-call-failure:${userId}:${model}:${channelId}`;
+function failureKey(apiKeyId: string, model: string, channelId: string) {
+  return `modelpool:api-key-call-failure:${apiKeyId}:${model}:${channelId}`;
 }
 
 export async function recordModelPoolUserCallResult(params: {
   userId: string;
+  apiKeyId: string;
   model: string;
   channelId?: string;
   failed?: boolean;
   logger?: Logger;
 }) {
-  const { userId, model, channelId, failed, logger } = params;
+  const { userId, apiKeyId, model, channelId, failed, logger } = params;
 
   if (!channelId) {
     return;
   }
 
-  const key = failureKey(userId, model, channelId);
+  const key = failureKey(apiKeyId, model, channelId);
 
   try {
     if (!failed) {
@@ -42,28 +43,29 @@ export async function recordModelPoolUserCallResult(params: {
     }
 
     await redis.del(key);
-    triggerImmediateHealthCheck({ userId, model, channelId, logger });
+    triggerImmediateHealthCheck({ userId, apiKeyId, model, channelId, logger });
   } catch (error) {
     logger?.warn(
-      { error, userId, model, channelId },
-      "Failed to record model pool user call failure",
+      { error, userId, apiKeyId, model, channelId },
+      "Failed to record model pool API key call failure",
     );
   }
 }
 
 function triggerImmediateHealthCheck(params: {
   userId: string;
+  apiKeyId: string;
   model: string;
   channelId: string;
   logger?: Logger;
 }) {
-  const { userId, model, channelId, logger } = params;
+  const { userId, apiKeyId, model, channelId, logger } = params;
 
   void checkModelPoolChannel(channelId, { unavailableOnFailure: true })
     .then((channel) => {
       if (!channel) {
         logger?.warn(
-          { userId, model, channelId },
+          { userId, apiKeyId, model, channelId },
           "Triggered model pool health check could not find channel",
         );
         return;
@@ -72,6 +74,7 @@ function triggerImmediateHealthCheck(params: {
       logger?.info?.(
         {
           userId,
+          apiKeyId,
           model,
           channelId,
           status: channel.status,
@@ -83,7 +86,7 @@ function triggerImmediateHealthCheck(params: {
     })
     .catch((error) => {
       logger?.warn(
-        { error, userId, model, channelId },
+        { error, userId, apiKeyId, model, channelId },
         "Triggered model pool health check failed",
       );
     });

@@ -236,6 +236,10 @@ a {
   gap: 12px;
 }
 
+.monitor-metrics {
+  margin-bottom: 12px;
+}
+
 .grid.cols-3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -251,6 +255,14 @@ a {
   min-width: 0;
   padding: 16px;
   box-shadow: var(--panel-shadow);
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .action-panel {
@@ -456,7 +468,7 @@ table {
 }
 
 .audit-table {
-  min-width: 1180px;
+  min-width: 1240px;
   table-layout: fixed;
 }
 
@@ -477,22 +489,22 @@ table {
 
 .audit-table th:nth-child(2),
 .audit-table td:nth-child(2) {
-  width: 110px;
+  width: 100px;
 }
 
 .audit-table th:nth-child(3),
 .audit-table td:nth-child(3) {
-  width: 115px;
+  width: 96px;
 }
 
 .audit-table th:nth-child(4),
 .audit-table td:nth-child(4) {
-  width: 100px;
+  width: 110px;
 }
 
 .audit-table th:nth-child(5),
 .audit-table td:nth-child(5) {
-  width: 64px;
+  width: 100px;
 }
 
 .audit-table th:nth-child(6),
@@ -502,28 +514,30 @@ table {
 .audit-table th:nth-child(8),
 .audit-table td:nth-child(8),
 .audit-table th:nth-child(9),
-.audit-table td:nth-child(9) {
+.audit-table td:nth-child(9),
+.audit-table th:nth-child(10),
+.audit-table td:nth-child(10) {
   width: 52px;
 }
 
-.audit-table th:nth-child(10),
-.audit-table td:nth-child(10),
 .audit-table th:nth-child(11),
 .audit-table td:nth-child(11),
 .audit-table th:nth-child(12),
-.audit-table td:nth-child(12) {
+.audit-table td:nth-child(12),
+.audit-table th:nth-child(13),
+.audit-table td:nth-child(13) {
   width: 70px;
 }
 
-.audit-table th:nth-child(13),
-.audit-table td:nth-child(13),
 .audit-table th:nth-child(14),
-.audit-table td:nth-child(14) {
+.audit-table td:nth-child(14),
+.audit-table th:nth-child(15),
+.audit-table td:nth-child(15) {
   width: 60px;
 }
 
-.audit-table th:nth-child(15),
-.audit-table td:nth-child(15) {
+.audit-table th:nth-child(16),
+.audit-table td:nth-child(16) {
   width: 120px;
 }
 
@@ -1127,6 +1141,10 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.compact-info-list {
+  gap: 8px;
+}
+
 .info-line {
   display: flex;
   align-items: center;
@@ -1147,6 +1165,53 @@ tbody tr:hover td {
 
 .info-line strong {
   text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.monitor-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+
+.status-tile {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.status-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-tile strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.monitor-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 4px;
+}
+
+.monitor-process-list {
+  margin-top: 12px;
 }
 
 .table-wrap code,
@@ -1383,6 +1448,8 @@ td .pill {
 
   .grid.cols-3,
   .grid.cols-2,
+  .monitor-status-grid,
+  .monitor-split,
   .inline-form,
   .input-with-action,
   .copy-field,
@@ -1554,6 +1621,11 @@ td .pill {
     gap: 8px;
   }
 
+  .card-head {
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
   .provider-stack,
   .pricing-form,
   .stack-top,
@@ -1571,6 +1643,17 @@ td .pill {
   .pricing-preview {
     border-radius: 7px;
     padding: 8px;
+  }
+
+  .status-tile {
+    padding: 8px;
+  }
+
+  .monitor-metrics,
+  .monitor-status-grid,
+  .monitor-process-list {
+    margin-bottom: 8px;
+    margin-top: 8px;
   }
 
   .action-panel h2,

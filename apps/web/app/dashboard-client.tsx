@@ -60,6 +60,7 @@ type ApiKey = {
 type ApiRequest = {
   id: string;
   upstreamProvider?: string | null;
+  clientIp?: string | null;
   model: string;
   endpoint: string;
   method?: string;
@@ -115,6 +116,91 @@ type AdminOverview = {
   upstreamCost: string;
   grossProfit: string;
   totalTokens: number;
+};
+
+type ServerStatus = {
+  server: {
+    nodeVersion: string;
+    uptimeSeconds: number;
+    memory: {
+      rss: number;
+      heapTotal: number;
+      heapUsed: number;
+      external: number;
+      arrayBuffers: number;
+    };
+    system: {
+      cpuCount: number;
+      cpuUsagePercent: number;
+      loadAverage: number[];
+      totalMemoryBytes: number;
+      freeMemoryBytes: number;
+      usedMemoryBytes: number;
+      memoryUsagePercent: number;
+    };
+    cpu: {
+      percent: number;
+      userMs: number;
+      systemMs: number;
+    };
+    redis: {
+      ok: boolean;
+      latencyMs?: number | null;
+      error?: string | null;
+    };
+    database: {
+      ok: boolean;
+      latencyMs?: number | null;
+      error?: string | null;
+    };
+    pm2: {
+      ok: boolean;
+      processes: Array<{
+        name: string;
+        pid: number | null;
+        status: string;
+        cpu: number | null;
+        memory: number | null;
+      }>;
+      error?: string | null;
+    };
+  };
+  modelPool: {
+    healthCheckIntervalSeconds: number;
+    totalChannels: number;
+    activeChannels: number;
+    unavailableChannels: number;
+    inflightRequests: number;
+    autoCheckEnabledPools: number;
+    channels: Array<{
+      id: string;
+      model: string;
+      status: string;
+      priority: number;
+      consecutiveFailures: number;
+      lastCheckStatus?: string | null;
+      lastCheckedAt?: string | null;
+      lastLatencyMs?: number | null;
+      lastFirstTokenLatencyMs?: number | null;
+      inflightRequests: number;
+    }>;
+  };
+  apiKeys: {
+    monitoredKeys: number;
+    limitedKeys: number;
+    activeConcurrency: number;
+    currentMinuteRequests: number;
+    sample: Array<{
+      id: string;
+      name: string;
+      keyPrefix: string;
+      concurrencyLimit: number;
+      currentConcurrency: number;
+      rateLimitPerMinute: number;
+      currentMinuteRequests: number;
+    }>;
+  };
+  checkedAt: string;
 };
 
 type AdminUser = User & {
@@ -376,6 +462,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminRequests, setAdminRequests] = useState<ApiRequest[]>([]);
   const [upstreamProviders, setUpstreamProviders] = useState<UpstreamProvider[]>([]);
@@ -443,6 +530,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 
     if (mode === "user") {
       setAdminOverview(null);
+      setServerStatus(null);
       setAdminUsers([]);
       setUpstreamProviders([]);
       setModelPrices([]);
@@ -486,11 +574,16 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     setTransactions([]);
     setSummary(null);
     setAvailableModels([]);
+    setServerStatus(null);
 
     void Promise.allSettled([
       loadData("后台总览", async () => {
         const result = await apiFetch<AdminOverview>("/admin/overview", { token: authToken });
         setAdminOverview(result);
+      }),
+      loadData("服务器状态", async () => {
+        const result = await apiFetch<ServerStatus>("/admin/server-status", { token: authToken });
+        setServerStatus(result);
       }),
       loadData("用户", async () => {
         const result = await apiFetch<{ users: AdminUser[] }>("/admin/users", {
@@ -549,6 +642,43 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       loadingModelPoolsRef.current = false;
     }
   }, [token]);
+
+  useEffect(() => {
+    if (mode !== "admin" || activeTab !== "admin-overview" || !token) {
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+    const tick = () => {
+      if (cancelled || inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      void apiFetch<ServerStatus>("/admin/server-status", { token })
+        .then((result) => {
+          if (!cancelled) {
+            setServerStatus(result);
+          }
+        })
+        .catch((fetchError) => {
+          if (!cancelled) {
+            setError(`服务器状态加载失败：${errorToText(fetchError)}`);
+          }
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    tick();
+    const timer = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeTab, mode, token]);
 
   function logout() {
     clearToken();
@@ -659,7 +789,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <CallTester availableModels={availableModels} onChanged={() => refreshAll()} onError={setError} />
           ) : null}
           {mode === "admin" && activeTab === "admin-overview" ? (
-            <AdminOverviewPanel overview={adminOverview} />
+            <AdminOverviewPanel overview={adminOverview} serverStatus={serverStatus} />
           ) : null}
           {mode === "admin" && activeTab === "admin-upstreams" ? (
             <UpstreamProviders
@@ -1579,6 +1709,7 @@ function Requests({
 	            <tr>
 	              {showCost ? <th>用户</th> : null}
 	              <th>API Key</th>
+	              <th>IP</th>
 	              {showCost ? <th>上游</th> : null}
               <th>模型</th>
               <th>状态</th>
@@ -1599,6 +1730,7 @@ function Requests({
 	              <tr key={item.id}>
 	                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
 	                <td>{formatRequestApiKey(item.apiKey)}</td>
+	                <td>{item.clientIp ?? "-"}</td>
 	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
                 <td>{item.model}</td>
                 <td>
@@ -1618,7 +1750,7 @@ function Requests({
                 <td>{dateTime(item.createdAt)}</td>
               </tr>
             ))}
-	            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 15 : 11} /> : null}
+	            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 16 : 12} /> : null}
           </tbody>
         </table>
       </div>
@@ -1642,6 +1774,9 @@ function Requests({
 	            ) : null}
 	            <MobileField label="API Key" wide>
 	              {formatRequestApiKey(item.apiKey)}
+	            </MobileField>
+	            <MobileField label="IP" wide>
+	              {item.clientIp ?? "-"}
 	            </MobileField>
 	            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
             <MobileField label="缓存">{formatNumber(item.cachedInputTokens)}</MobileField>
@@ -2025,7 +2160,19 @@ function CallTester({
   );
 }
 
-function AdminOverviewPanel({ overview }: { overview: AdminOverview | null }) {
+function AdminOverviewPanel({
+  overview,
+  serverStatus,
+}: {
+  overview: AdminOverview | null;
+  serverStatus: ServerStatus | null;
+}) {
+  const latestKeyStats = serverStatus?.apiKeys.sample.slice(0, 4) ?? [];
+  const latestChannelStats = serverStatus?.modelPool.channels
+    .slice()
+    .sort((a, b) => (b.inflightRequests ?? 0) - (a.inflightRequests ?? 0))
+    .slice(0, 4) ?? [];
+
   return (
     <div className="grid admin-page">
       <div className="grid cols-3 metric-row">
@@ -2044,6 +2191,105 @@ function AdminOverviewPanel({ overview }: { overview: AdminOverview | null }) {
           <InfoLine label="用户余额总额" value={`$${money(overview?.totalWalletBalance ?? "0")}`} />
           <InfoLine label="累计收入" value={`$${money(overview?.revenue ?? "0")}`} />
           <InfoLine label="累计成本" value={`$${money(overview?.upstreamCost ?? "0")}`} />
+        </div>
+      </section>
+      <section className="card">
+        <div className="card-head">
+          <div>
+            <h2 className="section-title">实时状态</h2>
+            <p className="section-subtitle">前端每 5 秒轮询一次，展示服务器、网关并发和模型池当前负载。</p>
+          </div>
+          <span className="muted">更新于 {serverStatus ? dateTime(serverStatus.checkedAt) : "-"}</span>
+        </div>
+        <div className="grid cols-3 metric-row monitor-metrics">
+          <Metric
+            label="服务器 CPU"
+            value={`${formatPercent(serverStatus?.server.system.cpuUsagePercent ?? null)}`}
+            caption={`进程 ${formatPercent(serverStatus?.server.cpu.percent ?? null)} · 负载 ${formatLoadAverage(serverStatus?.server.system.loadAverage)}`}
+          />
+          <Metric
+            label="系统内存"
+            value={`${formatPercent(serverStatus?.server.system.memoryUsagePercent ?? null)}`}
+            caption={`${formatBytes(serverStatus?.server.system.usedMemoryBytes)} / ${formatBytes(serverStatus?.server.system.totalMemoryBytes)}`}
+            small
+          />
+          <Metric
+            label="进程内存"
+            value={`${formatBytes(serverStatus?.server.memory.heapUsed)} / ${formatBytes(serverStatus?.server.memory.heapTotal)}`}
+            small
+          />
+        </div>
+        <div className="grid cols-3 metric-row monitor-metrics">
+          <Metric
+            label="API Key 当前并发"
+            value={String(serverStatus?.apiKeys.activeConcurrency ?? 0)}
+            caption={`当前分钟 ${serverStatus?.apiKeys.currentMinuteRequests ?? 0} 次`}
+          />
+          <Metric
+            label="模型池进行中"
+            value={String(serverStatus?.modelPool.inflightRequests ?? 0)}
+            caption={`可用 ${serverStatus?.modelPool.activeChannels ?? 0} / 总 ${serverStatus?.modelPool.totalChannels ?? 0}`}
+          />
+          <Metric
+            label="运行时间"
+            value={formatDuration(serverStatus?.server.uptimeSeconds ?? 0)}
+            caption={serverStatus?.server.nodeVersion ?? "-"}
+            small
+          />
+        </div>
+        <div className="monitor-status-grid">
+          <StatusTile
+            label="Redis"
+            ok={serverStatus?.server.redis.ok}
+            value={serverStatus?.server.redis.ok ? `${serverStatus.server.redis.latencyMs ?? 0} ms` : serverStatus?.server.redis.error ?? "-"}
+          />
+          <StatusTile
+            label="数据库"
+            ok={serverStatus?.server.database.ok}
+            value={serverStatus?.server.database.ok ? `${serverStatus.server.database.latencyMs ?? 0} ms` : serverStatus?.server.database.error ?? "-"}
+          />
+          <StatusTile
+            label="PM2"
+            ok={serverStatus?.server.pm2.ok}
+            value={(serverStatus?.server.pm2.processes ?? []).map((process) => `${process.name}:${process.status}`).join(" · ") || "-"}
+          />
+        </div>
+        <div className="monitor-split">
+          <div className="info-list compact-info-list">
+            <InfoLine
+              label="模型池"
+              value={`检测 ${serverStatus?.modelPool.autoCheckEnabledPools ?? 0} / 不可用 ${serverStatus?.modelPool.unavailableChannels ?? 0}`}
+            />
+            <InfoLine label="检测间隔" value={`${serverStatus?.modelPool.healthCheckIntervalSeconds ?? 0} 秒`} />
+            {latestChannelStats.length > 0 ? (
+              <InfoLine
+                label="渠道负载"
+                value={latestChannelStats.map((channel) => `${channel.model}:${channel.inflightRequests}`).join(" · ")}
+              />
+            ) : null}
+          </div>
+          <div className="info-list compact-info-list">
+            <InfoLine
+              label="限额 Key"
+              value={`监控 ${serverStatus?.apiKeys.monitoredKeys ?? 0} / 有限制 ${serverStatus?.apiKeys.limitedKeys ?? 0}`}
+            />
+            {latestKeyStats.length > 0 ? (
+              <InfoLine
+                label="Key 实时"
+                value={latestKeyStats
+                  .map((apiKey) => `${apiKey.name || apiKey.keyPrefix}: 并发 ${apiKey.currentConcurrency}/${apiKey.concurrencyLimit || "-"} · ${apiKey.currentMinuteRequests}/${apiKey.rateLimitPerMinute}/min`)
+                  .join(" · ")}
+              />
+            ) : (
+              <InfoLine label="Key 实时" value="暂无受限 Key" />
+            )}
+          </div>
+        </div>
+        <div className="info-list monitor-process-list">
+          <InfoLine
+            label="PM2 进程"
+            value={(serverStatus?.server.pm2.processes ?? []).map((process) => `${process.name}:${process.status}`).join(" · ") || "-"}
+          />
         </div>
       </section>
     </div>
@@ -4169,8 +4415,33 @@ function InfoLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+function StatusTile({
+  label,
+  ok,
+  value,
+}: {
+  label: string;
+  ok: boolean | undefined;
+  value: string;
+}) {
+  const status = ok === undefined ? "WAITING" : ok ? "HEALTHY" : "UNHEALTHY";
+
+  return (
+    <div className="status-tile">
+      <div className="status-tile-head">
+        <span>{label}</span>
+        <StatusPill status={status} strong={ok === false} />
+      </div>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function StatusPill({ status, strong = false }: { status: string; strong?: boolean }) {
   const labelMap: Record<string, string> = {
+    HEALTHY: "正常",
+    UNHEALTHY: "异常",
+    WAITING: "等待",
     FORCED_ACTIVE: "人工可用",
     FORCED_READY: "人工可调用",
     AUTO_CHECK_ON: "自动检测开",
@@ -4179,12 +4450,14 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
   const ok =
     status === "ACTIVE" ||
     status === "SUCCESS" ||
+    status === "HEALTHY" ||
     status === "READY" ||
     status === "FORCED_ACTIVE" ||
     status === "FORCED_READY" ||
     status === "AUTO_CHECK_ON";
   const danger =
     status === "FAILED" ||
+    status === "UNHEALTHY" ||
     status === "REVOKED" ||
     status === "DISABLED" ||
     status === "UNAVAILABLE" ||
@@ -4454,6 +4727,62 @@ function formatNumber(value: number) {
 
 function dateTime(value: string) {
   return new Date(value).toLocaleString();
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  return `${Math.max(0, value).toFixed(value >= 10 ? 1 : 2)}%`;
+}
+
+function formatLoadAverage(values: number[] | null | undefined) {
+  if (!values || values.length === 0) {
+    return "-";
+  }
+
+  return values.slice(0, 3).map((value) => value.toFixed(2)).join(" / ");
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let current = value;
+  let unit = 0;
+
+  while (current >= 1024 && unit < units.length - 1) {
+    current /= 1024;
+    unit += 1;
+  }
+
+  return `${current.toFixed(current >= 100 ? 0 : current >= 10 ? 1 : 2)} ${units[unit]}`;
+}
+
+function formatDuration(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  const secondsValue = Math.max(0, Math.floor(value));
+  const days = Math.floor(secondsValue / 86400);
+  const hours = Math.floor((secondsValue % 86400) / 3600);
+  const minutes = Math.floor((secondsValue % 3600) / 60);
+  const secondsRest = secondsValue % 60;
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secondsRest}s`;
+  }
+  return `${secondsRest}s`;
 }
 
 function errorToText(error: unknown) {

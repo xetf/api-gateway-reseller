@@ -39,6 +39,7 @@ const app = Fastify({
   logger: {
     level: env.NODE_ENV === "production" ? "info" : "debug",
   },
+  trustProxy: true,
   bodyLimit: 20 * 1024 * 1024,
 });
 let stopModelPoolHealthScheduler: (() => void) | undefined;
