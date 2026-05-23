@@ -303,6 +303,19 @@ a {
   gap: 16px;
 }
 
+.model-pool-list-card {
+  overflow: hidden;
+}
+
+.model-pool-scroll {
+  max-height: min(760px, calc(100vh - 245px));
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
 .provider-panel {
   position: relative;
   display: grid;
@@ -1697,6 +1710,12 @@ td .pill {
 }
 
 @media (max-width: 720px) {
+  .model-pool-scroll {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .table-wrap {
     display: none;
   }

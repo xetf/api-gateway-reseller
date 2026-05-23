@@ -1665,7 +1665,7 @@ function WalletView({
         <Metric label="币种" value={wallet?.currency ?? "USD"} />
         <Metric label="流水数量" value={String(transactions.length)} />
       </div>
-      <section className="card">
+      <section className="card model-pool-list-card">
         <h2 className="section-title">兑换余额</h2>
         <form className="form inline-form" onSubmit={redeem}>
           <label className="field">
@@ -4015,7 +4015,7 @@ function AdminModelPools({
           </div>
           <StatusPill status={modelPools.some((pool) => pool.readyChannelCount > 0) ? "READY" : "UNAVAILABLE"} />
         </div>
-        <div className="provider-stack">
+        <div className="provider-stack model-pool-scroll">
           {modelPools.map((pool) => {
             const selectableChannels = channelsForPool(pool);
             const selectedChannel =
