@@ -129,7 +129,9 @@ async function getRouteCandidates(
     }),
   );
 
-  return routes.filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route));
+  return routes
+    .filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route))
+    .sort((a, b) => a.speedScoreMs - b.speedScoreMs);
 }
 
 async function getBalancedRoute(

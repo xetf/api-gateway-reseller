@@ -477,6 +477,13 @@ async function postHealthProbe(input: PostHealthProbeInput): Promise<ProbeResult
   }
 
   const firstTokenLatencyMs = await readHealthProbeResponse(response, startedAt);
+  if (firstTokenLatencyMs === null) {
+    return {
+      ok: false,
+      message: `${input.mode}: no output token received`,
+    };
+  }
+
   return { ok: true, mode: input.mode, firstTokenLatencyMs };
 }
 

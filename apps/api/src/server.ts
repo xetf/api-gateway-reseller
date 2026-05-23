@@ -13,6 +13,10 @@ import { redeemCodeRoutes } from "./routes/redeem-codes.js";
 import { proxyRoutes } from "./routes/proxy.js";
 import { adminRoutes } from "./routes/admin.js";
 import { startModelPoolHealthScheduler } from "./services/model-pool-health.js";
+import {
+  cleanupStalePendingRequests,
+  startPendingRequestCleanupScheduler,
+} from "./services/pending-request-cleanup.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -43,6 +47,7 @@ const app = Fastify({
   bodyLimit: 20 * 1024 * 1024,
 });
 let stopModelPoolHealthScheduler: (() => void) | undefined;
+let stopPendingRequestCleanupScheduler: (() => void) | undefined;
 
 app.decorate("redis", redis);
 
@@ -113,6 +118,7 @@ await app.register(adminRoutes);
 
 app.addHook("onClose", async () => {
   stopModelPoolHealthScheduler?.();
+  stopPendingRequestCleanupScheduler?.();
 });
 
 async function start() {
@@ -124,6 +130,11 @@ async function start() {
       host: env.API_HOST,
       port: env.API_PORT,
     });
+    const stalePendingResult = await cleanupStalePendingRequests();
+    if (stalePendingResult.count > 0) {
+      app.log.info(stalePendingResult, "Stale pending API requests marked failed on startup");
+    }
+    stopPendingRequestCleanupScheduler = startPendingRequestCleanupScheduler(app.log);
     stopModelPoolHealthScheduler = startModelPoolHealthScheduler(app.log);
   } catch (error) {
     app.log.error(error);

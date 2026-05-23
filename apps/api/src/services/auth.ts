@@ -78,14 +78,18 @@ export async function requireApiKey(
     return sendApiError(reply, 401, "API key expired and has been disabled", "authentication_error");
   }
 
-  const rateLimitKey = `ratelimit:${apiKey.id}:${Math.floor(Date.now() / 60000)}`;
-  const count = await app.redis.incr(rateLimitKey);
-  if (count === 1) {
-    await app.redis.expire(rateLimitKey, 70);
-  }
+  try {
+    const rateLimitKey = `ratelimit:${apiKey.id}:${Math.floor(Date.now() / 60000)}`;
+    const count = await app.redis.incr(rateLimitKey);
+    if (count === 1) {
+      await app.redis.expire(rateLimitKey, 70);
+    }
 
-  if (count > apiKey.rateLimitPerMinute) {
-    return sendApiError(reply, 429, "Rate limit exceeded", "rate_limit_error");
+    if (count > apiKey.rateLimitPerMinute) {
+      return sendApiError(reply, 429, "Rate limit exceeded", "rate_limit_error");
+    }
+  } catch (error) {
+    app.log.warn({ error, apiKeyId: apiKey.id }, "Redis rate limit check failed, allowing request");
   }
 
   if (await disableApiKeyIfTotalLimitReached(apiKey)) {
