@@ -956,6 +956,52 @@ tbody tr:hover td {
   overflow-wrap: anywhere;
 }
 
+.admin-key-modal {
+  gap: 14px;
+}
+
+.admin-key-table table {
+  min-width: 980px;
+}
+
+.batch-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.batch-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.batch-panel-head strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.batch-panel-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notice-preview {
+  margin-top: 6px;
+  max-width: 280px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

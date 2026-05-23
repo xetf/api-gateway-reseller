@@ -1,0 +1,3 @@
+ALTER TABLE "ApiKey"
+ADD COLUMN "noticeEnabled" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "noticeText" TEXT;

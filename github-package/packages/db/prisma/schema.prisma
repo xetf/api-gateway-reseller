@@ -78,6 +78,8 @@ model ApiKey {
   dailyLimitUsd      Decimal?     @db.Decimal(18, 8)
   totalLimitUsd      Decimal?     @db.Decimal(18, 8)
   concurrencyLimit   Int          @default(0)
+  noticeEnabled      Boolean      @default(false)
+  noticeText         String?
   expiresAt          DateTime?
   lastUsedAt         DateTime?
   createdAt          DateTime     @default(now())

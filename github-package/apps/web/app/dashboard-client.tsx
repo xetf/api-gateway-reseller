@@ -41,6 +41,7 @@ type Wallet = {
 
 type ApiKey = {
   id: string;
+  userId?: string;
   name: string;
   keyPrefix: string;
   keySecret?: string | null;
@@ -52,6 +53,8 @@ type ApiKey = {
   totalRemainingUsd?: string | null;
   concurrencyLimit: number;
   allowedModels: string[];
+  noticeEnabled?: boolean;
+  noticeText?: string | null;
   expiresAt?: string | null;
   lastUsedAt?: string | null;
   createdAt: string;
@@ -221,6 +224,7 @@ type AdminUser = User & {
   createdAt: string;
   wallet?: Wallet | null;
   walletTransactions?: Transaction[];
+  apiKeys?: ApiKey[];
   _count: {
     apiKeys: number;
     apiRequests: number;
@@ -2376,6 +2380,7 @@ function AdminUsers({
   const [adjustRemark, setAdjustRemark] = useState("Admin balance adjustment");
   const [allowedModelsText, setAllowedModelsText] = useState("");
   const [userModal, setUserModal] = useState<"create" | "balance" | "models" | null>(null);
+  const [keyModalUserId, setKeyModalUserId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editEmail, setEditEmail] = useState("");
   const [editName, setEditName] = useState("");
@@ -2385,6 +2390,7 @@ function AdminUsers({
   const [editAllowedModels, setEditAllowedModels] = useState("");
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
+  const keyModalUser = users.find((item) => item.id === keyModalUserId) ?? null;
   const modelSuggestions = modelPools.map((pool) => pool.model);
   const filteredUsers = users.filter((item) =>
     `${item.email} ${item.role} ${item.status}`
@@ -2547,6 +2553,9 @@ function AdminUsers({
       if (editingUser?.id === item.id) {
         setEditingUser(null);
       }
+      if (keyModalUserId === item.id) {
+        setKeyModalUserId(null);
+      }
       onChanged();
     } catch (deleteError) {
       onError(errorToText(deleteError));
@@ -2644,6 +2653,9 @@ function AdminUsers({
                         <button className="button secondary" onClick={() => beginEditUser(item)} type="button">
                           编辑
                         </button>
+                        <button className="button secondary" onClick={() => setKeyModalUserId(item.id)} type="button">
+                          Key 管理
+                        </button>
                         <button className="button secondary" onClick={() => toggleUserStatus(item)} type="button">
                           {item.status === "ACTIVE" ? "停用" : "启用"}
                         </button>
@@ -2675,6 +2687,9 @@ function AdminUsers({
                     <button className="button secondary" onClick={() => beginEditUser(item)} type="button">
                       编辑
                     </button>
+                    <button className="button secondary" onClick={() => setKeyModalUserId(item.id)} type="button">
+                      Key 管理
+                    </button>
                     <button className="button secondary" onClick={() => toggleUserStatus(item)} type="button">
                       {item.status === "ACTIVE" ? "停用" : "启用"}
                     </button>
@@ -2686,6 +2701,9 @@ function AdminUsers({
               >
                 <MobileField label="余额">${money(item.wallet?.balance ?? "0")}</MobileField>
                 <MobileField label="Key">{item._count.apiKeys}</MobileField>
+                <MobileField label="公告 Key">
+                  {(item.apiKeys ?? []).filter((key) => key.noticeEnabled).length}
+                </MobileField>
                 <MobileField label="请求">{item._count.apiRequests}</MobileField>
                 <MobileField label="模型白名单" wide>
                   {item.allowedModels.length > 0 ? item.allowedModels.join(", ") : "不限"}
@@ -2842,6 +2860,16 @@ function AdminUsers({
         </ModalShell>
       ) : null}
 
+      {keyModalUser ? (
+        <AdminUserKeysModal
+          user={keyModalUser}
+          modelPools={modelPools}
+          onChanged={onChanged}
+          onClose={() => setKeyModalUserId(null)}
+          onError={onError}
+        />
+      ) : null}
+
       {editingUser ? (
         <ModalShell title="编辑用户" description={editingUser.email} onClose={() => setEditingUser(null)} wide>
           <form className="form" onSubmit={saveEditingUser}>
@@ -2919,6 +2947,701 @@ function AdminUsers({
               <button className="button" type="submit">
                 <Save size={17} />
                 保存用户
+              </button>
+            </div>
+          </form>
+        </ModalShell>
+      ) : null}
+    </>
+  );
+}
+
+function AdminUserKeysModal({
+  user,
+  modelPools,
+  onChanged,
+  onError,
+  onClose,
+}: {
+  user: AdminUser;
+  modelPools: ModelPool[];
+  onChanged: () => void;
+  onError: (error: string | null) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("default");
+  const [rateLimit, setRateLimit] = useState(60);
+  const [totalLimitUsd, setTotalLimitUsd] = useState("");
+  const [concurrencyLimit, setConcurrencyLimit] = useState(0);
+  const [expiresAt, setExpiresAt] = useState("");
+  const [allowedModelsText, setAllowedModelsText] = useState("");
+  const [noticeEnabled, setNoticeEnabled] = useState(false);
+  const [noticeText, setNoticeText] = useState("");
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null);
+  const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
+  const [selectedKeyIds, setSelectedKeyIds] = useState<string[]>([]);
+  const [batchNoticeEnabled, setBatchNoticeEnabled] = useState(true);
+  const [batchNoticeText, setBatchNoticeText] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editStatus, setEditStatus] = useState<"ACTIVE" | "DISABLED" | "REVOKED">("ACTIVE");
+  const [editRateLimit, setEditRateLimit] = useState(60);
+  const [editTotalLimitUsd, setEditTotalLimitUsd] = useState("");
+  const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [editAllowedModels, setEditAllowedModels] = useState("");
+  const [editNoticeEnabled, setEditNoticeEnabled] = useState(false);
+  const [editNoticeText, setEditNoticeText] = useState("");
+  const modelSuggestions = Array.from(new Set(modelPools.map((pool) => pool.model))).sort();
+  const userApiKeys = user.apiKeys ?? [];
+  const selectedKeySet = new Set(selectedKeyIds);
+  const allKeysSelected = userApiKeys.length > 0 && selectedKeyIds.length === userApiKeys.length;
+
+  useEffect(() => {
+    setCreatedSecret(null);
+    setEditingKey(null);
+    setSelectedKeyIds([]);
+    setBatchNoticeEnabled(true);
+    setBatchNoticeText("");
+  }, [user.id]);
+
+  async function createKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onError(null);
+
+    if (noticeEnabled && !noticeText.trim()) {
+      onError("开启公告时请填写公告内容。");
+      return;
+    }
+
+    try {
+      const result = await apiFetch<{ apiKey: ApiKey; secret: string }>(`/admin/users/${user.id}/api-keys`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          rateLimitPerMinute: Number(rateLimit),
+          totalLimitUsd: normalizeOptionalNumberText(totalLimitUsd),
+          concurrencyLimit: Number(concurrencyLimit),
+          expiresAt: normalizeOptionalDateInput(expiresAt),
+          allowedModels: parseModelList(allowedModelsText),
+          noticeEnabled,
+          noticeText: noticeText.trim() || null,
+        }),
+      });
+      setCreatedSecret(result.secret);
+      setName("default");
+      setAllowedModelsText("");
+      setNoticeEnabled(false);
+      setNoticeText("");
+      onChanged();
+    } catch (createError) {
+      onError(errorToText(createError));
+    }
+  }
+
+  function beginEditKey(key: ApiKey) {
+    setEditingKey(key);
+    setEditName(key.name);
+    setEditStatus(normalizeApiKeyStatus(key.status));
+    setEditRateLimit(key.rateLimitPerMinute);
+    setEditTotalLimitUsd(limitValue(key.totalLimitUsd ?? key.dailyLimitUsd));
+    setEditConcurrencyLimit(key.concurrencyLimit ?? 0);
+    setEditExpiresAt(dateInputValue(key.expiresAt));
+    setEditAllowedModels((key.allowedModels ?? []).join("\n"));
+    setEditNoticeEnabled(Boolean(key.noticeEnabled));
+    setEditNoticeText(key.noticeText ?? "");
+  }
+
+  async function saveEditingKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingKey) {
+      return;
+    }
+
+    if (editNoticeEnabled && !editNoticeText.trim()) {
+      onError("开启公告时请填写公告内容。");
+      return;
+    }
+
+    onError(null);
+    setBusyKeyId(editingKey.id);
+    try {
+      await apiFetch(`/admin/api-keys/${editingKey.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName,
+          status: editStatus,
+          rateLimitPerMinute: Number(editRateLimit),
+          totalLimitUsd: normalizeOptionalNumberText(editTotalLimitUsd),
+          concurrencyLimit: Number(editConcurrencyLimit),
+          expiresAt: normalizeOptionalDateInput(editExpiresAt),
+          allowedModels: parseModelList(editAllowedModels),
+          noticeEnabled: editNoticeEnabled,
+          noticeText: editNoticeText.trim() || null,
+        }),
+      });
+      setEditingKey(null);
+      onChanged();
+    } catch (editError) {
+      onError(errorToText(editError));
+    } finally {
+      setBusyKeyId(null);
+    }
+  }
+
+  async function updateKeyStatus(key: ApiKey, status: "ACTIVE" | "DISABLED" | "REVOKED") {
+    onError(null);
+    setBusyKeyId(key.id);
+    try {
+      await apiFetch(`/admin/api-keys/${key.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      onChanged();
+    } catch (updateError) {
+      onError(errorToText(updateError));
+    } finally {
+      setBusyKeyId(null);
+    }
+  }
+
+  function toggleKeySelection(keyId: string) {
+    setSelectedKeyIds((current) =>
+      current.includes(keyId) ? current.filter((id) => id !== keyId) : [...current, keyId],
+    );
+  }
+
+  function toggleAllKeySelection() {
+    setSelectedKeyIds(allKeysSelected ? [] : userApiKeys.map((key) => key.id));
+  }
+
+  async function batchUpdateKeys(changes: {
+    status?: "ACTIVE" | "DISABLED" | "REVOKED";
+    noticeEnabled?: boolean;
+    noticeText?: string | null;
+  }) {
+    onError(null);
+
+    if (selectedKeyIds.length === 0) {
+      onError("请先选择要批量处理的 Key。");
+      return;
+    }
+
+    if (changes.noticeEnabled && !changes.noticeText?.trim()) {
+      onError("开启公告时请填写公告内容。");
+      return;
+    }
+
+    setBatchBusy(true);
+    try {
+      await apiFetch(`/admin/users/${user.id}/api-keys/batch`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          keyIds: selectedKeyIds,
+          ...changes,
+          ...(changes.noticeText !== undefined
+            ? { noticeText: changes.noticeText?.trim() || null }
+            : {}),
+        }),
+      });
+      setSelectedKeyIds([]);
+      onChanged();
+    } catch (batchError) {
+      onError(errorToText(batchError));
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  async function submitBatchNotice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await batchUpdateKeys({
+      noticeEnabled: batchNoticeEnabled,
+      noticeText: batchNoticeEnabled ? batchNoticeText : null,
+    });
+  }
+
+  async function deleteKey(key: ApiKey) {
+    const confirmed = window.confirm(`确定删除 ${user.email} 的 API Key「${key.name}」吗？删除后将无法继续使用。`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    onError(null);
+    setBusyKeyId(key.id);
+    try {
+      await apiFetch(`/admin/api-keys/${key.id}`, {
+        method: "DELETE",
+      });
+      if (editingKey?.id === key.id) {
+        setEditingKey(null);
+      }
+      onChanged();
+    } catch (deleteError) {
+      onError(errorToText(deleteError));
+    } finally {
+      setBusyKeyId(null);
+    }
+  }
+
+  return (
+    <>
+      <ModalShell title="用户 Key 管理" description={`${user.email} · ${userApiKeys.length} 个 Key`} onClose={onClose} wide>
+        <div className="modal-body admin-key-modal">
+          <form className="form" onSubmit={createKey}>
+            <div className="grid cols-3">
+              <label className="field">
+                <span>名称</span>
+                <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>每分钟限流</span>
+                <input
+                  className="input"
+                  value={rateLimit}
+                  min={1}
+                  max={10000}
+                  onChange={(event) => setRateLimit(Number(event.target.value))}
+                  type="number"
+                />
+              </label>
+              <label className="field">
+                <span>总限额 USD</span>
+                <input
+                  className="input"
+                  value={totalLimitUsd}
+                  min={0}
+                  onChange={(event) => setTotalLimitUsd(event.target.value)}
+                  placeholder="留空不限"
+                  step="0.00000001"
+                  type="number"
+                />
+              </label>
+            </div>
+            <div className="grid cols-3">
+              <label className="field">
+                <span>并发限制</span>
+                <input
+                  className="input"
+                  value={concurrencyLimit}
+                  min={0}
+                  max={10000}
+                  onChange={(event) => setConcurrencyLimit(Number(event.target.value))}
+                  type="number"
+                />
+              </label>
+              <label className="field">
+                <span>过期时间</span>
+                <input
+                  className="input"
+                  value={expiresAt}
+                  onChange={(event) => setExpiresAt(event.target.value)}
+                  type="datetime-local"
+                />
+              </label>
+              <label className="inline-field">
+                <input
+                  checked={noticeEnabled}
+                  onChange={(event) => setNoticeEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                开启公告
+              </label>
+            </div>
+            <div className="grid cols-2">
+              <label className="field">
+                <span>模型白名单</span>
+                <textarea
+                  className="input textarea compact-textarea"
+                  value={allowedModelsText}
+                  onChange={(event) => setAllowedModelsText(event.target.value)}
+                  placeholder="留空不限；每行一个模型"
+                />
+              </label>
+              <label className="field">
+                <span>公告内容</span>
+                <textarea
+                  className="input textarea compact-textarea"
+                  value={noticeText}
+                  disabled={!noticeEnabled}
+                  onChange={(event) => setNoticeText(event.target.value)}
+                  placeholder="开启公告后，这个 Key 的调用会返回这里的文字"
+                />
+              </label>
+            </div>
+            <div className="chip-row">
+              {modelSuggestions.slice(0, 8).map((modelName) => (
+                <button
+                  className="chip"
+                  key={modelName}
+                  onClick={() =>
+                    setAllowedModelsText((current) =>
+                      Array.from(new Set([...parseModelList(current), modelName])).join("\n"),
+                    )
+                  }
+                  type="button"
+                >
+                  + {modelName}
+                </button>
+              ))}
+            </div>
+            <div className="button-row">
+              <button className="button" type="submit">
+                <Plus size={17} />
+                创建 Key
+              </button>
+            </div>
+          </form>
+
+          {createdSecret ? (
+            <div className="stack-top">
+              <div className="notice">新 Key 已创建，完整密钥如下。</div>
+              <div className="secret">{createdSecret}</div>
+            </div>
+          ) : null}
+
+          <form className="batch-panel" onSubmit={submitBatchNotice}>
+            <div className="batch-panel-head">
+              <div>
+                <strong>批量操作</strong>
+                <p>已选择 {selectedKeyIds.length} / {userApiKeys.length} 个 Key</p>
+              </div>
+              <div className="button-row compact">
+                <button className="button secondary" onClick={toggleAllKeySelection} type="button">
+                  {allKeysSelected ? "取消全选" : "全选"}
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={batchBusy || selectedKeyIds.length === 0}
+                  onClick={() => batchUpdateKeys({ status: "ACTIVE" })}
+                  type="button"
+                >
+                  批量启用
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={batchBusy || selectedKeyIds.length === 0}
+                  onClick={() => batchUpdateKeys({ status: "DISABLED" })}
+                  type="button"
+                >
+                  批量停用
+                </button>
+              </div>
+            </div>
+            <div className="grid cols-2">
+              <label className="field">
+                <span>公告动作</span>
+                <select
+                  className="input"
+                  value={batchNoticeEnabled ? "on" : "off"}
+                  onChange={(event) => setBatchNoticeEnabled(event.target.value === "on")}
+                >
+                  <option value="on">开启并设置公告</option>
+                  <option value="off">关闭公告</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>公告内容</span>
+                <input
+                  className="input"
+                  value={batchNoticeText}
+                  disabled={!batchNoticeEnabled}
+                  onChange={(event) => setBatchNoticeText(event.target.value)}
+                  placeholder="批量开启公告时填写"
+                />
+              </label>
+            </div>
+            <div className="button-row">
+              <button className="button" disabled={batchBusy || selectedKeyIds.length === 0} type="submit">
+                <Save size={17} />
+                应用公告设置
+              </button>
+            </div>
+          </form>
+
+          <div className="table-wrap admin-key-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>选择</th>
+                  <th>名称</th>
+                  <th>完整 Key</th>
+                  <th>状态</th>
+                  <th>限制</th>
+                  <th>限额</th>
+                  <th>公告</th>
+                  <th>上次使用</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {userApiKeys.map((key) => (
+                  <tr key={key.id}>
+                    <td>
+                      <input
+                        checked={selectedKeySet.has(key.id)}
+                        onChange={() => toggleKeySelection(key.id)}
+                        type="checkbox"
+                      />
+                    </td>
+                    <td>{key.name}</td>
+                    <td>
+                      <code className="inline-secret">{key.keySecret ?? "未保存完整 Key"}</code>
+                    </td>
+                    <td>
+                      <StatusPill status={key.status} />
+                    </td>
+                    <td>
+                      {key.rateLimitPerMinute}/min · 并发 {formatConcurrencyLimit(key.concurrencyLimit)}
+                    </td>
+                    <td>{formatApiKeyLimitSummary(key)}</td>
+                    <td>
+                      <span className={key.noticeEnabled ? "pill ok" : "pill"}>
+                        {key.noticeEnabled ? "公告中" : "未开启"}
+                      </span>
+                      {key.noticeText ? <div className="notice-preview">{key.noticeText}</div> : null}
+                    </td>
+                    <td>{key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}</td>
+                    <td>
+                      <div className="button-row compact">
+                        <button className="button secondary" onClick={() => beginEditKey(key)} type="button">
+                          编辑
+                        </button>
+                        {key.status === "ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyKeyId === key.id}
+                            onClick={() => updateKeyStatus(key, "DISABLED")}
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : (
+                          <button
+                            className="button"
+                            disabled={busyKeyId === key.id}
+                            onClick={() => updateKeyStatus(key, "ACTIVE")}
+                            type="button"
+                          >
+                            启用
+                          </button>
+                        )}
+                        <button
+                          className="button danger"
+                          disabled={busyKeyId === key.id}
+                          onClick={() => deleteKey(key)}
+                          type="button"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {userApiKeys.length === 0 ? <EmptyRow colSpan={9} /> : null}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mobile-record-list">
+            {userApiKeys.map((key) => (
+              <MobileRecord
+                key={key.id}
+                title={key.name}
+                meta={dateTime(key.createdAt)}
+                badges={
+                  <>
+                    <StatusPill status={key.status} />
+                    <span className={key.noticeEnabled ? "pill ok" : "pill"}>
+                      {key.noticeEnabled ? "公告中" : "未开启"}
+                    </span>
+                  </>
+                }
+                actions={
+                  <>
+                    <button className="button secondary" onClick={() => beginEditKey(key)} type="button">
+                      编辑
+                    </button>
+                    {key.status === "ACTIVE" ? (
+                      <button
+                        className="button secondary"
+                        disabled={busyKeyId === key.id}
+                        onClick={() => updateKeyStatus(key, "DISABLED")}
+                        type="button"
+                      >
+                        停用
+                      </button>
+                    ) : (
+                      <button
+                        className="button"
+                        disabled={busyKeyId === key.id}
+                        onClick={() => updateKeyStatus(key, "ACTIVE")}
+                        type="button"
+                      >
+                        启用
+                      </button>
+                    )}
+                    <button className="button danger" disabled={busyKeyId === key.id} onClick={() => deleteKey(key)} type="button">
+                      删除
+                    </button>
+                  </>
+                }
+              >
+                <MobileField label="选择">
+                  <input
+                    checked={selectedKeySet.has(key.id)}
+                    onChange={() => toggleKeySelection(key.id)}
+                    type="checkbox"
+                  />
+                </MobileField>
+                <MobileField label="完整 Key" wide>
+                  <code className="inline-secret">{key.keySecret ?? "未保存完整 Key"}</code>
+                </MobileField>
+                <MobileField label="限流">{key.rateLimitPerMinute}/min</MobileField>
+                <MobileField label="并发">{formatConcurrencyLimit(key.concurrencyLimit)}</MobileField>
+                <MobileField label="限额" wide>
+                  {formatApiKeyLimitSummary(key)}
+                </MobileField>
+                <MobileField label="上次使用">{key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}</MobileField>
+                <MobileField label="公告" wide>
+                  {key.noticeText ?? "未开启"}
+                </MobileField>
+              </MobileRecord>
+            ))}
+            {userApiKeys.length === 0 ? <MobileEmpty>暂无 API Key</MobileEmpty> : null}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="button secondary" onClick={onClose} type="button">
+            关闭
+          </button>
+        </div>
+      </ModalShell>
+
+      {editingKey ? (
+        <ModalShell title="编辑用户 Key" description={editingKey.keySecret ?? editingKey.keyPrefix} onClose={() => setEditingKey(null)} wide>
+          <form className="form" onSubmit={saveEditingKey}>
+            <div className="modal-body">
+              <div className="grid cols-3">
+                <label className="field">
+                  <span>名称</span>
+                  <input className="input" value={editName} onChange={(event) => setEditName(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>状态</span>
+                  <select
+                    className="input"
+                    value={editStatus}
+                    onChange={(event) => setEditStatus(normalizeApiKeyStatus(event.target.value))}
+                  >
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="DISABLED">DISABLED</option>
+                    <option value="REVOKED">REVOKED</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>每分钟限流</span>
+                  <input
+                    className="input"
+                    value={editRateLimit}
+                    min={1}
+                    max={10000}
+                    onChange={(event) => setEditRateLimit(Number(event.target.value))}
+                    type="number"
+                  />
+                </label>
+              </div>
+              <div className="grid cols-3">
+                <label className="field">
+                  <span>总限额 USD</span>
+                  <input
+                    className="input"
+                    value={editTotalLimitUsd}
+                    min={0}
+                    onChange={(event) => setEditTotalLimitUsd(event.target.value)}
+                    placeholder="留空不限"
+                    step="0.00000001"
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  <span>并发限制</span>
+                  <input
+                    className="input"
+                    value={editConcurrencyLimit}
+                    min={0}
+                    max={10000}
+                    onChange={(event) => setEditConcurrencyLimit(Number(event.target.value))}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  <span>过期时间</span>
+                  <input
+                    className="input"
+                    value={editExpiresAt}
+                    onChange={(event) => setEditExpiresAt(event.target.value)}
+                    type="datetime-local"
+                  />
+                </label>
+              </div>
+              <div className="grid cols-2">
+                <label className="field">
+                  <span>模型白名单</span>
+                  <textarea
+                    className="input textarea compact-textarea"
+                    value={editAllowedModels}
+                    onChange={(event) => setEditAllowedModels(event.target.value)}
+                    placeholder="留空不限；每行一个模型"
+                  />
+                </label>
+                <label className="field">
+                  <span>公告内容</span>
+                  <textarea
+                    className="input textarea compact-textarea"
+                    value={editNoticeText}
+                    disabled={!editNoticeEnabled}
+                    onChange={(event) => setEditNoticeText(event.target.value)}
+                    placeholder="开启公告后，这个 Key 的调用会返回这里的文字"
+                  />
+                </label>
+              </div>
+              <div className="button-row">
+                <label className="inline-field">
+                  <input
+                    checked={editNoticeEnabled}
+                    onChange={(event) => setEditNoticeEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  开启公告
+                </label>
+              </div>
+              <div className="chip-row">
+                {modelSuggestions.slice(0, 8).map((modelName) => (
+                  <button
+                    className="chip"
+                    key={modelName}
+                    onClick={() =>
+                      setEditAllowedModels((current) =>
+                        Array.from(new Set([...parseModelList(current), modelName])).join("\n"),
+                      )
+                    }
+                    type="button"
+                  >
+                    + {modelName}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setEditingKey(null)} type="button">
+                取消
+              </button>
+              <button className="button" disabled={busyKeyId === editingKey.id} type="submit">
+                <Save size={17} />
+                保存 Key
               </button>
             </div>
           </form>
@@ -4925,6 +5648,14 @@ function formatApiKeyLimitSummary(key: ApiKey) {
   const remaining = key.totalRemainingUsd ?? String(Math.max(0, numericLimit - Number(used || 0)));
 
   return `剩余 $${money(remaining)} / 总 $${money(numericLimit)} / 已用 $${money(used)}`;
+}
+
+function normalizeApiKeyStatus(status: string): "ACTIVE" | "DISABLED" | "REVOKED" {
+  if (status === "DISABLED" || status === "REVOKED") {
+    return status;
+  }
+
+  return "ACTIVE";
 }
 
 function formatRequestApiKey(apiKey: ApiRequest["apiKey"]) {

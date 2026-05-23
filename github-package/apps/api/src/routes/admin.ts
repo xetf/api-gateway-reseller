@@ -7,8 +7,9 @@ import { exec as execCallback } from "node:child_process";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
-import { createRedeemCode } from "../lib/crypto.js";
+import { createApiKey, createRedeemCode } from "../lib/crypto.js";
 import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
+import { getApiKeyTotalUsageUsd } from "../services/api-key-limits.js";
 import {
   checkModelPoolChannel,
   getModelPoolChannelHealthTiming,
@@ -41,6 +42,115 @@ const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
 const channelStatusSchema = z.enum(["ACTIVE", "FORCED_ACTIVE", "DISABLED", "UNAVAILABLE", "PENALIZED"]);
 const modelPoolHealthCheckEndpointSchema = z.enum(modelPoolHealthCheckEndpoints);
 const upstreamProviderKeyStatusSchema = z.enum(["ACTIVE", "DISABLED"]);
+const moneyLimitSchema = z
+  .union([z.string(), z.number(), z.null()])
+  .optional()
+  .transform((value, context) => {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null || String(value).trim() === "") {
+      return null;
+    }
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Limit must be a non-negative number",
+      });
+      return z.NEVER;
+    }
+
+    return numeric.toFixed(8);
+  });
+const expiresAtSchema = z
+  .union([z.string(), z.null()])
+  .optional()
+  .transform((value, context) => {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null || value.trim() === "") {
+      return null;
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      context.addIssue({
+        code: "custom",
+        message: "expiresAt must be a valid date",
+      });
+      return z.NEVER;
+    }
+
+    return date;
+  });
+const noticeTextSchema = z
+  .union([z.string().max(8000), z.null()])
+  .optional()
+  .transform((value) => {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  });
+const adminCreateApiKeySchema = z.object({
+  name: z.string().min(1).max(80),
+  rateLimitPerMinute: z.number().int().positive().max(10000).default(60),
+  totalLimitUsd: moneyLimitSchema,
+  dailyLimitUsd: moneyLimitSchema,
+  expiresAt: expiresAtSchema,
+  concurrencyLimit: z.number().int().min(0).max(10000).default(0),
+  allowedModels: z.array(z.string()).default([]),
+  noticeEnabled: z.boolean().default(false),
+  noticeText: noticeTextSchema,
+});
+const adminPatchApiKeySchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]).optional(),
+  rateLimitPerMinute: z.number().int().positive().max(10000).optional(),
+  totalLimitUsd: moneyLimitSchema,
+  dailyLimitUsd: moneyLimitSchema,
+  expiresAt: expiresAtSchema,
+  concurrencyLimit: z.number().int().min(0).max(10000).optional(),
+  allowedModels: z.array(z.string()).optional(),
+  noticeEnabled: z.boolean().optional(),
+  noticeText: noticeTextSchema,
+});
+const adminBatchUpdateApiKeysSchema = z.object({
+  keyIds: z.array(z.string()).min(1).max(500),
+  status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]).optional(),
+  noticeEnabled: z.boolean().optional(),
+  noticeText: noticeTextSchema,
+});
+
+const adminApiKeySelect = {
+  id: true,
+  userId: true,
+  name: true,
+  keyPrefix: true,
+  keySecret: true,
+  status: true,
+  rateLimitPerMinute: true,
+  dailyLimitUsd: true,
+  totalLimitUsd: true,
+  expiresAt: true,
+  concurrencyLimit: true,
+  allowedModels: true,
+  noticeEnabled: true,
+  noticeText: true,
+  lastUsedAt: true,
+  createdAt: true,
+} satisfies Prisma.ApiKeySelect;
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
@@ -133,6 +243,10 @@ export async function adminRoutes(app: FastifyInstance) {
             createdAt: true,
           },
         },
+        apiKeys: {
+          orderBy: { createdAt: "desc" },
+          select: adminApiKeySelect,
+        },
         _count: {
           select: {
             apiKeys: true,
@@ -142,7 +256,14 @@ export async function adminRoutes(app: FastifyInstance) {
       },
     });
 
-    return { users };
+    return {
+      users: await Promise.all(
+        users.map(async (user) => ({
+          ...user,
+          apiKeys: await Promise.all(user.apiKeys.map(withAdminApiKeyUsage)),
+        })),
+      ),
+    };
   });
 
   app.patch("/admin/users/:id", async (request) => {
@@ -339,6 +460,224 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     return result;
+  });
+
+  app.get("/admin/users/:id/api-keys", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return reply.status(404).send({ message: "User not found" });
+    }
+
+    const apiKeys = await prisma.apiKey.findMany({
+      where: { userId: params.id },
+      orderBy: { createdAt: "desc" },
+      select: adminApiKeySelect,
+    });
+
+    return { apiKeys: await Promise.all(apiKeys.map(withAdminApiKeyUsage)) };
+  });
+
+  app.post("/admin/users/:id/api-keys", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = adminCreateApiKeySchema.parse(request.body);
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+      select: { id: true },
+    });
+
+    if (!user) {
+      return reply.status(404).send({ message: "User not found" });
+    }
+
+    if (body.noticeEnabled && !body.noticeText) {
+      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+    }
+
+    const generated = createApiKey();
+    const apiKey = await prisma.apiKey.create({
+      data: {
+        userId: params.id,
+        name: body.name,
+        keyHash: generated.hash,
+        keyPrefix: generated.prefix,
+        keySecret: generated.key,
+        rateLimitPerMinute: body.rateLimitPerMinute,
+        totalLimitUsd: body.totalLimitUsd ?? body.dailyLimitUsd ?? null,
+        expiresAt: body.expiresAt,
+        concurrencyLimit: body.concurrencyLimit,
+        allowedModels: body.allowedModels,
+        noticeEnabled: body.noticeEnabled,
+        noticeText: body.noticeText ?? null,
+      },
+      select: adminApiKeySelect,
+    });
+
+    return {
+      apiKey: await withAdminApiKeyUsage(apiKey),
+      secret: generated.key,
+    };
+  });
+
+  app.patch("/admin/users/:id/api-keys/batch", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = adminBatchUpdateApiKeysSchema.parse(request.body);
+    const data = {
+      ...(body.status !== undefined ? { status: body.status } : {}),
+      ...(body.noticeEnabled !== undefined ? { noticeEnabled: body.noticeEnabled } : {}),
+      ...(body.noticeText !== undefined ? { noticeText: body.noticeText } : {}),
+    };
+
+    if (Object.keys(data).length === 0) {
+      return reply.status(400).send({ message: "No batch changes provided" });
+    }
+
+    if (body.noticeEnabled && !body.noticeText) {
+      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+    }
+
+    const uniqueKeyIds = Array.from(new Set(body.keyIds));
+    const existingKeys = await prisma.apiKey.findMany({
+      where: {
+        id: { in: uniqueKeyIds },
+        userId: params.id,
+      },
+      select: {
+        id: true,
+        expiresAt: true,
+        totalLimitUsd: true,
+      },
+    });
+
+    if (existingKeys.length !== uniqueKeyIds.length) {
+      return reply.status(404).send({ message: "Some API keys were not found for this user" });
+    }
+
+    if (body.status === "ACTIVE") {
+      const now = new Date();
+      const expiredKey = existingKeys.find((apiKey) => apiKey.expiresAt && apiKey.expiresAt <= now);
+      if (expiredKey) {
+        return reply.status(400).send({ message: "Cannot enable expired API keys" });
+      }
+
+      for (const apiKey of existingKeys) {
+        if (!apiKey.totalLimitUsd) {
+          continue;
+        }
+
+        const usedUsd = await getApiKeyTotalUsageUsd(apiKey.id);
+        if (usedUsd.gte(apiKey.totalLimitUsd.toString())) {
+          return reply.status(400).send({ message: "Cannot enable API keys over their total quota" });
+        }
+      }
+    }
+
+    await prisma.apiKey.updateMany({
+      where: {
+        id: { in: uniqueKeyIds },
+        userId: params.id,
+      },
+      data,
+    });
+
+    const apiKeys = await prisma.apiKey.findMany({
+      where: {
+        id: { in: uniqueKeyIds },
+        userId: params.id,
+      },
+      orderBy: { createdAt: "desc" },
+      select: adminApiKeySelect,
+    });
+
+    return {
+      count: apiKeys.length,
+      apiKeys: await Promise.all(apiKeys.map(withAdminApiKeyUsage)),
+    };
+  });
+
+  app.patch("/admin/api-keys/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = adminPatchApiKeySchema.parse(request.body);
+    const existing = await prisma.apiKey.findUnique({
+      where: { id: params.id },
+      select: adminApiKeySelect,
+    });
+
+    if (!existing) {
+      return reply.status(404).send({ message: "API key not found" });
+    }
+
+    const totalLimitUsd =
+      body.totalLimitUsd === undefined ? body.dailyLimitUsd : body.totalLimitUsd;
+    const shouldActivate = body.status === "ACTIVE";
+    const nextNoticeEnabled =
+      body.noticeEnabled === undefined ? existing.noticeEnabled : body.noticeEnabled;
+    const nextNoticeText =
+      body.noticeText === undefined ? existing.noticeText : body.noticeText;
+
+    if (nextNoticeEnabled && !nextNoticeText) {
+      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+    }
+
+    if (shouldActivate) {
+      const nextExpiresAt = body.expiresAt !== undefined ? body.expiresAt : existing.expiresAt;
+      if (nextExpiresAt && nextExpiresAt <= new Date()) {
+        return reply.status(400).send({ message: "Cannot enable an expired API key" });
+      }
+
+      const nextTotalLimitUsd =
+        totalLimitUsd === undefined ? existing.totalLimitUsd?.toString() : totalLimitUsd;
+      if (nextTotalLimitUsd) {
+        const usedUsd = await getApiKeyTotalUsageUsd(existing.id);
+        if (usedUsd.gte(nextTotalLimitUsd)) {
+          return reply.status(400).send({ message: "Cannot enable an API key over its total quota" });
+        }
+      }
+    }
+
+    const apiKey = await prisma.apiKey.update({
+      where: { id: params.id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
+        ...(body.rateLimitPerMinute !== undefined
+          ? { rateLimitPerMinute: body.rateLimitPerMinute }
+          : {}),
+        ...(totalLimitUsd !== undefined ? { totalLimitUsd } : {}),
+        ...(body.expiresAt !== undefined ? { expiresAt: body.expiresAt } : {}),
+        ...(body.concurrencyLimit !== undefined
+          ? { concurrencyLimit: body.concurrencyLimit }
+          : {}),
+        ...(body.allowedModels !== undefined ? { allowedModels: body.allowedModels } : {}),
+        ...(body.noticeEnabled !== undefined ? { noticeEnabled: body.noticeEnabled } : {}),
+        ...(body.noticeText !== undefined ? { noticeText: body.noticeText } : {}),
+      },
+      select: adminApiKeySelect,
+    });
+
+    return { apiKey: await withAdminApiKeyUsage(apiKey) };
+  });
+
+  app.delete("/admin/api-keys/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const apiKey = await prisma.apiKey.findUnique({
+      where: { id: params.id },
+      select: adminApiKeySelect,
+    });
+
+    if (!apiKey) {
+      return reply.status(404).send({ message: "API key not found" });
+    }
+
+    await prisma.apiKey.delete({
+      where: { id: params.id },
+    });
+
+    return { ok: true, apiKey: await withAdminApiKeyUsage(apiKey) };
   });
 
   app.get("/admin/requests", async (request) => {
@@ -1271,6 +1610,21 @@ function maskProviderPoolKey<T extends { key: string }>(key: T) {
   return {
     ...key,
     key: maskUpstreamKeySecret(key.key),
+  };
+}
+
+async function withAdminApiKeyUsage<T extends { id: string; totalLimitUsd?: unknown }>(apiKey: T) {
+  const usedUsd = await getApiKeyTotalUsageUsd(apiKey.id);
+  const totalLimitUsd = apiKey.totalLimitUsd?.toString();
+  const remainingUsd =
+    totalLimitUsd && Number(totalLimitUsd) > 0
+      ? Decimal.max(0, new Decimal(totalLimitUsd).minus(usedUsd)).toFixed(8)
+      : null;
+
+  return {
+    ...apiKey,
+    totalUsedUsd: usedUsd.toFixed(8),
+    totalRemainingUsd: remainingUsd,
   };
 }
 
