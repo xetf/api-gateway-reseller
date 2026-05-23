@@ -48,6 +48,8 @@ type ApiKey = {
   rateLimitPerMinute: number;
   dailyLimitUsd?: string | null;
   totalLimitUsd?: string | null;
+  totalUsedUsd?: string | null;
+  totalRemainingUsd?: string | null;
   concurrencyLimit: number;
   allowedModels: string[];
   expiresAt?: string | null;
@@ -76,6 +78,11 @@ type ApiRequest = {
   user?: {
     email: string;
   };
+  apiKey?: {
+    id: string;
+    name: string;
+    keyPrefix: string;
+  } | null;
 };
 
 type Transaction = {
@@ -1137,7 +1144,7 @@ function Keys({
                       <StatusPill status={key.status} />
                     </td>
                     <td>{key.rateLimitPerMinute}/min</td>
-                    <td>{formatTotalLimit(key.totalLimitUsd ?? key.dailyLimitUsd)}</td>
+                    <td>{formatApiKeyLimitSummary(key)}</td>
                     <td>{formatConcurrencyLimit(key.concurrencyLimit)}</td>
                     <td>{key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}</td>
                     <td>{dateTime(key.createdAt)}</td>
@@ -1255,7 +1262,9 @@ function Keys({
                   <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
                 </MobileField>
                 <MobileField label="限流">{key.rateLimitPerMinute}/min</MobileField>
-                <MobileField label="总限额">{formatTotalLimit(key.totalLimitUsd ?? key.dailyLimitUsd)}</MobileField>
+                <MobileField label="限额" wide>
+                  {formatApiKeyLimitSummary(key)}
+                </MobileField>
                 <MobileField label="并发">{formatConcurrencyLimit(key.concurrencyLimit)}</MobileField>
                 <MobileField label="过期">{key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}</MobileField>
                 <MobileField label="创建时间">{dateTime(key.createdAt)}</MobileField>
@@ -1567,9 +1576,10 @@ function Requests({
       <div className="table-wrap">
         <table>
           <thead>
-            <tr>
-              {showCost ? <th>用户</th> : null}
-              {showCost ? <th>上游</th> : null}
+	            <tr>
+	              {showCost ? <th>用户</th> : null}
+	              <th>API Key</th>
+	              {showCost ? <th>上游</th> : null}
               <th>模型</th>
               <th>状态</th>
               <th>输入</th>
@@ -1585,10 +1595,11 @@ function Requests({
             </tr>
           </thead>
           <tbody>
-            {requests.map((item) => (
-              <tr key={item.id}>
-                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
-                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
+	            {requests.map((item) => (
+	              <tr key={item.id}>
+	                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
+	                <td>{formatRequestApiKey(item.apiKey)}</td>
+	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
                 <td>{item.model}</td>
                 <td>
                   <StatusPill status={item.status} />
@@ -1607,7 +1618,7 @@ function Requests({
                 <td>{dateTime(item.createdAt)}</td>
               </tr>
             ))}
-            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 14 : 10} /> : null}
+	            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 15 : 11} /> : null}
           </tbody>
         </table>
       </div>
@@ -1619,17 +1630,20 @@ function Requests({
             meta={dateTime(item.createdAt)}
             badges={<StatusPill status={item.status} />}
           >
-            {showCost ? (
-              <>
-                <MobileField label="用户" wide>
-                  {item.user?.email ?? "-"}
-                </MobileField>
+	            {showCost ? (
+	              <>
+	                <MobileField label="用户" wide>
+	                  {item.user?.email ?? "-"}
+	                </MobileField>
                 <MobileField label="上游" wide>
                   {item.upstreamProvider ?? "-"}
                 </MobileField>
-              </>
-            ) : null}
-            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
+	              </>
+	            ) : null}
+	            <MobileField label="API Key" wide>
+	              {formatRequestApiKey(item.apiKey)}
+	            </MobileField>
+	            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
             <MobileField label="缓存">{formatNumber(item.cachedInputTokens)}</MobileField>
             <MobileField label="输出">{formatNumber(item.outputTokens)}</MobileField>
             <MobileField label="总 token">{formatNumber(item.totalTokens)}</MobileField>
@@ -4299,6 +4313,28 @@ function formatTotalLimit(value: string | number | null | undefined) {
   }
 
   return `$${money(numeric)}`;
+}
+
+function formatApiKeyLimitSummary(key: ApiKey) {
+  const limit = key.totalLimitUsd ?? key.dailyLimitUsd;
+  const numericLimit = Number(limit ?? 0);
+
+  if (!Number.isFinite(numericLimit) || numericLimit <= 0) {
+    return "不限";
+  }
+
+  const used = key.totalUsedUsd ?? "0";
+  const remaining = key.totalRemainingUsd ?? String(Math.max(0, numericLimit - Number(used || 0)));
+
+  return `剩余 $${money(remaining)} / 总 $${money(numericLimit)} / 已用 $${money(used)}`;
+}
+
+function formatRequestApiKey(apiKey: ApiRequest["apiKey"]) {
+  if (!apiKey) {
+    return "-";
+  }
+
+  return `${apiKey.name} (${apiKey.keyPrefix})`;
 }
 
 function formatConcurrencyLimit(value: number | null | undefined) {

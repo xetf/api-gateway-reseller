@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { Decimal } from "decimal.js";
 import { prisma } from "@gateway/db";
 import { z } from "zod";
 import { createApiKey } from "../lib/crypto.js";
@@ -92,7 +93,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
       },
     });
 
-    return { apiKeys };
+    return { apiKeys: await Promise.all(apiKeys.map(withApiKeyUsage)) };
   });
 
   app.post("/api-keys", { preHandler: requireUser }, async (request) => {
@@ -130,7 +131,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
     });
 
     return {
-      apiKey,
+      apiKey: await withApiKeyUsage(apiKey),
       secret: generated.key,
     };
   });
@@ -204,7 +205,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         where: { id: apiKey.id },
         data: { status: "ACTIVE" },
       });
-      return { apiKey: activatedApiKey };
+      return { apiKey: await withApiKeyUsage(activatedApiKey) };
     }
 
     if (apiKey.status === "ACTIVE" && apiKey.expiresAt && apiKey.expiresAt <= new Date()) {
@@ -212,14 +213,14 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         where: { id: apiKey.id },
         data: { status: "DISABLED" },
       });
-      return { apiKey: disabledApiKey };
+      return { apiKey: await withApiKeyUsage(disabledApiKey) };
     }
 
     if (apiKey.status === "ACTIVE" && (await disableApiKeyIfTotalLimitReached(apiKey))) {
-      return { apiKey: { ...apiKey, status: "DISABLED" } };
+      return { apiKey: await withApiKeyUsage({ ...apiKey, status: "DISABLED" }) };
     }
 
-    return { apiKey };
+    return { apiKey: await withApiKeyUsage(apiKey) };
   });
 
   app.delete("/api-keys/:id", { preHandler: requireUser }, async (request, reply) => {
@@ -244,4 +245,19 @@ export async function apiKeyRoutes(app: FastifyInstance) {
 
     return { ok: true, apiKey };
   });
+}
+
+async function withApiKeyUsage<T extends { id: string; totalLimitUsd?: unknown }>(apiKey: T) {
+  const usedUsd = await getApiKeyTotalUsageUsd(apiKey.id);
+  const totalLimitUsd = apiKey.totalLimitUsd?.toString();
+  const remainingUsd =
+    totalLimitUsd && Number(totalLimitUsd) > 0
+      ? Decimal.max(0, new Decimal(totalLimitUsd).minus(usedUsd)).toFixed(8)
+      : null;
+
+  return {
+    ...apiKey,
+    totalUsedUsd: usedUsd.toFixed(8),
+    totalRemainingUsd: remainingUsd,
+  };
 }

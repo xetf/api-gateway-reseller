@@ -364,6 +364,13 @@ export async function adminRoutes(app: FastifyInstance) {
       select: {
         id: true,
         upstreamProvider: true,
+        apiKey: {
+          select: {
+            id: true,
+            name: true,
+            keyPrefix: true,
+          },
+        },
         model: true,
         endpoint: true,
         method: true,
