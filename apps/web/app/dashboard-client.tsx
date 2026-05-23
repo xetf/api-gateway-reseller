@@ -2084,14 +2084,16 @@ function CallTester({
 
       const text = await response.text();
       const parsed = parseJsonOrNull(text);
+      const streamedOutputText = parsed ? "" : extractOutputTextFromStreamText(text);
+      const streamedUsage = parsed ? undefined : extractUsageFromStreamText(text);
 
       setResult({
         ok: response.ok,
         status: response.status,
         latencyMs,
-        outputText: extractOutputText(parsed),
+        outputText: parsed ? extractOutputText(parsed) : streamedOutputText,
         body: parsed ? JSON.stringify(parsed, null, 2) : text,
-        usage: parsed && typeof parsed === "object" && "usage" in parsed ? parsed.usage : undefined,
+        usage: parsed && typeof parsed === "object" && "usage" in parsed ? parsed.usage : streamedUsage,
       });
     } catch (testError) {
       setResult({

@@ -170,7 +170,7 @@ export async function proxyRoutes(app: FastifyInstance) {
       },
     });
 
-    const upstreamBody = buildUpstreamBody(endpoint, body);
+    const upstreamBody = buildUpstreamBody(endpoint, body, provider);
     const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
     let streamFirstTokenFetchTimedOut = false;
 
@@ -950,18 +950,47 @@ function pickForwardedFor(value: string | string[] | undefined) {
   );
 }
 
-function buildUpstreamBody(endpoint: string, body: ProxyBody) {
-  if (!body.stream || endpoint.startsWith("/v1/responses")) {
-    return body;
+function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: string; baseUrl: string }) {
+  let upstreamBody = body;
+
+  if (endpoint === "/v1/responses" && isShareApiProvider(provider)) {
+    upstreamBody = buildShareApiResponsesBody(body);
+  }
+
+  if (!upstreamBody.stream || endpoint.startsWith("/v1/responses")) {
+    return upstreamBody;
   }
 
   return {
-    ...body,
+    ...upstreamBody,
     stream_options: {
-      ...(body.stream_options ?? {}),
+      ...(upstreamBody.stream_options ?? {}),
       include_usage: true,
     },
   };
+}
+
+function isShareApiProvider(provider: { name: string; baseUrl: string }) {
+  try {
+    const host = new URL(provider.baseUrl).hostname.toLowerCase();
+    return host === "share-api.com" || host.endsWith(".share-api.com");
+  } catch {
+    return provider.name.includes("share-api.com") || provider.baseUrl.includes("share-api.com");
+  }
+}
+
+function buildShareApiResponsesBody(body: ProxyBody): ProxyBody {
+  const normalized: ProxyBody = { ...body };
+
+  if (!Object.prototype.hasOwnProperty.call(normalized, "instructions")) {
+    normalized.instructions = "";
+  }
+
+  if (typeof normalized.input === "string") {
+    normalized.input = [{ role: "user", content: normalized.input }];
+  }
+
+  return normalized;
 }
 
 async function proxyStream(params: {
