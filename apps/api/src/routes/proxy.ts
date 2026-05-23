@@ -71,6 +71,15 @@ const proxyRoutePatterns = [
 const streamFirstTokenTimeoutMs = 60_000;
 const streamFirstTokenTimeoutMessage = "Stream first token timeout after 60 seconds";
 const missingUsageMessage = "Upstream response did not include billable token usage";
+const staleResponsesContextNotice = [
+  "这个会话的上游上下文已经失效，不能继续接着上一轮回答。",
+  "请新建对话，或清空当前会话上下文后重试。",
+  "如果你的客户端使用 Responses API，请不要在 store=false 时复用 previous_response_id、rs_... item 或旧 input item；需要跨轮复用时请开启 store=true。",
+].join("\n");
+const missingUsageNotice = [
+  "这次上游没有返回可计费用量，网关无法安全完成扣费。",
+  "请新建对话或清空当前会话上下文后重试；如果仍失败，请换一个上游渠道或联系管理员查看后台失败记录。",
+].join("\n");
 
 export async function proxyRoutes(app: FastifyInstance) {
   for (const pattern of proxyRoutePatterns) {
@@ -215,12 +224,23 @@ export async function proxyRoutes(app: FastifyInstance) {
 
       if (!upstreamResponse.ok) {
         const text = await upstreamResponse.text();
+        const recoveryNotice = getGatewayRecoveryNotice(text);
         await markRequestFailed(
           apiRequest,
           text.slice(0, 2000),
           upstreamResponse.status,
           Math.round(performance.now() - start),
         );
+        if (recoveryNotice) {
+          return sendApiKeyNotice(
+            reply,
+            endpoint,
+            body,
+            upstreamRequestUrl,
+            recoveryNotice,
+            request.headers.accept,
+          );
+        }
         if (billable && model) {
           await recordStickyModelPoolResult({
             callerIdentity: callerIpIdentity,
@@ -254,6 +274,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           reply,
           upstreamResponse,
           apiRequestId: apiRequest.id,
+          endpoint,
           requestBody: upstreamBody,
           userId: user.id,
           callerIdentity: callerIpIdentity,
@@ -326,12 +347,23 @@ export async function proxyRoutes(app: FastifyInstance) {
       const effectiveError = streamFirstTokenFetchTimedOut ? createFirstTokenTimeoutError() : error;
       const message = effectiveError instanceof Error ? effectiveError.message : "Upstream request failed";
       const statusCode = isFirstTokenTimeoutError(effectiveError) ? 504 : 502;
+      const recoveryNotice = getGatewayRecoveryNotice(effectiveError);
       await markRequestFailed(
         apiRequest,
         message,
         statusCode,
         Math.round(performance.now() - start),
       );
+      if (recoveryNotice) {
+        return sendApiKeyNotice(
+          reply,
+          endpoint,
+          body,
+          upstreamRequestUrl,
+          recoveryNotice,
+          request.headers.accept,
+        );
+      }
       if (billable && model) {
         await recordStickyModelPoolResult({
           callerIdentity: callerIpIdentity,
@@ -480,6 +512,38 @@ function sendApiKeyNotice(
     output_text: notice,
     usage: zeroTokenUsage(),
   });
+}
+
+function getGatewayRecoveryNotice(error: unknown) {
+  if (isMissingUsageError(error)) {
+    return missingUsageNotice;
+  }
+
+  const text = typeof error === "string"
+    ? error
+    : error instanceof Error
+      ? error.message
+      : "";
+
+  if (!text) {
+    return null;
+  }
+
+  const normalized = text.toLowerCase();
+  const isStoreFalseItemError =
+    normalized.includes("items are not persisted when store is set to false") ||
+    (normalized.includes("item with id") && normalized.includes("not found") && normalized.includes("rs_")) ||
+    (normalized.includes("previous_response_id") && normalized.includes("not found"));
+
+  if (isStoreFalseItemError) {
+    return staleResponsesContextNotice;
+  }
+
+  if (normalized.includes(missingUsageMessage.toLowerCase())) {
+    return missingUsageNotice;
+  }
+
+  return null;
 }
 
 function buildNoticeStream(endpoint: string, model: string, notice: string) {
@@ -998,6 +1062,7 @@ async function proxyStream(params: {
   reply: FastifyReply;
   upstreamResponse: Response;
   apiRequestId: string;
+  endpoint: string;
   requestBody: ProxyBody;
   userId: string;
   callerIdentity: string;
@@ -1011,7 +1076,7 @@ async function proxyStream(params: {
     info?: (value: unknown, message?: string) => void;
   };
 }) {
-  const { reply, upstreamResponse, apiRequestId, requestBody, userId, callerIdentity, apiKeyId, model, channelId, priceId, startedAt, logger } = params;
+  const { reply, upstreamResponse, apiRequestId, endpoint, requestBody, userId, callerIdentity, apiKeyId, model, channelId, priceId, startedAt, logger } = params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
   });
@@ -1021,6 +1086,8 @@ async function proxyStream(params: {
   let pending = "";
   let rawStreamText = "";
   let firstTokenLatencyMs: number | null = null;
+  const bufferedStreamChunks: string[] = [];
+  let hasForwardedStream = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -1060,6 +1127,26 @@ async function proxyStream(params: {
         firstTokenLatencyMs = Math.round(performance.now() - startedAt);
         clearTimeout(firstTokenTimeout);
       };
+      const flushBufferedStreamChunks = () => {
+        if (hasForwardedStream) {
+          return;
+        }
+
+        hasForwardedStream = true;
+        for (const chunk of bufferedStreamChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        bufferedStreamChunks.length = 0;
+      };
+      const forwardStreamText = (text: string) => {
+        if (hasForwardedStream || firstTokenLatencyMs !== null) {
+          flushBufferedStreamChunks();
+          controller.enqueue(encoder.encode(text));
+          return;
+        }
+
+        bufferedStreamChunks.push(text);
+      };
 
       try {
         while (true) {
@@ -1080,7 +1167,7 @@ async function proxyStream(params: {
             if (lastEventBoundary >= 0) {
               pending = pending.slice(lastEventBoundary + 2);
             }
-            controller.enqueue(encoder.encode(text));
+            forwardStreamText(text);
           }
         }
 
@@ -1092,7 +1179,7 @@ async function proxyStream(params: {
             markFirstTokenSeen();
           }
           streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
-          controller.enqueue(encoder.encode(trailing));
+          forwardStreamText(trailing);
         }
 
         if (firstTokenTimedOut && firstTokenLatencyMs === null) {
@@ -1111,6 +1198,7 @@ async function proxyStream(params: {
           }
         }
         assertBillableUsage(streamUsage);
+        flushBufferedStreamChunks();
 
         await chargeForRequest({
           requestId: apiRequestId,
@@ -1142,12 +1230,19 @@ async function proxyStream(params: {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
+        const recoveryNotice = hasForwardedStream
+          ? null
+          : getGatewayRecoveryNotice(rawStreamText) ?? getGatewayRecoveryNotice(error);
         await markRequestFailed(
           { id: apiRequestId },
           message,
           isFirstTokenTimeoutError(error) ? 504 : 502,
           Math.round(performance.now() - startedAt),
         );
+        if (recoveryNotice) {
+          controller.enqueue(encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)));
+          return;
+        }
         await recordStickyModelPoolResult({
           callerIdentity,
           model,
@@ -1296,6 +1391,10 @@ function createMissingUsageError() {
   const error = new Error(missingUsageMessage);
   error.name = "MissingUsageError";
   return error;
+}
+
+function isMissingUsageError(error: unknown) {
+  return error instanceof Error && error.name === "MissingUsageError";
 }
 
 function assertBillableUsage(usage: Usage) {
@@ -1503,6 +1602,10 @@ function textLikeValueHasContent(value: unknown): boolean {
   return (
     textLikeValueHasContent(record.content) ||
     textLikeValueHasContent(record.text) ||
-    textLikeValueHasContent(record.delta)
+    textLikeValueHasContent(record.delta) ||
+    textLikeValueHasContent(record.tool_calls) ||
+    textLikeValueHasContent(record.function_call) ||
+    textLikeValueHasContent(record.function) ||
+    textLikeValueHasContent(record.arguments)
   );
 }
