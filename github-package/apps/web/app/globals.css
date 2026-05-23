@@ -15,6 +15,8 @@
   --panel-rail: #c7d0dc;
   --panel-shadow: 0 6px 18px rgb(16 24 40 / 5%);
   --panel-shadow-strong: 0 10px 26px rgb(16 24 40 / 7%);
+  --control-height: 38px;
+  --button-shadow: 0 1px 2px rgb(15 23 42 / 8%);
 }
 
 * {
@@ -117,11 +119,17 @@ a {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  border: 1px solid transparent;
   color: #344054;
   background: transparent;
   border-radius: 7px;
   padding: 9px 10px;
   text-align: left;
+}
+
+.nav button:hover {
+  border-color: var(--line);
+  background: #ffffff;
 }
 
 .nav button svg {
@@ -147,8 +155,10 @@ a {
 }
 
 .nav button.active {
+  border-color: #bfdbfe;
   background: #eef6ff;
   color: var(--brand-strong);
+  box-shadow: 0 4px 12px rgb(37 99 235 / 8%);
 }
 
 .nav button.active small {
@@ -196,9 +206,11 @@ a {
 }
 
 .topbar-side {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
   flex: 0 0 auto;
 }
 
@@ -222,13 +234,13 @@ a {
 .workspace,
 .admin-page {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
 
 .grid {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -253,7 +265,7 @@ a {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   min-width: 0;
-  padding: 16px;
+  padding: 14px;
   box-shadow: var(--panel-shadow);
 }
 
@@ -262,20 +274,28 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .action-panel {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: #ffffff;
-  padding: 16px;
+  padding: 14px;
   box-shadow: var(--panel-shadow);
+}
+
+.action-panel > div:first-child,
+.card-head > div:first-child,
+.section-head > div:first-child,
+.provider-head > div:first-child,
+.batch-panel-head > div:first-child {
+  min-width: 0;
 }
 
 .action-panel h2 {
@@ -291,16 +311,28 @@ a {
 
 .action-panel-tools {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
+  flex: 0 1 980px;
   min-width: 0;
+}
+
+.action-panel-tools .button-row {
+  justify-content: flex-end;
+}
+
+.action-panel-tools form.button-row {
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px;
 }
 
 .provider-stack {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .model-pool-list-card {
@@ -319,12 +351,12 @@ a {
 .provider-panel {
   position: relative;
   display: grid;
-  gap: 13px;
+  gap: 12px;
   border: 1px solid var(--panel-border);
   border-left: 0;
   border-radius: 8px;
   background: #ffffff;
-  padding: 14px;
+  padding: 12px;
   box-shadow: var(--panel-shadow-strong);
   overflow: hidden;
 }
@@ -341,7 +373,7 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
 }
 
 .provider-title {
@@ -372,6 +404,11 @@ a {
 
 .compact-head {
   margin-bottom: 0;
+}
+
+.provider-panel > .compact-head:not(:first-child) {
+  border-top: 1px solid var(--soft-line);
+  padding-top: 8px;
 }
 
 .side-panel {
@@ -440,8 +477,30 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-head > .button,
+.section-head > .button-row,
+.section-head > .pill,
+.provider-head > .button-row,
+.card-head > .button-row,
+.action-panel > .button,
+.action-panel > .button-row {
+  flex: 0 0 auto;
+}
+
+.section-head > .button-row,
+.provider-head > .button-row,
+.card-head > .button-row,
+.action-panel > .button-row {
+  justify-content: flex-end;
+  max-width: min(680px, 100%);
+}
+
+.action-panel > .button {
+  align-self: center;
 }
 
 .table-wrap {
@@ -563,11 +622,11 @@ table {
 
 th,
 td {
-  padding: 9px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -605,7 +664,7 @@ tbody tr:hover td {
 .input {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: var(--control-height);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 0 12px;
@@ -625,31 +684,67 @@ tbody tr:hover td {
 }
 
 .button {
-  min-height: 40px;
+  min-height: var(--control-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  border: 1px solid transparent;
   border-radius: 7px;
-  padding: 0 14px;
+  padding: 0 12px;
   background: var(--brand);
   color: #ffffff;
+  box-shadow: var(--button-shadow);
   font-weight: 700;
   text-align: center;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--brand-strong);
+  box-shadow: 0 2px 6px rgb(15 23 42 / 12%);
+}
+
+.button:focus-visible {
+  outline: 0;
+  box-shadow:
+    var(--button-shadow),
+    0 0 0 3px rgb(37 99 235 / 18%);
+}
+
+.button svg {
+  flex: 0 0 auto;
 }
 
 .button.secondary {
-  background: #f1f5f9;
+  border-color: var(--line);
+  background: #ffffff;
   color: #344054;
 }
 
+.button.secondary:hover:not(:disabled) {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #1e293b;
+}
+
 .button.danger {
+  border-color: transparent;
   background: var(--danger);
+}
+
+.button.danger:hover:not(:disabled) {
+  background: #912018;
 }
 
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+  box-shadow: none;
 }
 
 .icon-button {
@@ -661,9 +756,13 @@ tbody tr:hover td {
 .button-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.button-row > .input {
+  flex: 0 1 280px;
 }
 
 .inline-field {
@@ -682,8 +781,10 @@ tbody tr:hover td {
 }
 
 .button-row.compact .button {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  box-shadow: none;
 }
 
 .login-page {
@@ -726,7 +827,11 @@ tbody tr:hover td {
   display: grid;
   grid-template-columns: minmax(180px, 1.5fr) minmax(170px, 1fr) minmax(140px, 0.9fr) minmax(130px, 0.8fr) minmax(170px, 1fr) minmax(170px, 1fr) auto;
   align-items: end;
-  gap: 10px;
+  gap: 8px;
+}
+
+.filter-bar .button {
+  width: 100%;
 }
 
 .search-input {
@@ -1082,17 +1187,17 @@ tbody tr:hover td {
 
 .modal-body {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   border-top: 1px solid var(--line);
   background: #f8fafc;
-  padding: 14px 18px;
+  padding: 12px 18px;
 }
 
 .modal-close:hover {
@@ -1296,6 +1401,11 @@ td .pill {
   max-width: none;
 }
 
+td .button-row.compact {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;
@@ -1455,6 +1565,7 @@ td .pill {
 .pool-channel-actions .button {
   min-height: 28px;
   padding: 0 8px;
+  box-shadow: none;
   font-size: 12px;
 }
 
@@ -1607,6 +1718,22 @@ td .pill {
   .modal-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .action-panel > .button,
+  .action-panel > .button-row,
+  .action-panel-tools,
+  .action-panel-tools .button-row,
+  .provider-head > .button-row,
+  .section-head > .button-row,
+  .card-head > .button-row {
+    width: 100%;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .action-panel > .button {
+    align-self: stretch;
   }
 
   .action-panel-tools,
