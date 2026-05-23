@@ -248,6 +248,8 @@ type AvailableModel = {
   readyChannelCount: number;
 };
 
+type ModelPoolHealthCheckEndpoint = "responses" | "chat.completions";
+
 type ModelPoolChannelStatus = "ACTIVE" | "FORCED_ACTIVE" | "DISABLED" | "UNAVAILABLE";
 
 type ModelPoolChannel = {
@@ -280,6 +282,7 @@ type ModelPool = {
   model: string;
   status: "ACTIVE" | "DISABLED" | string;
   autoHealthCheckEnabled: boolean;
+  healthCheckEndpoint: ModelPoolHealthCheckEndpoint | string;
   readyChannelCount: number;
   pricedChannelCount: number;
   channels: ModelPoolChannel[];
@@ -3010,6 +3013,22 @@ function AdminModelPools({
     }
   }
 
+  async function setPoolHealthCheckEndpoint(pool: ModelPool, healthCheckEndpoint: ModelPoolHealthCheckEndpoint) {
+    onError(null);
+    setBusyId(`${pool.id}:health-endpoint`);
+    try {
+      await apiFetch(`/admin/model-pools/${pool.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ healthCheckEndpoint }),
+      });
+      onChanged();
+    } catch (updateError) {
+      onError(errorToText(updateError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function deletePool(pool: ModelPool) {
     const confirmed = window.confirm(`确定删除模型池「${pool.model}」吗？池内上游渠道会一起移除，但上游定价不会被删除。`);
 
@@ -3210,10 +3229,28 @@ function AdminModelPools({
                     </div>
                     <p>
                       可调用 {pool.readyChannelCount} 个 · 已定价 {pool.pricedChannelCount} 个 · 已加入 {pool.channels.length} 个
+                      · 检测接口 {modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}
                       · 自动检测{pool.autoHealthCheckEnabled ? "已开启" : "已关闭"}
                     </p>
                   </div>
                   <div className="button-row">
+                    <label className="inline-field">
+                      <span>检测接口</span>
+                      <select
+                        className="input compact-select"
+                        disabled={busyId === `${pool.id}:health-endpoint`}
+                        value={normalizeModelPoolHealthCheckEndpoint(pool.healthCheckEndpoint)}
+                        onChange={(event) =>
+                          setPoolHealthCheckEndpoint(
+                            pool,
+                            event.target.value as ModelPoolHealthCheckEndpoint,
+                          )
+                        }
+                      >
+                        <option value="responses">Responses</option>
+                        <option value="chat.completions">Chat Completions</option>
+                      </select>
+                    </label>
                     <button
                       className="button secondary"
                       disabled={busyId === `${pool.id}:auto-health`}
@@ -3258,7 +3295,7 @@ function AdminModelPools({
                     <h3 className="section-title">上游渠道</h3>
                     <p className="section-subtitle">
                       {pool.autoHealthCheckEnabled
-                        ? `自动检测按当前设置每 ${healthCheck?.intervalSeconds ?? 30} 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。`
+                        ? `自动检测只使用 ${modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}，按当前设置每 ${healthCheck?.intervalSeconds ?? 30} 秒执行一次，连续两次失败会标记为 UNAVAILABLE；人工可用不会被自动检测降级。`
                         : "这个模型池已关闭自动检测；手动检测和用户调用不受影响。"}
                     </p>
                   </div>
@@ -3300,6 +3337,7 @@ function AdminModelPools({
                         <th>价格</th>
                         <th>上游状态</th>
                         <th>自动检测</th>
+                        <th>检测接口</th>
                         <th>优先级</th>
                         <th>连续失败</th>
                         <th>上次检测</th>
@@ -3329,6 +3367,7 @@ function AdminModelPools({
                           <td>
                             <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
                           </td>
+                          <td>{modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}</td>
                           <td>{channel.priority}</td>
                           <td>{channel.consecutiveFailures}</td>
                           <td>{channel.lastCheckedAt ? dateTime(channel.lastCheckedAt) : "-"}</td>
@@ -3388,7 +3427,7 @@ function AdminModelPools({
                           </td>
                         </tr>
                       ))}
-                      {pool.channels.length === 0 ? <EmptyRow colSpan={14} /> : null}
+                      {pool.channels.length === 0 ? <EmptyRow colSpan={15} /> : null}
                     </tbody>
                 </table>
               </div>
@@ -3461,6 +3500,7 @@ function AdminModelPools({
                     <MobileField label="自动检测">
                       <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
                     </MobileField>
+                    <MobileField label="检测接口">{modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}</MobileField>
                     <MobileField label="优先级">{channel.priority}</MobileField>
                     <MobileField label="连续失败">{channel.consecutiveFailures}</MobileField>
                     <MobileField label="下次检测">{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</MobileField>
@@ -4676,6 +4716,16 @@ function nextCheckCountdown(
   }
 
   return state.isWaitingForResult ? "检测中" : `${state.secondsUntilNext}s`;
+}
+
+function normalizeModelPoolHealthCheckEndpoint(value: string | null | undefined): ModelPoolHealthCheckEndpoint {
+  return value === "chat.completions" ? "chat.completions" : "responses";
+}
+
+function modelPoolHealthCheckEndpointLabel(value: string | null | undefined) {
+  return normalizeModelPoolHealthCheckEndpoint(value) === "chat.completions"
+    ? "Chat Completions"
+    : "Responses";
 }
 
 function multiplied(value: string | number, multiplier: string | number) {

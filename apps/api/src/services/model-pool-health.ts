@@ -11,6 +11,9 @@ type ChannelHealthCheckOptions = {
   unavailableOnFailure?: boolean;
 };
 
+export const modelPoolHealthCheckEndpoints = ["responses", "chat.completions"] as const;
+export type ModelPoolHealthCheckEndpoint = (typeof modelPoolHealthCheckEndpoints)[number];
+
 export const defaultModelPoolHealthCheckIntervalSeconds = 30;
 export const minModelPoolHealthCheckIntervalSeconds = 5;
 export const maxModelPoolHealthCheckIntervalSeconds = 3600;
@@ -188,10 +191,12 @@ async function performModelPoolChannelCheck(
   );
 
   try {
-    const result = await probeUpstream({
+  const healthCheckEndpoint = normalizeModelPoolHealthCheckEndpoint(channel.modelPool.healthCheckEndpoint);
+  const result = await probeUpstream({
       baseUrl: provider.baseUrl,
       apiKey: provider.apiKey,
       model: channel.modelPool.model,
+      endpoint: healthCheckEndpoint,
       signal: controller.signal,
     });
     const latencyMs = Math.round(performance.now() - startedAt);
@@ -403,32 +408,31 @@ type ProbeInput = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  endpoint: ModelPoolHealthCheckEndpoint;
   signal: AbortSignal;
 };
 
 type ProbeResult =
-  | { ok: true; mode: "responses" | "chat.completions"; firstTokenLatencyMs: number | null }
+  | { ok: true; mode: ModelPoolHealthCheckEndpoint; firstTokenLatencyMs: number | null }
   | { ok: false; message: string };
 
 async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
-  const responsesResult = await postHealthProbe({
-    ...input,
-    mode: "responses",
-    path: "/v1/responses",
-    body: {
-      model: input.model,
-      input: "ok",
-      max_output_tokens: 1,
-      store: false,
-      stream: true,
-    },
-  });
-
-  if (responsesResult.ok) {
-    return responsesResult;
+  if (input.endpoint === "responses") {
+    return postHealthProbe({
+      ...input,
+      mode: "responses",
+      path: "/v1/responses",
+      body: {
+        model: input.model,
+        input: "ok",
+        max_output_tokens: 1,
+        store: false,
+        stream: true,
+      },
+    });
   }
 
-  const chatResult = await postHealthProbe({
+  return postHealthProbe({
     ...input,
     mode: "chat.completions",
     path: "/v1/chat/completions",
@@ -439,22 +443,17 @@ async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
       stream: true,
     },
   });
-
-  if (chatResult.ok) {
-    return chatResult;
-  }
-
-  return {
-    ok: false,
-    message: [responsesResult.message, chatResult.message].join(" | ").slice(0, 1000),
-  };
 }
 
 type PostHealthProbeInput = ProbeInput & {
-  mode: "responses" | "chat.completions";
+  mode: ModelPoolHealthCheckEndpoint;
   path: string;
   body: unknown;
 };
+
+export function normalizeModelPoolHealthCheckEndpoint(value: unknown): ModelPoolHealthCheckEndpoint {
+  return value === "chat.completions" ? "chat.completions" : "responses";
+}
 
 async function postHealthProbe(input: PostHealthProbeInput): Promise<ProbeResult> {
   const startedAt = performance.now();

@@ -15,6 +15,8 @@ import {
   getModelPoolHealthCheckIntervalSeconds,
   maxModelPoolHealthCheckIntervalSeconds,
   minModelPoolHealthCheckIntervalSeconds,
+  modelPoolHealthCheckEndpoints,
+  normalizeModelPoolHealthCheckEndpoint,
   setModelPoolHealthCheckIntervalSeconds,
 } from "../services/model-pool-health.js";
 
@@ -27,6 +29,7 @@ let lastSystemCpuSnapshot = getSystemCpuSnapshot();
 
 const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
 const channelStatusSchema = z.enum(["ACTIVE", "FORCED_ACTIVE", "DISABLED", "UNAVAILABLE"]);
+const modelPoolHealthCheckEndpointSchema = z.enum(modelPoolHealthCheckEndpoints);
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
@@ -602,6 +605,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
         return {
           ...pool,
+          healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(pool.healthCheckEndpoint),
           channels,
           readyChannelCount: channels.filter((channel) => channel.effectiveStatus !== "UNAVAILABLE").length,
           pricedChannelCount: availablePrices.filter((price) => price.model === pool.model).length,
@@ -651,6 +655,7 @@ export async function adminRoutes(app: FastifyInstance) {
         model: z.string().min(1).max(120),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
         autoHealthCheckEnabled: z.boolean().default(true),
+        healthCheckEndpoint: modelPoolHealthCheckEndpointSchema.default("responses"),
       })
       .parse(request.body);
     const providers = await prisma.upstreamProvider.findMany({
@@ -672,6 +677,7 @@ export async function adminRoutes(app: FastifyInstance) {
       update: {
         status: body.status,
         autoHealthCheckEnabled: body.autoHealthCheckEnabled,
+        healthCheckEndpoint: body.healthCheckEndpoint,
       },
       create: body,
     });
@@ -685,6 +691,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .object({
         status: z.enum(["ACTIVE", "DISABLED"]).optional(),
         autoHealthCheckEnabled: z.boolean().optional(),
+        healthCheckEndpoint: modelPoolHealthCheckEndpointSchema.optional(),
       })
       .parse(request.body);
     const modelPool = await prisma.modelPool.update({
@@ -1272,6 +1279,7 @@ async function getModelPoolStatus(app: FastifyInstance) {
         modelPool: {
           select: {
             model: true,
+            healthCheckEndpoint: true,
           },
         },
       },
@@ -1288,6 +1296,7 @@ async function getModelPoolStatus(app: FastifyInstance) {
   const channelSummaries = channels.map((channel, index) => ({
     id: channel.id,
     model: channel.modelPool.model,
+    healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(channel.modelPool.healthCheckEndpoint),
     status: channel.status,
     priority: channel.priority,
     consecutiveFailures: channel.consecutiveFailures,
