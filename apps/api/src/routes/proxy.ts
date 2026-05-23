@@ -83,10 +83,13 @@ export async function proxyRoutes(app: FastifyInstance) {
       }
     }
 
-    const modelRoute = billable && model ? await getProviderForModel(user.id, model) : null;
+    const clientIp = getClientIp(request);
+    const callerIpIdentity = clientIp ?? apiKey.id;
+    const modelRoute = billable && model ? await getProviderForModel(callerIpIdentity, model) : null;
     const provider = modelRoute?.provider ?? await getDefaultProvider();
     const price = modelRoute?.price ?? null;
     const channelId = modelRoute?.channelId;
+    const releaseModelPoolReservation = modelRoute?.release;
     const billableModel = billable ? model : undefined;
 
     if (billable && (!price || !price.enabled)) {
@@ -96,9 +99,13 @@ export async function proxyRoutes(app: FastifyInstance) {
     const start = performance.now();
     const concurrencyLock = await acquireApiKeyConcurrency(app, apiKey.id, apiKey.concurrencyLimit);
     if (!concurrencyLock.ok) {
+      await releaseModelPoolReservation?.();
       return sendApiError(reply, 429, "API key concurrency limit exceeded", "rate_limit_error");
     }
     bindConcurrencyRelease(reply, concurrencyLock.release);
+    if (releaseModelPoolReservation) {
+      bindLifecycleRelease(reply, releaseModelPoolReservation);
+    }
 
     const apiRequest = await prisma.apiRequest.create({
       data: {
@@ -109,7 +116,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         endpoint,
         method: request.method,
         status: "PENDING",
-        clientIp: request.ip,
+        clientIp,
         userAgent: request.headers["user-agent"],
         requestBody: redactBodyForLog(body) as Prisma.InputJsonValue,
       },
@@ -155,7 +162,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         );
         if (billable && model) {
           await recordStickyModelPoolResult({
-            userId: user.id,
+            callerIdentity: callerIpIdentity,
             model,
             channelId,
             failed: true,
@@ -163,6 +170,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           });
           await recordModelPoolUserCallResult({
             userId: user.id,
+            apiKeyId: apiKey.id,
             model,
             channelId,
             failed: true,
@@ -185,6 +193,8 @@ export async function proxyRoutes(app: FastifyInstance) {
           upstreamResponse,
           apiRequestId: apiRequest.id,
           userId: user.id,
+          callerIdentity: callerIpIdentity,
+          apiKeyId: apiKey.id,
           priceId: price.id,
           model: billableModel ?? price.model,
           channelId,
@@ -230,13 +240,14 @@ export async function proxyRoutes(app: FastifyInstance) {
         startedAt: start,
       });
       await recordStickyModelPoolResult({
-        userId: user.id,
+        callerIdentity: callerIpIdentity,
         model: billableModel ?? price.model,
         channelId,
         latencyMs: Math.round(performance.now() - start),
       });
       await recordModelPoolUserCallResult({
         userId: user.id,
+        apiKeyId: apiKey.id,
         model: billableModel ?? price.model,
         channelId,
         failed: false,
@@ -251,7 +262,7 @@ export async function proxyRoutes(app: FastifyInstance) {
       await markRequestFailed(apiRequest, message, 502, Math.round(performance.now() - start));
       if (billable && model) {
         await recordStickyModelPoolResult({
-          userId: user.id,
+          callerIdentity: callerIpIdentity,
           model,
           channelId,
           failed: true,
@@ -259,6 +270,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         });
         await recordModelPoolUserCallResult({
           userId: user.id,
+          apiKeyId: apiKey.id,
           model,
           channelId,
           failed: true,
@@ -272,6 +284,10 @@ export async function proxyRoutes(app: FastifyInstance) {
 }
 
 function bindConcurrencyRelease(reply: FastifyReply, release: () => Promise<void>) {
+  bindLifecycleRelease(reply, release);
+}
+
+function bindLifecycleRelease(reply: FastifyReply, release: () => Promise<void>) {
   let released = false;
   const releaseOnce = () => {
     if (released) {
@@ -466,6 +482,48 @@ function redactBodyForLog(body: ProxyBody) {
   return clone;
 }
 
+function getClientIp(request: ApiRequestWithUser) {
+  const headers = request.headers;
+
+  const headerCandidates = [
+    pickHeaderValue(headers["cf-connecting-ip"]),
+    pickHeaderValue(headers["x-real-ip"]),
+    pickHeaderValue(headers["x-client-ip"]),
+    pickHeaderValue(headers["true-client-ip"]),
+    pickForwardedFor(headers["x-forwarded-for"]),
+  ];
+
+  for (const candidate of headerCandidates) {
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return request.ip || request.socket.remoteAddress || null;
+}
+
+function pickHeaderValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value.map((item) => item.trim()).find(Boolean) ?? null;
+  }
+
+  return value?.trim() || null;
+}
+
+function pickForwardedFor(value: string | string[] | undefined) {
+  const raw = pickHeaderValue(value);
+  if (!raw) {
+    return null;
+  }
+
+  return (
+    raw
+      .split(",")
+      .map((item) => item.trim())
+      .find(Boolean) ?? null
+  );
+}
+
 function buildUpstreamBody(endpoint: string, body: ProxyBody) {
   if (!body.stream || endpoint.startsWith("/v1/responses")) {
     return body;
@@ -485,6 +543,8 @@ async function proxyStream(params: {
   upstreamResponse: Response;
   apiRequestId: string;
   userId: string;
+  callerIdentity: string;
+  apiKeyId: string;
   model: string;
   channelId?: string;
   priceId: string;
@@ -494,7 +554,7 @@ async function proxyStream(params: {
     info?: (value: unknown, message?: string) => void;
   };
 }) {
-  const { reply, upstreamResponse, apiRequestId, userId, model, channelId, priceId, startedAt, logger } = params;
+  const { reply, upstreamResponse, apiRequestId, userId, callerIdentity, apiKeyId, model, channelId, priceId, startedAt, logger } = params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
   });
@@ -565,7 +625,7 @@ async function proxyStream(params: {
           data: { firstTokenLatencyMs },
         });
         await recordStickyModelPoolResult({
-          userId,
+          callerIdentity,
           model,
           channelId,
           firstTokenLatencyMs,
@@ -573,6 +633,7 @@ async function proxyStream(params: {
         });
         await recordModelPoolUserCallResult({
           userId,
+          apiKeyId,
           model,
           channelId,
           failed: false,
@@ -582,7 +643,7 @@ async function proxyStream(params: {
         const message = error instanceof Error ? error.message : "Stream failed";
         await markRequestFailed({ id: apiRequestId }, message, 502, Math.round(performance.now() - startedAt));
         await recordStickyModelPoolResult({
-          userId,
+          callerIdentity,
           model,
           channelId,
           failed: true,
@@ -590,6 +651,7 @@ async function proxyStream(params: {
         });
         await recordModelPoolUserCallResult({
           userId,
+          apiKeyId,
           model,
           channelId,
           failed: true,

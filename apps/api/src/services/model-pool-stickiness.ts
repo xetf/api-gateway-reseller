@@ -5,39 +5,39 @@ const slowFirstTokenThresholdMs = 10_000;
 const slowTotalLatencyThresholdMs = 15_000;
 const maxConsecutiveSlowCalls = 3;
 
-function stickyKey(userId: string, model: string) {
-  return `modelpool:sticky:${userId}:${model}`;
+function stickyKey(callerIdentity: string, model: string) {
+  return `modelpool:sticky:${callerIdentity}:${model}`;
 }
 
-function slowKey(userId: string, model: string, channelId: string) {
-  return `modelpool:sticky-slow:${userId}:${model}:${channelId}`;
+function slowKey(callerIdentity: string, model: string, channelId: string) {
+  return `modelpool:sticky-slow:${callerIdentity}:${model}:${channelId}`;
 }
 
-export async function getStickyModelPoolChannel(userId: string, model: string) {
+export async function getStickyModelPoolChannel(callerIdentity: string, model: string) {
   try {
-    return await redis.get(stickyKey(userId, model));
+    return await redis.get(stickyKey(callerIdentity, model));
   } catch {
     return null;
   }
 }
 
-export async function setStickyModelPoolChannel(userId: string, model: string, channelId: string) {
+export async function setStickyModelPoolChannel(callerIdentity: string, model: string, channelId: string) {
   try {
-    await redis.set(stickyKey(userId, model), channelId, "EX", modelPoolStickinessTtlSeconds);
+    await redis.set(stickyKey(callerIdentity, model), channelId, "EX", modelPoolStickinessTtlSeconds);
   } catch {
     // Redis stickiness is best-effort; ranking fallback still works without it.
   }
 }
 
-export async function clearStickyModelPoolChannel(userId: string, model: string, channelId?: string) {
+export async function clearStickyModelPoolChannel(callerIdentity: string, model: string, channelId?: string) {
   try {
-    const key = stickyKey(userId, model);
+    const key = stickyKey(callerIdentity, model);
     const currentChannelId = await redis.get(key);
     if (!channelId || currentChannelId === channelId) {
       await redis.del(key);
     }
     if (channelId) {
-      await redis.del(slowKey(userId, model, channelId));
+      await redis.del(slowKey(callerIdentity, model, channelId));
     }
   } catch {
     // Best-effort cleanup only.
@@ -65,14 +65,14 @@ export function isStickyCallSlow(params: {
 }
 
 export async function recordStickyModelPoolResult(params: {
-  userId: string;
+  callerIdentity: string;
   model: string;
   channelId?: string;
   failed?: boolean;
   firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
 }) {
-  const { userId, model, channelId } = params;
+  const { callerIdentity, model, channelId } = params;
 
   if (!channelId) {
     return;
@@ -81,12 +81,12 @@ export async function recordStickyModelPoolResult(params: {
   const slow = isStickyCallSlow(params);
 
   try {
-    const key = slowKey(userId, model, channelId);
+    const key = slowKey(callerIdentity, model, channelId);
 
     if (!slow) {
       await Promise.all([
         redis.del(key),
-        setStickyModelPoolChannel(userId, model, channelId),
+        setStickyModelPoolChannel(callerIdentity, model, channelId),
       ]);
       return;
     }
@@ -95,11 +95,11 @@ export async function recordStickyModelPoolResult(params: {
     await redis.expire(key, modelPoolStickinessTtlSeconds);
 
     if (slowCount >= maxConsecutiveSlowCalls) {
-      await clearStickyModelPoolChannel(userId, model, channelId);
+      await clearStickyModelPoolChannel(callerIdentity, model, channelId);
       return;
     }
 
-    await setStickyModelPoolChannel(userId, model, channelId);
+    await setStickyModelPoolChannel(callerIdentity, model, channelId);
   } catch {
     // Redis stickiness is best-effort; never fail user requests because of it.
   }

@@ -5,8 +5,15 @@ import {
   getStickyModelPoolChannel,
   setStickyModelPoolChannel,
 } from "./model-pool-stickiness.js";
+import {
+  getInflightPenaltyMs,
+  getSpeedScoreMs,
+  getSpeedWindowMs,
+  reserveBalancedModelPoolChannel,
+} from "./model-pool-load-balancer.js";
 
 type Provider = Awaited<ReturnType<typeof getDefaultProvider>>;
+type ReleaseModelPoolReservation = () => Promise<void>;
 
 export async function getDefaultProvider() {
   const provider = await prisma.upstreamProvider.findFirst({
@@ -35,10 +42,11 @@ export async function getDefaultProvider() {
   };
 }
 
-export async function getProviderForModel(userId: string, model: string): Promise<{
+export async function getProviderForModel(callerIdentity: string, model: string): Promise<{
   provider: Provider;
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId?: string;
+  release?: ReleaseModelPoolReservation;
 } | null> {
   const modelPool = await prisma.modelPool.findFirst({
     where: {
@@ -62,30 +70,117 @@ export async function getProviderForModel(userId: string, model: string): Promis
     return null;
   }
 
-  const stickyChannelId = await getStickyModelPoolChannel(userId, model);
+  const stickyChannelId = await getStickyModelPoolChannel(callerIdentity, model);
   if (stickyChannelId) {
     const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyChannelId);
     if (stickyChannel) {
       const stickyRoute = await getRouteForChannel(model, stickyChannel);
 
       if (stickyRoute) {
-        await setStickyModelPoolChannel(userId, model, stickyChannel.id);
+        await setStickyModelPoolChannel(callerIdentity, model, stickyChannel.id);
         return stickyRoute;
       }
     }
 
-    await clearStickyModelPoolChannel(userId, model, stickyChannelId);
+    await clearStickyModelPoolChannel(callerIdentity, model, stickyChannelId);
   }
 
-  for (const channel of modelPool.channels) {
-    const route = await getRouteForChannel(model, channel);
+  const routeCandidates = await getRouteCandidates(model, modelPool.channels);
+  if (routeCandidates.length === 0) {
+    return null;
+  }
+
+  const balancedRoute = await getBalancedRoute(routeCandidates);
+  if (!balancedRoute) {
+    return null;
+  }
+
+  await setStickyModelPoolChannel(callerIdentity, model, balancedRoute.channelId);
+
+  return balancedRoute;
+}
+
+async function getRouteCandidates(
+  model: string,
+  channels: Array<{
+    id: string;
+    upstreamProvider: string;
+    lastFirstTokenLatencyMs: number | null;
+    lastLatencyMs: number | null;
+    priority: number;
+  }>,
+) {
+  const routes = await Promise.all(
+    channels.map(async (channel) => {
+      const route = await getRouteForChannel(model, channel);
+
+      if (!route) {
+        return null;
+      }
+
+      return {
+        ...route,
+        speedScoreMs: getSpeedScoreMs({
+          firstTokenLatencyMs: channel.lastFirstTokenLatencyMs,
+          latencyMs: channel.lastLatencyMs,
+          priority: channel.priority,
+        }),
+      };
+    }),
+  );
+
+  return routes.filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route));
+}
+
+async function getBalancedRoute(
+  routes: Array<{
+    provider: Provider;
+    price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+    channelId: string;
+    speedScoreMs: number;
+  }>,
+) {
+  if (routes.length === 0) {
+    return null;
+  }
+
+  const fastestScoreMs = routes[0]?.speedScoreMs ?? 0;
+  const speedWindowMs = getSpeedWindowMs(fastestScoreMs);
+  const eligibleRoutes = routes.filter(
+    (route) => route.speedScoreMs <= fastestScoreMs + speedWindowMs,
+  );
+  const reservation = await reserveBalancedModelPoolChannel(
+    eligibleRoutes.map((route) => ({
+      channelId: route.channelId,
+      speedScoreMs: route.speedScoreMs,
+    })),
+    getInflightPenaltyMs(fastestScoreMs),
+  );
+
+  if (reservation) {
+    const route = eligibleRoutes.find((candidate) => candidate.channelId === reservation.channelId);
     if (route) {
-      await setStickyModelPoolChannel(userId, model, channel.id);
-      return route;
+      return {
+        provider: route.provider,
+        price: route.price,
+        channelId: route.channelId,
+        release: reservation.release,
+      };
     }
+
+    await reservation.release();
   }
 
-  return null;
+  const fallbackRoute = routes[0];
+  if (!fallbackRoute) {
+    return null;
+  }
+
+  return {
+    provider: fallbackRoute.provider,
+    price: fallbackRoute.price,
+    channelId: fallbackRoute.channelId,
+  };
 }
 
 async function getRouteForChannel(
