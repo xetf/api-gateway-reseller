@@ -1,6 +1,8 @@
 import { prisma, type UpstreamProvider, type UpstreamProviderKey } from "@gateway/db";
 import { redis } from "../lib/redis.js";
 
+const initialProviderKeyName = "key-1";
+
 export type UpstreamKeyReservation = {
   key: Pick<
     UpstreamProviderKey,
@@ -39,7 +41,8 @@ export function upstreamKeyPrefix(secret: string) {
 }
 
 export function formatUpstreamKeyLabel(key: Pick<UpstreamProviderKey, "name" | "keyPrefix">) {
-  return `${key.name} (${key.keyPrefix})`;
+  const name = key.name === "默认 Key" ? initialProviderKeyName : key.name;
+  return `${name} (${key.keyPrefix})`;
 }
 
 export function upstreamKeyInflightKey(keyId: string) {
@@ -68,7 +71,7 @@ export async function ensureDefaultProviderKey(
     where: {
       upstreamProviderId_name: {
         upstreamProviderId: provider.id,
-        name: "默认 Key",
+        name: initialProviderKeyName,
       },
     },
     update: {
@@ -78,7 +81,7 @@ export async function ensureDefaultProviderKey(
     },
     create: {
       upstreamProviderId: provider.id,
-      name: "默认 Key",
+      name: initialProviderKeyName,
       key: provider.apiKey,
       keyPrefix: upstreamKeyPrefix(provider.apiKey),
       status: provider.status === "ACTIVE" ? "ACTIVE" : "DISABLED",

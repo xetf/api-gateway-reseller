@@ -4020,6 +4020,8 @@ function AdminModelPools({
             const selectableChannels = channelsForPool(pool);
             const selectedChannel =
               channelSelections[pool.id] || selectableChannels[0]?.upstreamProvider || "";
+            const callableChannels = pool.channels.filter(isCallableModelPoolChannel);
+            const unavailableChannels = pool.channels.filter((channel) => !isCallableModelPoolChannel(channel));
 
             return (
               <section className="provider-panel" key={pool.id}>
@@ -4133,93 +4135,52 @@ function AdminModelPools({
                   </div>
                 </div>
 
-                <div className="pool-channel-list">
-                  {pool.channels.map((channel) => (
-                    <article className="pool-channel-row" key={channel.id}>
-                      <div className="pool-channel-main">
-                        <div className="pool-channel-title">
-                          <strong>{channel.upstreamProvider}</strong>
-                          <StatusPill status={channel.effectiveStatus} strong />
-                        </div>
-                        <div className="pool-channel-statuses">
-                          <StatusPill status={channel.status} />
-                          <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
-                          <StatusPill status={channel.providerStatus} />
-                          <StatusPill status={pool.autoHealthCheckEnabled ? "AUTO_CHECK_ON" : "AUTO_CHECK_OFF"} />
-                        </div>
-                      </div>
-                      <div className="pool-channel-facts">
-                        <ChannelFact label="检测接口">
-                          {modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}
-                        </ChannelFact>
-                        <ChannelFact label="ACTIVE Key">{channel.activeKeyCount}</ChannelFact>
-                        <ChannelFact label="惩罚">{penaltyCountdown(channel, healthCheck, nowMs)}</ChannelFact>
-                        <ChannelFact label="恢复">{channel.recoverySuccesses}/2</ChannelFact>
-                        <ChannelFact label="优先级">{channel.priority}</ChannelFact>
-                        <ChannelFact label="连续失败">{channel.consecutiveFailures}</ChannelFact>
-                        <ChannelFact label="上次检测">
-                          {channel.lastCheckedAt ? dateTime(channel.lastCheckedAt) : "-"}
-                        </ChannelFact>
-                        <ChannelFact label="下次检测">
-                          {nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}
-                        </ChannelFact>
-                        <ChannelFact label="平均首字">{seconds(channel.lastFirstTokenLatencyMs)}</ChannelFact>
-                        <ChannelFact label="平均总耗时">{seconds(channel.lastLatencyMs)}</ChannelFact>
-                        <ChannelFact label="错误" wide>
-                          {channel.lastError ?? "-"}
-                        </ChannelFact>
-                      </div>
-                      <div className="pool-channel-actions">
-                        <button
-                          className="button secondary"
-                          disabled={busyId === channel.id}
-                          onClick={() => checkChannel(channel)}
-                          type="button"
-                        >
-                          检测
-                        </button>
-                        {channel.status !== "FORCED_ACTIVE" ? (
-                          <button
-                            className="button"
-                            disabled={busyId === channel.id}
-                            onClick={() => setChannelStatus(channel, "FORCED_ACTIVE")}
-                            type="button"
-                          >
-                            人工可用
-                          </button>
-                        ) : null}
-                        {channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyId === channel.id}
-                            onClick={() => setChannelStatus(channel, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : (
-                          <button
-                            className="button secondary"
-                            disabled={busyId === channel.id}
-                            onClick={() => setChannelStatus(channel, "ACTIVE")}
-                            type="button"
-                          >
-                            自动可用
-                          </button>
-                        )}
-                        <button
-                          className="button danger"
-                          disabled={busyId === channel.id}
-                          onClick={() => deleteChannel(channel)}
-                          type="button"
-                        >
-                          <Trash2 size={15} />
-                          删除
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                  {pool.channels.length === 0 ? <div className="pool-channel-empty">暂无上游渠道</div> : null}
+                <div className="pool-channel-groups">
+                  <section className="pool-channel-section callable">
+                    <div className="pool-channel-section-head">
+                      <span>可调用池</span>
+                      <strong>{callableChannels.length}</strong>
+                    </div>
+                    <div className="pool-channel-list">
+                      {callableChannels.map((channel, index) => (
+                        <ModelPoolChannelCard
+                          key={channel.id}
+                          channel={channel}
+                          pool={pool}
+                          rank={index + 1}
+                          healthCheck={healthCheck}
+                          nowMs={nowMs}
+                          busyId={busyId}
+                          onCheck={checkChannel}
+                          onDelete={deleteChannel}
+                          onSetStatus={setChannelStatus}
+                        />
+                      ))}
+                      {callableChannels.length === 0 ? <div className="pool-channel-empty">暂无可调用渠道</div> : null}
+                    </div>
+                  </section>
+                  <section className="pool-channel-section unavailable">
+                    <div className="pool-channel-section-head">
+                      <span>不可调用池</span>
+                      <strong>{unavailableChannels.length}</strong>
+                    </div>
+                    <div className="pool-channel-list">
+                      {unavailableChannels.map((channel) => (
+                        <ModelPoolChannelCard
+                          key={channel.id}
+                          channel={channel}
+                          pool={pool}
+                          healthCheck={healthCheck}
+                          nowMs={nowMs}
+                          busyId={busyId}
+                          onCheck={checkChannel}
+                          onDelete={deleteChannel}
+                          onSetStatus={setChannelStatus}
+                        />
+                      ))}
+                      {unavailableChannels.length === 0 ? <div className="pool-channel-empty">暂无不可调用渠道</div> : null}
+                    </div>
+                  </section>
                 </div>
               <div className="mobile-record-list">
                 {pool.channels.map((channel) => (
@@ -4593,7 +4554,7 @@ function UpstreamProviders({
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [keyModalProvider, setKeyModalProvider] = useState<UpstreamProvider | null>(null);
-  const [keyName, setKeyName] = useState("默认 Key");
+  const [keyName, setKeyName] = useState("key-1");
   const [keySecret, setKeySecret] = useState("");
   const [keyPriority, setKeyPriority] = useState(100);
   const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
@@ -4869,7 +4830,7 @@ function UpstreamProviders({
   }
 
   async function deleteProviderKey(key: UpstreamProviderKey) {
-    const confirmed = window.confirm(`确定删除上游 Key「${key.name}」吗？`);
+    const confirmed = window.confirm(`确定删除上游 Key「${displayUpstreamProviderKeyName(key.name)}」吗？`);
     if (!confirmed) {
       return;
     }
@@ -4924,7 +4885,6 @@ function UpstreamProviders({
                       <p>
                         优先级 {provider.priority} · 超时 {seconds(provider.timeoutMs)} · {provider.baseUrl}
                       </p>
-                      <code>{provider.apiKey}</code>
                     </div>
                     <div className="button-row">
                       <button className="button secondary" onClick={() => editProvider(provider)} type="button">
@@ -4989,7 +4949,7 @@ function UpstreamProviders({
                       <tbody>
                         {(provider.keys ?? []).map((key) => (
                           <tr key={key.id}>
-                            <td>{key.name}</td>
+                            <td>{displayUpstreamProviderKeyName(key.name)}</td>
                             <td><code>{key.keyPrefix || key.key}</code></td>
                             <td><StatusPill status={key.status} /></td>
                             <td>{key.priority}</td>
@@ -5176,7 +5136,7 @@ function UpstreamProviders({
       {providerModalOpen ? (
         <ModalShell
           title={editingId ? "编辑上游" : "添加上游"}
-          description={editingId ? "留空 API Key 则不修改现有密钥。" : "添加新的上游供应商和密钥。"}
+          description={editingId ? "编辑上游渠道配置。" : "添加新的上游供应商和首个 Key。"}
           onClose={() => {
             clearForm();
             setProviderModalOpen(false);
@@ -5192,16 +5152,18 @@ function UpstreamProviders({
                 <span>Base URL</span>
                 <input className="input" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
               </label>
-              <label className="field">
-                <span>上游 API Key</span>
-                <input
-                  className="input"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={editingId ? "留空则不修改" : "sk-..."}
-                  type="password"
-                />
-              </label>
+              {!editingId ? (
+                <label className="field">
+                  <span>首个 Key</span>
+                  <input
+                    className="input"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder="sk-..."
+                    type="password"
+                  />
+                </label>
+              ) : null}
               <div className="grid cols-2">
                 <label className="field">
                   <span>优先级</span>
@@ -5556,6 +5518,110 @@ function ChannelFact({
   );
 }
 
+function ModelPoolChannelCard({
+  channel,
+  pool,
+  rank,
+  healthCheck,
+  nowMs,
+  busyId,
+  onCheck,
+  onDelete,
+  onSetStatus,
+}: {
+  channel: ModelPoolChannel;
+  pool: ModelPool;
+  rank?: number;
+  healthCheck: ModelPoolHealthCheck | null;
+  nowMs: number;
+  busyId: string | null;
+  onCheck: (channel: ModelPoolChannel) => void;
+  onDelete: (channel: ModelPoolChannel) => void;
+  onSetStatus: (channel: ModelPoolChannel, status: ModelPoolChannelStatus) => void;
+}) {
+  return (
+    <article className={rank ? "pool-channel-row callable" : "pool-channel-row unavailable"}>
+      <div className="pool-channel-main">
+        <div className="pool-channel-title">
+          {rank ? <span className="rank-pill">#{rank}</span> : null}
+          <strong>{channel.upstreamProvider}</strong>
+          <StatusPill status={channel.effectiveStatus} strong />
+        </div>
+        <div className="pool-channel-statuses">
+          <StatusPill status={channel.status} />
+          <StatusPill status={channel.hasPrice && channel.priceEnabled ? "ACTIVE" : "DISABLED"} />
+          <StatusPill status={channel.providerStatus} />
+        </div>
+      </div>
+      <div className="pool-channel-facts">
+        <ChannelFact label="Key">{channel.activeKeyCount}</ChannelFact>
+        <ChannelFact label="惩罚">{penaltyCountdown(channel, healthCheck, nowMs)}</ChannelFact>
+        <ChannelFact label="失败">{channel.consecutiveFailures}</ChannelFact>
+        <ChannelFact label="恢复">{channel.recoverySuccesses}/2</ChannelFact>
+        <ChannelFact label="首字">{seconds(channel.lastFirstTokenLatencyMs)}</ChannelFact>
+        <ChannelFact label="总耗时">{seconds(channel.lastLatencyMs)}</ChannelFact>
+        <ChannelFact label="优先级">{channel.priority}</ChannelFact>
+        <ChannelFact label="下次">{nextCheckCountdown(channel, healthCheck, nowMs, pool.autoHealthCheckEnabled)}</ChannelFact>
+        <ChannelFact label="错误" wide>
+          {channel.lastError ?? "-"}
+        </ChannelFact>
+      </div>
+      <div className="pool-channel-actions">
+        <button
+          className="button secondary"
+          disabled={busyId === channel.id}
+          onClick={() => onCheck(channel)}
+          type="button"
+        >
+          检测
+        </button>
+        {channel.status !== "FORCED_ACTIVE" ? (
+          <button
+            className="button"
+            disabled={busyId === channel.id}
+            onClick={() => onSetStatus(channel, "FORCED_ACTIVE")}
+            type="button"
+          >
+            人工可用
+          </button>
+        ) : null}
+        {channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyId === channel.id}
+            onClick={() => onSetStatus(channel, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : (
+          <button
+            className="button secondary"
+            disabled={busyId === channel.id}
+            onClick={() => onSetStatus(channel, "ACTIVE")}
+            type="button"
+          >
+            自动可用
+          </button>
+        )}
+        <button
+          className="button danger"
+          disabled={busyId === channel.id}
+          onClick={() => onDelete(channel)}
+          type="button"
+        >
+          <Trash2 size={15} />
+          删除
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function isCallableModelPoolChannel(channel: ModelPoolChannel) {
+  return channel.effectiveStatus === "READY" || channel.effectiveStatus === "FORCED_READY";
+}
+
 function MobileEmpty({ children }: { children: ReactNode }) {
   return <div className="mobile-empty">{children}</div>;
 }
@@ -5668,7 +5734,11 @@ function formatRequestUpstreamKey(upstreamKey: ApiRequest["upstreamProviderKey"]
     return "-";
   }
 
-  return `${upstreamKey.name} (${upstreamKey.keyPrefix})`;
+  return `${displayUpstreamProviderKeyName(upstreamKey.name)} (${upstreamKey.keyPrefix})`;
+}
+
+function displayUpstreamProviderKeyName(name: string) {
+  return name === "默认 Key" ? "key-1" : name;
 }
 
 function formatConcurrencyLimit(value: number | null | undefined) {
