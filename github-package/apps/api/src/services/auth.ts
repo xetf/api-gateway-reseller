@@ -3,7 +3,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "@gateway/db";
 import { hashSecret } from "../lib/crypto.js";
 import { sendApiError } from "../lib/errors.js";
-import { disableApiKeyIfTotalLimitReached } from "./api-key-limits.js";
 import type { ApiRequestWithUser } from "../types.js";
 
 export async function verifyPassword(password: string, hash: string) {
@@ -19,6 +18,28 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply) 
     await request.jwtVerify();
   } catch {
     return reply.status(401).send({ message: "Unauthorized" });
+  }
+
+  const tokenUser = request.user as { sub?: string; tokenVersion?: number } | undefined;
+  if (!tokenUser?.sub) {
+    return reply.status(401).send({ message: "Unauthorized" });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: tokenUser.sub },
+    select: {
+      id: true,
+      status: true,
+      tokenVersion: true,
+    },
+  });
+
+  if (!user || user.status !== "ACTIVE") {
+    return reply.status(401).send({ message: "Unauthorized" });
+  }
+
+  if ((tokenUser.tokenVersion ?? 0) !== user.tokenVersion) {
+    return reply.status(401).send({ message: "Session expired, please login again" });
   }
 }
 
@@ -61,6 +82,9 @@ export async function requireApiKey(
           role: true,
           status: true,
           allowedModels: true,
+          rateLimitPerMinute: true,
+          concurrencyLimit: true,
+          tokenVersion: true,
         },
       },
     },
@@ -76,24 +100,6 @@ export async function requireApiKey(
       data: { status: "DISABLED" },
     });
     return sendApiError(reply, 401, "API key expired and has been disabled", "authentication_error");
-  }
-
-  try {
-    const rateLimitKey = `ratelimit:${apiKey.id}:${Math.floor(Date.now() / 60000)}`;
-    const count = await app.redis.incr(rateLimitKey);
-    if (count === 1) {
-      await app.redis.expire(rateLimitKey, 70);
-    }
-
-    if (count > apiKey.rateLimitPerMinute) {
-      return sendApiError(reply, 429, "Rate limit exceeded", "rate_limit_error");
-    }
-  } catch (error) {
-    app.log.warn({ error, apiKeyId: apiKey.id }, "Redis rate limit check failed, allowing request");
-  }
-
-  if (await disableApiKeyIfTotalLimitReached(apiKey)) {
-    return sendApiError(reply, 429, "API key total quota exceeded and has been disabled", "insufficient_quota");
   }
 
   await prisma.apiKey.update({

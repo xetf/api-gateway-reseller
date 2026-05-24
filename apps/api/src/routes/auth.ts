@@ -167,6 +167,9 @@ export async function authRoutes(app: FastifyInstance) {
         role: true,
         status: true,
         allowedModels: true,
+        rateLimitPerMinute: true,
+        concurrencyLimit: true,
+        tokenVersion: true,
         wallet: true,
       },
     });
@@ -187,6 +190,9 @@ type PublicUser = {
   email: string;
   role: string;
   allowedModels: string[];
+  rateLimitPerMinute: number;
+  concurrencyLimit: number;
+  tokenVersion: number;
 };
 
 function authResponse(app: FastifyInstance, user: PublicUser) {
@@ -194,6 +200,7 @@ function authResponse(app: FastifyInstance, user: PublicUser) {
     sub: user.id,
     email: user.email,
     role: user.role,
+    tokenVersion: user.tokenVersion,
   });
 
   return {
@@ -208,6 +215,8 @@ function serializeAuthUser(user: PublicUser) {
     email: user.email,
     role: user.role,
     allowedModels: user.allowedModels,
+    rateLimitPerMinute: user.rateLimitPerMinute,
+    concurrencyLimit: user.concurrencyLimit,
   };
 }
 

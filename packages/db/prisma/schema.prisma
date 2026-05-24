@@ -55,6 +55,9 @@ model User {
   role         UserRole   @default(USER)
   status       UserStatus @default(ACTIVE)
   allowedModels String[]   @default([])
+  rateLimitPerMinute Int    @default(0)
+  concurrencyLimit   Int    @default(0)
+  tokenVersion       Int    @default(0)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -240,7 +243,7 @@ model UpstreamProvider {
   apiKey      String
   status      UpstreamProviderStatus @default(ACTIVE)
   priority    Int                    @default(100)
-  timeoutMs   Int                    @default(120000)
+  timeoutMs   Int                    @default(180000)
   createdAt   DateTime               @default(now())
   updatedAt   DateTime               @updatedAt
 

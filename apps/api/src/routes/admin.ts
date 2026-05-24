@@ -42,6 +42,12 @@ import {
   listUnifiedPriceSettings,
   saveUnifiedPriceSettings,
 } from "../services/unified-pricing.js";
+import {
+  deleteIpBanRule,
+  ipBanModes,
+  listIpBanRules,
+  saveIpBanRule,
+} from "../services/ip-ban-rules.js";
 
 const exec = promisify(execCallback);
 let lastCpuSnapshot = {
@@ -115,6 +121,7 @@ const noticeTextSchema = z
     const trimmed = value.trim();
     return trimmed ? trimmed : null;
   });
+const userRuntimeLimitSchema = z.number().int().min(0).max(10000);
 const nonNegativeMoneySchema = z.string().or(z.number()).transform((value, context) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
@@ -171,6 +178,12 @@ const adminBatchUpdateApiKeysSchema = z.object({
   status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]).optional(),
   noticeEnabled: z.boolean().optional(),
   noticeText: noticeTextSchema,
+});
+const ipBanRuleSchema = z.object({
+  ip: z.string().min(1).max(128),
+  mode: z.enum(ipBanModes),
+  message: z.string().max(8000).optional().nullable(),
+  reason: z.string().max(1000).optional().nullable(),
 });
 
 const adminApiKeySelect = {
@@ -310,6 +323,9 @@ export async function adminRoutes(app: FastifyInstance) {
         role: true,
         status: true,
         allowedModels: true,
+        rateLimitPerMinute: true,
+        concurrencyLimit: true,
+        tokenVersion: true,
         createdAt: true,
         wallet: true,
         walletTransactions: {
@@ -356,6 +372,8 @@ export async function adminRoutes(app: FastifyInstance) {
         role: z.enum(["USER", "ADMIN"]).optional(),
         status: z.enum(["ACTIVE", "DISABLED"]).optional(),
         allowedModels: z.array(z.string()).optional(),
+        rateLimitPerMinute: userRuntimeLimitSchema.optional(),
+        concurrencyLimit: userRuntimeLimitSchema.optional(),
       })
       .parse(request.body);
 
@@ -363,7 +381,13 @@ export async function adminRoutes(app: FastifyInstance) {
       ...(body.email ? { email: body.email } : {}),
       ...(body.role ? { role: body.role } : {}),
       ...(body.status ? { status: body.status } : {}),
-      ...(body.allowedModels ? { allowedModels: body.allowedModels } : {}),
+      ...(body.allowedModels !== undefined ? { allowedModels: body.allowedModels } : {}),
+      ...(body.rateLimitPerMinute !== undefined
+        ? { rateLimitPerMinute: body.rateLimitPerMinute }
+        : {}),
+      ...(body.concurrencyLimit !== undefined
+        ? { concurrencyLimit: body.concurrencyLimit }
+        : {}),
     };
 
     const user = await prisma.user.update({
@@ -375,6 +399,9 @@ export async function adminRoutes(app: FastifyInstance) {
         role: true,
         status: true,
         allowedModels: true,
+        rateLimitPerMinute: true,
+        concurrencyLimit: true,
+        tokenVersion: true,
         createdAt: true,
         wallet: true,
         _count: {
@@ -395,6 +422,8 @@ export async function adminRoutes(app: FastifyInstance) {
         email: z.string().email(),
         role: z.enum(["USER", "ADMIN"]).default("USER"),
         allowedModels: z.array(z.string()).default([]),
+        rateLimitPerMinute: userRuntimeLimitSchema.default(0),
+        concurrencyLimit: userRuntimeLimitSchema.default(0),
         initialBalance: z.string().or(z.number()).optional(),
       })
       .parse(request.body);
@@ -406,6 +435,8 @@ export async function adminRoutes(app: FastifyInstance) {
             email: body.email,
             role: body.role,
             allowedModels: body.allowedModels,
+            rateLimitPerMinute: body.rateLimitPerMinute,
+            concurrencyLimit: body.concurrencyLimit,
             passwordHash: await hashPassword(randomBytes(32).toString("base64url")),
             wallet: {
               create: {
@@ -441,6 +472,44 @@ export async function adminRoutes(app: FastifyInstance) {
 
       throw error;
     }
+  });
+
+  app.post("/admin/users/:id/logout", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const currentUser = request.user as { sub: string };
+
+    if (params.id === currentUser.sub) {
+      return reply.status(400).send({ message: "Cannot logout your own admin session" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+      select: {
+        id: true,
+        email: true,
+        tokenVersion: true,
+      },
+    });
+
+    if (!user) {
+      return reply.status(404).send({ message: "User not found" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: params.id },
+      data: {
+        tokenVersion: {
+          increment: 1,
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        tokenVersion: true,
+      },
+    });
+
+    return { ok: true, user: updated };
   });
 
   app.delete("/admin/users/:id", async (request, reply) => {
@@ -753,6 +822,46 @@ export async function adminRoutes(app: FastifyInstance) {
     return { ok: true, apiKey: await withAdminApiKeyUsage(apiKey) };
   });
 
+  app.get("/admin/ip-ban-rules", async () => {
+    return { rules: await listIpBanRules() };
+  });
+
+  app.put("/admin/ip-ban-rules/:ip", async (request) => {
+    const params = z.object({ ip: z.string().min(1).max(128) }).parse(request.params);
+    const body = ipBanRuleSchema.omit({ ip: true }).parse(request.body);
+    const rule = await saveIpBanRule({
+      ip: params.ip,
+      mode: body.mode,
+      message: body.message,
+      reason: body.reason,
+    });
+
+    return {
+      rule,
+      rules: await listIpBanRules(),
+    };
+  });
+
+  app.post("/admin/ip-ban-rules", async (request) => {
+    const body = ipBanRuleSchema.parse(request.body);
+    const rule = await saveIpBanRule(body);
+
+    return {
+      rule,
+      rules: await listIpBanRules(),
+    };
+  });
+
+  app.delete("/admin/ip-ban-rules/:ip", async (request) => {
+    const params = z.object({ ip: z.string().min(1).max(128) }).parse(request.params);
+    const result = await deleteIpBanRule(params.ip);
+
+    return {
+      ...result,
+      rules: await listIpBanRules(),
+    };
+  });
+
   app.get("/admin/requests", async (request) => {
     const query = z
       .object({
@@ -879,6 +988,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return {
       requests,
       hasMore,
+      ipBanRules: await listIpBanRules(),
       nextCursor: hasMore ? requests.at(-1)?.id ?? null : null,
     };
   });
@@ -1565,7 +1675,7 @@ export async function adminRoutes(app: FastifyInstance) {
         baseUrl: z.string().url(),
         apiKey: z.string().min(1),
         priority: z.number().int().min(1).max(10000).default(100),
-        timeoutMs: z.number().int().min(5000).max(600000).default(120000),
+        timeoutMs: z.number().int().min(5000).max(600000).default(180000),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
       })
       .parse(request.body);

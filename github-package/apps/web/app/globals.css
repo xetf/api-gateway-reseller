@@ -537,6 +537,50 @@ table {
   margin-bottom: 12px;
 }
 
+.ip-ban-card {
+  display: grid;
+  gap: 14px;
+}
+
+.ip-ban-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.9fr) minmax(130px, 0.65fr) minmax(220px, 1.4fr) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.ip-ban-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ip-ban-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.ip-ban-rule strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.ip-ban-rule p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.compact-error {
+  margin: 0;
+}
+
 .audit-card {
   width: 100%;
   max-width: 100%;
@@ -650,6 +694,51 @@ table {
   max-width: 100%;
 }
 
+.ip-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.ip-cell > span:first-child {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.ip-ban-pill {
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.ip-ban-inline-button {
+  min-height: 20px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #be123c;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.ip-ban-inline-button:hover {
+  border-color: #fda4af;
+  background: #ffe4e6;
+}
+
 .request-detail-button {
   min-height: 22px;
   display: inline-flex;
@@ -724,6 +813,8 @@ tbody tr:hover td {
 .field {
   display: grid;
   gap: 6px;
+  align-self: start;
+  align-content: start;
 }
 
 .field span {
@@ -937,7 +1028,7 @@ tbody tr:hover td {
 
 .login-brand-copy h1 {
   margin: 0;
-  font-size: 50px;
+  font-size: 80px;
   line-height: 1.05;
 }
 
@@ -2512,6 +2603,10 @@ td .button-row.compact {
     grid-template-columns: 1fr;
   }
 
+  .ip-ban-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .pool-channel-list {
     grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
   }
@@ -2629,7 +2724,9 @@ td .button-row.compact {
   .inline-form,
   .input-with-action,
   .copy-field,
-  .filter-bar {
+  .filter-bar,
+  .ip-ban-form,
+  .ip-ban-rule {
     grid-template-columns: 1fr;
   }
 
@@ -3233,7 +3330,7 @@ td .button-row.compact {
   }
 
   .login-brand-copy h1 {
-    font-size: 44px;
+    font-size: 70.4px;
   }
 
   .login-brand-copy p {
@@ -3466,7 +3563,7 @@ td .button-row.compact {
 
 @media (max-width: 420px) {
   .login-brand-copy h1 {
-    font-size: 40px;
+    font-size: 64px;
   }
 
   .nav button {

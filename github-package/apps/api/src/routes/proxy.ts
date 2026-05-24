@@ -7,9 +7,16 @@ import { sendApiError } from "../lib/errors.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
+import { disableApiKeyIfTotalLimitReached } from "../services/api-key-limits.js";
 import { recordModelPoolUserCallResult } from "../services/model-pool-call-failures.js";
 import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.js";
 import { buildUpstreamUrl, getDefaultProvider, getProviderForModel } from "../services/upstream.js";
+import {
+  findIpBanRule,
+  ipBanErrorUsageSource,
+  ipBanNoticeUsageSource,
+  type IpBanRule,
+} from "../services/ip-ban-rules.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
 type ModelRoute = NonNullable<Awaited<ReturnType<typeof getProviderForModel>>>;
@@ -88,8 +95,8 @@ const proxyRoutePatterns = [
   "/completions",
   "/images/generations",
 ];
-const streamFirstTokenTimeoutMs = 60_000;
-const streamFirstTokenTimeoutMessage = "Stream first token timeout after 60 seconds";
+const streamFirstTokenTimeoutMs = 120_000;
+const streamFirstTokenTimeoutMessage = "Stream first token timeout after 120 seconds";
 const clientStreamClosedStatusCode = 499;
 const clientStreamClosedMessage = "Client closed the stream before the gateway finished sending the response";
 const missingUsageMessage = "Upstream response did not include billable token usage";
@@ -99,6 +106,40 @@ const invalidEncryptedContentNotice =
   "这次请求里有无效的内容，通常是把压缩摘要或普通文本误塞进了上下文。若重试后仍失败，请新建对话或清空上下文后重试。";
 const missingUsageNotice = "请新建对话或清空当前会话上下文后重试。";
 const recoveryNoticeUsageSource = "gateway_recovery_notice";
+
+type GatewayRequestLimitLock = {
+  ok: true;
+  release: () => Promise<void>;
+} | {
+  ok: false;
+  noticeText: string;
+  release: () => Promise<void>;
+};
+
+type GatewayConcurrencyLock = {
+  ok: true;
+  release: () => Promise<void>;
+} | {
+  ok: false;
+  layer: "user" | "key";
+  limit: number;
+  release: () => Promise<void>;
+};
+
+type GatewayRateLimitResult = {
+  ok: true;
+} | {
+  ok: false;
+  layer: "user" | "key";
+  limit: number;
+  retryAfterSeconds: number;
+};
+
+type EstimatedUsageReason =
+  | "missing_stream_usage"
+  | "missing_compact_stream_usage"
+  | "missing_response_usage"
+  | "missing_compact_response_usage";
 
 export async function proxyRoutes(app: FastifyInstance) {
   for (const pattern of proxyRoutePatterns) {
@@ -118,6 +159,25 @@ export async function proxyRoutes(app: FastifyInstance) {
 
     const body = (request.body ?? {}) as ProxyBody;
     const { apiKey, user } = request.apiAuth;
+    const model = body.model;
+    const clientIp = getClientIp(request);
+    const ipBanRule = await findIpBanRule(clientIp);
+    if (ipBanRule) {
+      return sendIpBanResponse({
+        reply,
+        endpoint,
+        body,
+        upstreamRequestUrl,
+        ipBanRule,
+        clientIp,
+        userId: user.id,
+        apiKeyId: apiKey.id,
+        method: request.method,
+        userAgent: request.headers["user-agent"],
+        acceptHeader: request.headers.accept,
+      });
+    }
+
     if (apiKey.noticeEnabled && apiKey.noticeText?.trim() && shouldReturnApiKeyNotice(endpoint, request.method)) {
       return sendApiKeyNotice(
         reply,
@@ -129,12 +189,15 @@ export async function proxyRoutes(app: FastifyInstance) {
       );
     }
 
+    if (await disableApiKeyIfTotalLimitReached(apiKey)) {
+      return sendApiError(reply, 429, "API key total quota exceeded and has been disabled", "insufficient_quota");
+    }
+
     if (!isAllowedMethod(endpoint, request.method)) {
       return sendApiError(reply, 405, "Method not allowed");
     }
 
-    const model = body.model;
-    const billable = isBillableEndpoint(endpoint, request.method);
+	    const billable = isBillableEndpoint(endpoint, request.method);
 
     if (billable && !model) {
       return sendApiError(reply, 400, "Missing model");
@@ -155,26 +218,50 @@ export async function proxyRoutes(app: FastifyInstance) {
       }
     }
 
-    const clientIp = getClientIp(request);
-    const callerIpIdentity = clientIp ?? apiKey.id;
-    const initialRoute = await selectUpstreamRoute({
-      billable,
-      model,
-      callerIdentity: callerIpIdentity,
-    });
+    const runtimeLimitLock = shouldCheckNewRequestLimits(endpoint, request.method)
+      ? await checkNewRequestLimits(app, {
+          userId: user.id,
+          userConcurrencyLimit: user.concurrencyLimit,
+          userRateLimitPerMinute: user.rateLimitPerMinute,
+          apiKeyId: apiKey.id,
+          apiKeyConcurrencyLimit: apiKey.concurrencyLimit,
+          apiKeyRateLimitPerMinute: apiKey.rateLimitPerMinute,
+        })
+      : createNoopConcurrencyLock();
+
+    if (!runtimeLimitLock.ok) {
+      return sendApiKeyNotice(
+        reply,
+        endpoint,
+        body,
+        upstreamRequestUrl,
+        runtimeLimitLock.noticeText,
+        request.headers.accept,
+      );
+    }
+
+	    const callerIpIdentity = clientIp ?? apiKey.id;
+    let initialRoute: UpstreamAttemptRoute;
+    try {
+      initialRoute = await selectUpstreamRoute({
+        billable,
+        model,
+        callerIdentity: callerIpIdentity,
+      });
+    } catch (error) {
+      await runtimeLimitLock.release();
+      throw error;
+    }
     const billableModel = billable ? model : undefined;
 
     if (billable && (!initialRoute.price || !initialRoute.price.enabled)) {
+      await runtimeLimitLock.release();
+      await initialRoute.release?.();
       return sendApiError(reply, 400, `Model ${model} is not enabled on any active upstream`);
     }
 
     const start = performance.now();
-    const concurrencyLock = await acquireApiKeyConcurrency(app, apiKey.id, apiKey.concurrencyLimit);
-    if (!concurrencyLock.ok) {
-      await initialRoute.release?.();
-      return sendApiError(reply, 429, "API key concurrency limit exceeded", "rate_limit_error");
-    }
-    bindConcurrencyRelease(reply, concurrencyLock.release);
+    bindConcurrencyRelease(reply, runtimeLimitLock.release);
     const routeRelease = createMutableLifecycleRelease(reply);
     routeRelease.set(initialRoute.release);
 
@@ -585,7 +672,17 @@ async function runUpstreamAttempt(params: {
       return { kind: "sent" };
     }
 
-    const usage = usageFromOpenAIResponse(responseBody);
+    let usage = usageFromOpenAIResponse(responseBody);
+    if (usage.totalTokens <= 0) {
+      const estimatedUsage = estimateUsageFromResponse(endpoint, upstreamBody, responseBody);
+      if (estimatedUsage) {
+        usage = estimatedUsage;
+        app.log.warn(
+          { apiRequestId, model: billableModel ?? price.model, channelId },
+          "Upstream response did not include usage; using estimated billable usage",
+        );
+      }
+    }
     assertBillableUsage(usage);
     await chargeForRequest({
       requestId: apiRequestId,
@@ -726,19 +823,116 @@ async function recordFailedChannelAttempt(params: {
   });
 }
 
-async function acquireApiKeyConcurrency(
+function createNoopConcurrencyLock(): GatewayRequestLimitLock {
+  return {
+    ok: true,
+    release: async () => {},
+  };
+}
+
+async function checkNewRequestLimits(
   app: FastifyInstance,
-  apiKeyId: string,
-  limit: number,
-) {
+  params: {
+    userId: string;
+    userConcurrencyLimit: number;
+    userRateLimitPerMinute: number;
+    apiKeyId: string;
+    apiKeyConcurrencyLimit: number;
+    apiKeyRateLimitPerMinute: number;
+  },
+): Promise<GatewayRequestLimitLock> {
+  const concurrencyLock = await acquireGatewayConcurrency(app, params);
+  if (!concurrencyLock.ok) {
+    return {
+      ok: false,
+      noticeText: concurrencyNotice(concurrencyLock.layer, concurrencyLock.limit),
+      release: concurrencyLock.release,
+    };
+  }
+
+  const rateLimit = await checkGatewayRateLimit(app, params);
+  if (!rateLimit.ok) {
+    await concurrencyLock.release();
+    return {
+      ok: false,
+      noticeText: rateLimitNotice(
+        rateLimit.layer,
+        rateLimit.limit,
+        rateLimit.retryAfterSeconds,
+      ),
+      release: async () => {},
+    };
+  }
+
+  return concurrencyLock;
+}
+
+async function acquireGatewayConcurrency(
+  app: FastifyInstance,
+  params: {
+    userId: string;
+    userConcurrencyLimit: number;
+    apiKeyId: string;
+    apiKeyConcurrencyLimit: number;
+  },
+): Promise<GatewayConcurrencyLock> {
+  const userLock = await acquireConcurrencySlot(app, {
+    layer: "user",
+    key: `concurrency:user:${params.userId}`,
+    limit: params.userConcurrencyLimit,
+    logContext: { userId: params.userId, layer: "user" },
+  });
+
+  if (!userLock.ok) {
+    return {
+      ok: false,
+      layer: "user",
+      limit: params.userConcurrencyLimit,
+      release: userLock.release,
+    };
+  }
+
+  const apiKeyLock = await acquireConcurrencySlot(app, {
+    layer: "key",
+    key: `concurrency:${params.apiKeyId}`,
+    limit: params.apiKeyConcurrencyLimit,
+    logContext: { apiKeyId: params.apiKeyId, layer: "key" },
+  });
+
+  if (!apiKeyLock.ok) {
+    await userLock.release();
+    return {
+      ok: false,
+      layer: "key",
+      limit: params.apiKeyConcurrencyLimit,
+      release: apiKeyLock.release,
+    };
+  }
+
+  return {
+    ok: true,
+    release: async () => {
+      await Promise.all([apiKeyLock.release(), userLock.release()]);
+    },
+  };
+}
+
+async function acquireConcurrencySlot(
+  app: FastifyInstance,
+  params: {
+    layer: "user" | "key";
+    key: string;
+    limit: number;
+    logContext: Record<string, unknown>;
+  },
+): Promise<GatewayConcurrencyLock> {
+  const { layer, key, limit, logContext } = params;
   if (limit <= 0) {
     return {
       ok: true as const,
       release: async () => {},
     };
   }
-
-  const key = `concurrency:${apiKeyId}`;
 
   try {
     const count = await app.redis.incr(key);
@@ -750,6 +944,8 @@ async function acquireApiKeyConcurrency(
       await app.redis.decr(key);
       return {
         ok: false as const,
+        layer,
+        limit,
         release: async () => {},
       };
     }
@@ -757,7 +953,7 @@ async function acquireApiKeyConcurrency(
     let released = false;
     const refreshTtl = setInterval(() => {
       void app.redis.expire(key, 120).catch((error: unknown) => {
-        app.log.warn({ error, apiKeyId }, "Failed to refresh API key concurrency lock");
+        app.log.warn({ error, ...logContext }, "Failed to refresh gateway concurrency lock");
       });
     }, 30_000);
     return {
@@ -774,17 +970,135 @@ async function acquireApiKeyConcurrency(
             await app.redis.del(key);
           }
         } catch (error) {
-          app.log.warn({ error, apiKeyId }, "Failed to release API key concurrency slot");
+          app.log.warn({ error, ...logContext }, "Failed to release gateway concurrency slot");
         }
       },
     };
   } catch (error) {
-    app.log.warn({ error, apiKeyId }, "Redis concurrency check failed, allowing request");
+    app.log.warn({ error, ...logContext }, "Redis concurrency check failed, allowing request");
     return {
       ok: true as const,
       release: async () => {},
     };
   }
+}
+
+async function checkGatewayRateLimit(
+  app: FastifyInstance,
+  params: {
+    userId: string;
+    userRateLimitPerMinute: number;
+    apiKeyId: string;
+    apiKeyRateLimitPerMinute: number;
+  },
+): Promise<GatewayRateLimitResult> {
+  const userLimit = normalizeRuntimeLimit(params.userRateLimitPerMinute);
+  const apiKeyLimit = normalizeRuntimeLimit(params.apiKeyRateLimitPerMinute);
+
+  if (userLimit <= 0 && apiKeyLimit <= 0) {
+    return { ok: true };
+  }
+
+  const now = Date.now();
+  const minuteBucket = Math.floor(now / 60000);
+  const retryAfterSeconds = secondsUntilNextMinute(now);
+
+  try {
+    const result = await app.redis.eval(
+      `
+      local userLimit = tonumber(ARGV[1]) or 0
+      local keyLimit = tonumber(ARGV[2]) or 0
+      local ttl = tonumber(ARGV[3]) or 70
+      local userCurrent = 0
+      local keyCurrent = 0
+
+      if userLimit > 0 then
+        userCurrent = tonumber(redis.call("GET", KEYS[1]) or "0") or 0
+        if userCurrent >= userLimit then
+          return {0, "user", userLimit}
+        end
+      end
+
+      if keyLimit > 0 then
+        keyCurrent = tonumber(redis.call("GET", KEYS[2]) or "0") or 0
+        if keyCurrent >= keyLimit then
+          return {0, "key", keyLimit}
+        end
+      end
+
+      if userLimit > 0 then
+        redis.call("INCR", KEYS[1])
+        redis.call("EXPIRE", KEYS[1], ttl)
+      end
+
+      if keyLimit > 0 then
+        redis.call("INCR", KEYS[2])
+        redis.call("EXPIRE", KEYS[2], ttl)
+      end
+
+      return {1, "", 0}
+      `,
+      2,
+      `ratelimit:user:${params.userId}:${minuteBucket}`,
+      `ratelimit:${params.apiKeyId}:${minuteBucket}`,
+      userLimit,
+      apiKeyLimit,
+      70,
+    );
+
+    if (!Array.isArray(result)) {
+      return { ok: true };
+    }
+
+    const [allowed, layer, limit] = result;
+    if (Number(allowed) === 1) {
+      return { ok: true };
+    }
+
+    const limitedLayer = layer === "user" ? "user" : "key";
+    const numericLimit = Number(limit);
+    return {
+      ok: false,
+      layer: limitedLayer,
+      limit: Number.isFinite(numericLimit) && numericLimit > 0
+        ? numericLimit
+        : limitedLayer === "user"
+          ? userLimit
+          : apiKeyLimit,
+      retryAfterSeconds,
+    };
+  } catch (error) {
+    app.log.warn(
+      { error, userId: params.userId, apiKeyId: params.apiKeyId },
+      "Redis gateway rate limit check failed, allowing request",
+    );
+    return { ok: true };
+  }
+}
+
+function normalizeRuntimeLimit(value: number | null | undefined) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+}
+
+function secondsUntilNextMinute(now: number) {
+  return Math.max(1, 60 - (Math.floor(now / 1000) % 60));
+}
+
+function concurrencyNotice(layer: "user" | "key", limit: number) {
+  if (layer === "user") {
+    return `当前账号并发请求已达到 ${limit} 个，请等待已有请求完成后重试。`;
+  }
+
+  return `当前 API Key 并发请求已达到 ${limit} 个，请等待已有请求完成后重试。`;
+}
+
+function rateLimitNotice(layer: "user" | "key", limit: number, retryAfterSeconds: number) {
+  if (layer === "user") {
+    return `当前账号已达到每分钟 ${limit} 次请求限制，请约 ${retryAfterSeconds} 秒后重试。`;
+  }
+
+  return `当前 API Key 已达到每分钟 ${limit} 次请求限制，请约 ${retryAfterSeconds} 秒后重试。`;
 }
 
 function sendApiKeyNotice(
@@ -888,6 +1202,77 @@ async function markRecoveryNoticeReturned(
       },
     },
   });
+}
+
+async function sendIpBanResponse(params: {
+  reply: FastifyReply;
+  endpoint: string;
+  body: ProxyBody;
+  upstreamRequestUrl: string;
+  ipBanRule: IpBanRule;
+  clientIp: string | null;
+  userId: string;
+  apiKeyId: string;
+  method: string;
+  userAgent?: string | string[];
+  acceptHeader?: string | string[];
+}) {
+  const {
+    reply,
+    endpoint,
+    body,
+    upstreamRequestUrl,
+    ipBanRule,
+    clientIp,
+    userId,
+    apiKeyId,
+    method,
+    userAgent,
+    acceptHeader,
+  } = params;
+  const noticeReturned = ipBanRule.mode === "notice" && shouldReturnApiKeyNotice(endpoint, method);
+  const responseUsage = {
+    source: noticeReturned ? ipBanNoticeUsageSource : ipBanErrorUsageSource,
+    returnedToUser: noticeReturned,
+    reason: "ip_ban",
+    mode: ipBanRule.mode,
+    ip: ipBanRule.ip,
+    ...(noticeReturned ? { noticeText: ipBanRule.message } : {}),
+  };
+  const userAgentText = Array.isArray(userAgent) ? userAgent.join(", ") : userAgent;
+
+  await prisma.apiRequest.create({
+    data: {
+      userId,
+      apiKeyId,
+      upstreamProvider: "gateway",
+      model: typeof body.model === "string" && body.model.trim()
+        ? body.model
+        : inferModelFromEndpoint(endpoint),
+      endpoint,
+      method,
+      status: "FAILED",
+      httpStatus: noticeReturned ? 200 : 403,
+      errorMessage: `IP banned: ${ipBanRule.ip}${ipBanRule.reason ? ` (${ipBanRule.reason})` : ""}`,
+      clientIp,
+      userAgent: userAgentText,
+      requestBody: redactBodyForLog(body) as Prisma.InputJsonValue,
+      responseUsage,
+    },
+  });
+
+  if (noticeReturned) {
+    return sendApiKeyNotice(
+      reply,
+      endpoint,
+      body,
+      upstreamRequestUrl,
+      ipBanRule.message,
+      acceptHeader,
+    );
+  }
+
+  return sendApiError(reply, 403, ipBanRule.message, "access_denied");
 }
 
 function buildNoticeStream(endpoint: string, model: string, notice: string) {
@@ -1256,6 +1641,10 @@ function isAllowedMethod(endpoint: string, method: string) {
 }
 
 function shouldReturnApiKeyNotice(endpoint: string, method: string) {
+  return shouldCheckNewRequestLimits(endpoint, method);
+}
+
+function shouldCheckNewRequestLimits(endpoint: string, method: string) {
   return (
     method === "POST" &&
     (endpoint === "/v1/chat/completions" ||
@@ -1576,7 +1965,7 @@ async function proxyStream(params: {
         }
 
         if (!streamUsage) {
-          streamUsage = estimateUsageFromStream(requestBody, rawStreamText);
+          streamUsage = estimateUsageFromStream(endpoint, requestBody, rawStreamText);
           if (streamUsage) {
             logger?.warn(
               { apiRequestId, model, channelId },
@@ -1933,13 +2322,52 @@ function parseUsageFromSseBuffer(buffer: string): Usage | null {
   return found;
 }
 
-function estimateUsageFromStream(requestBody: ProxyBody, buffer: string): Usage | null {
-  const outputText = extractOutputTextFromSseBuffer(buffer);
-
-  if (!outputText.trim()) {
+function estimateUsageFromResponse(
+  endpoint: string,
+  requestBody: ProxyBody,
+  responseBody: unknown,
+): Usage | null {
+  if (!isResponsesEndpoint(endpoint)) {
     return null;
   }
 
+  const outputText = extractResponseOutputTextForTokenEstimate(responseBody);
+  const canEstimate =
+    outputText.trim() ||
+    canEstimateUsageFromCompactResponse(endpoint, responseBody);
+
+  if (!canEstimate) {
+    return null;
+  }
+
+  return buildEstimatedUsage(
+    requestBody,
+    outputText,
+    endpoint === "/v1/responses/compact"
+      ? "missing_compact_response_usage"
+      : "missing_response_usage",
+  );
+}
+
+function estimateUsageFromStream(endpoint: string, requestBody: ProxyBody, buffer: string): Usage | null {
+  const outputText = extractOutputTextFromSseBuffer(buffer);
+
+  if (!outputText.trim() && !canEstimateUsageFromCompactStream(endpoint, buffer)) {
+    return null;
+  }
+
+  return buildEstimatedUsage(
+    requestBody,
+    outputText,
+    outputText.trim() ? "missing_stream_usage" : "missing_compact_stream_usage",
+  );
+}
+
+function buildEstimatedUsage(
+  requestBody: ProxyBody,
+  outputText: string,
+  reason: EstimatedUsageReason,
+): Usage | null {
   const inputText = extractTextForTokenEstimate(requestBody);
   const inputTokens = estimateTokenCount(inputText);
   const outputTokens = estimateTokenCount(outputText);
@@ -1956,9 +2384,50 @@ function estimateUsageFromStream(requestBody: ProxyBody, buffer: string): Usage 
     totalTokens,
     raw: {
       estimated: true,
-      reason: "missing_stream_usage",
+      reason,
+      input_tokens: inputTokens,
+      input_tokens_details: {
+        cached_tokens: 0,
+      },
+      output_tokens: outputTokens,
+      output_tokens_details: {
+        reasoning_tokens: 0,
+      },
+      total_tokens: totalTokens,
     },
   };
+}
+
+function canEstimateUsageFromCompactResponse(endpoint: string, responseBody: unknown) {
+  return (
+    endpoint === "/v1/responses/compact" &&
+    (isCompletedResponsePayload(responseBody) ||
+      (isPlainObject(responseBody) && responseBody.status === "completed"))
+  );
+}
+
+function canEstimateUsageFromCompactStream(endpoint: string, buffer: string) {
+  return endpoint === "/v1/responses/compact" && sseBufferHasCompletedResponse(buffer);
+}
+
+function sseBufferHasCompletedResponse(buffer: string) {
+  return parseSseJsonPayloads(buffer).some(isCompletedResponsePayload);
+}
+
+function isCompletedResponsePayload(payload: unknown) {
+  if (!isPlainObject(payload)) {
+    return false;
+  }
+
+  if (payload.type === "response.completed") {
+    return true;
+  }
+
+  if (isPlainObject(payload.response) && payload.response.status === "completed") {
+    return true;
+  }
+
+  return payload.object === "response" && payload.status === "completed";
 }
 
 function extractOutputTextFromSseBuffer(buffer: string) {
@@ -2005,6 +2474,36 @@ function extractStreamOutputText(chunk: unknown): string {
   return "";
 }
 
+function extractResponseOutputTextForTokenEstimate(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(extractResponseOutputTextForTokenEstimate).filter(Boolean).join("\n");
+  }
+
+  if (typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.output_text === "string" && record.output_text.trim()) {
+    return record.output_text;
+  }
+
+  const parts: string[] = [];
+  for (const key of ["response", "output", "content", "message", "choices", "tool_calls", "function_call", "arguments", "text", "delta"]) {
+    parts.push(extractResponseOutputTextForTokenEstimate(record[key]));
+  }
+
+  return parts.filter(Boolean).join("\n");
+}
+
 function extractTextForTokenEstimate(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
@@ -2025,7 +2524,7 @@ function extractTextForTokenEstimate(value: unknown): string {
   const record = value as Record<string, unknown>;
   const parts: string[] = [];
 
-  for (const key of ["content", "text", "arguments", "input", "messages", "tool_calls", "tools", "function"]) {
+  for (const key of ["content", "text", "output", "output_text", "arguments", "instructions", "prompt", "input", "input_text", "messages", "tool_calls", "tools", "function"]) {
     parts.push(extractTextForTokenEstimate(record[key]));
   }
 

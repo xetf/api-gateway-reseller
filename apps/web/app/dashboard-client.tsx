@@ -30,6 +30,8 @@ type User = {
   role: "USER" | "ADMIN";
   status: "ACTIVE" | "DISABLED" | string;
   allowedModels: string[];
+  rateLimitPerMinute: number;
+  concurrencyLimit: number;
   createdAt?: string;
   wallet?: Wallet | null;
 };
@@ -127,8 +129,20 @@ type Summary = {
 
 type AdminRequestsPage = {
   requests: ApiRequest[];
+  ipBanRules?: IpBanRule[];
   hasMore: boolean;
   nextCursor?: string | null;
+};
+
+type IpBanMode = "error" | "notice";
+
+type IpBanRule = {
+  ip: string;
+  mode: IpBanMode;
+  message: string;
+  reason?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type AdminOverview = {
@@ -573,6 +587,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [adminRequestsNextCursor, setAdminRequestsNextCursor] = useState<string | null>(null);
   const [adminRequestsHasMore, setAdminRequestsHasMore] = useState(false);
   const [adminRequestsLoadingMore, setAdminRequestsLoadingMore] = useState(false);
+  const [ipBanRules, setIpBanRules] = useState<IpBanRule[]>([]);
   const [upstreamProviders, setUpstreamProviders] = useState<UpstreamProvider[]>([]);
   const [modelPrices, setModelPrices] = useState<ModelPrice[]>([]);
   const [unifiedPriceSettings, setUnifiedPriceSettings] = useState<UnifiedPriceSetting[]>([]);
@@ -656,6 +671,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setAdminRequestsNextCursor(null);
       setAdminRequestsHasMore(false);
       setAdminRequestsLoadingMore(false);
+      setIpBanRules([]);
 
       void Promise.allSettled([
         loadData("可用模型", async () => {
@@ -774,6 +790,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         { token: authToken },
       );
       setAdminRequests((current) => (append ? mergeRequests(current, result.requests) : result.requests));
+      if (result.ipBanRules) {
+        setIpBanRules(result.ipBanRules);
+      }
       setAdminRequestsNextCursor(result.nextCursor ?? null);
       setAdminRequestsHasMore(result.hasMore);
     } catch (loadError) {
@@ -1006,15 +1025,17 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           ) : null}
           {mode === "admin" && activeTab === "admin-requests" ? (
             <AdminRequests
-              requests={adminRequests}
-              users={adminUsers}
+	              requests={adminRequests}
+	              ipBanRules={ipBanRules}
+	              users={adminUsers}
               filters={requestFilters}
               onFiltersChange={setRequestFilters}
               hasMore={adminRequestsHasMore}
               loadingMore={adminRequestsLoadingMore}
-              onLoadMore={loadMoreAdminRequests}
-              onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
-            />
+	              onLoadMore={loadMoreAdminRequests}
+	              onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
+	              onRulesChanged={setIpBanRules}
+	            />
           ) : null}
         </div>
       </section>
@@ -1963,20 +1984,25 @@ function Requests({
   requests,
   compact = false,
   showCost = false,
+  ipBanRules = [],
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  onBanIp,
 }: {
   requests: ApiRequest[];
   compact?: boolean;
   showCost?: boolean;
+  ipBanRules?: IpBanRule[];
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  onBanIp?: (ip: string) => void;
 }) {
   const [selectedRequest, setSelectedRequest] = useState<ApiRequestDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const bannedIpSet = new Set(ipBanRules.map((rule) => rule.ip));
 
   function handleScroll(event: UIEvent<HTMLDivElement>) {
     if (!onLoadMore || !hasMore || loadingMore) {
@@ -2055,7 +2081,13 @@ function Requests({
 	              <tr key={item.id}>
 	                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
 	                <td>{formatRequestApiKey(item.apiKey)}</td>
-	                <td>{item.clientIp ?? "-"}</td>
+		                <td>
+                  <IpCell
+                    ip={item.clientIp}
+                    banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+                    onBan={showCost && onBanIp ? onBanIp : undefined}
+                  />
+                </td>
 	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
                 {showCost ? <td>{formatRequestUpstreamKey(item.upstreamProviderKey)}</td> : null}
                 <td>{item.model}</td>
@@ -2115,9 +2147,13 @@ function Requests({
 	            <MobileField label="API Key" wide>
 	              {formatRequestApiKey(item.apiKey)}
 	            </MobileField>
-	            <MobileField label="IP" wide>
-	              {item.clientIp ?? "-"}
-	            </MobileField>
+		            <MobileField label="IP" wide>
+		              <IpCell
+		                ip={item.clientIp}
+		                banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+		                onBan={showCost && onBanIp ? onBanIp : undefined}
+		              />
+		            </MobileField>
 	            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
             <MobileField label="缓存">{formatNumber(item.cachedInputTokens)}</MobileField>
             <MobileField label="输出">{formatNumber(item.outputTokens)}</MobileField>
@@ -2168,6 +2204,32 @@ function Requests({
       />
     ) : null}
     </>
+  );
+}
+
+function IpCell({
+  ip,
+  banned,
+  onBan,
+}: {
+  ip?: string | null;
+  banned: boolean;
+  onBan?: (ip: string) => void;
+}) {
+  if (!ip) {
+    return <span>-</span>;
+  }
+
+  return (
+    <div className="ip-cell">
+      <span>{ip}</span>
+      {banned ? <span className="ip-ban-pill">已封禁</span> : null}
+      {onBan && !banned ? (
+        <button className="ip-ban-inline-button" onClick={() => onBan(ip)} type="button">
+          封禁
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -2296,13 +2358,35 @@ function getReturnedNoticeText(item: Pick<ApiRequest, "responseUsage">) {
   }
 
   const record = usage as Record<string, unknown>;
-  if (record.source !== "gateway_recovery_notice" || record.returnedToUser !== true) {
+  const source = typeof record.source === "string" ? record.source : "";
+  if (
+    source !== "gateway_recovery_notice" &&
+    source !== "gateway_ip_ban_notice"
+  ) {
+    return null;
+  }
+
+  if (record.returnedToUser !== true) {
     return null;
   }
 
   return typeof record.noticeText === "string" && record.noticeText.trim()
     ? record.noticeText
-    : "网关已把这次失败转换成公告式提示返回给用户。";
+    : source === "gateway_ip_ban_notice"
+      ? "当前 IP 已被网关封禁。"
+      : "网关已把这次失败转换成公告式提示返回给用户。";
+}
+
+function isIpBanRequest(item: Pick<ApiRequest, "responseUsage" | "errorMessage">) {
+  const usage = item.responseUsage;
+  if (usage && typeof usage === "object" && !Array.isArray(usage)) {
+    const source = (usage as Record<string, unknown>).source;
+    if (source === "gateway_ip_ban_notice" || source === "gateway_ip_ban_error") {
+      return true;
+    }
+  }
+
+  return Boolean(item.errorMessage?.toLowerCase().includes("ip banned"));
 }
 
 function buildRequestProcess(request: ApiRequestDetail, failureSummary: string) {
@@ -2338,7 +2422,9 @@ function buildRequestProcess(request: ApiRequestDetail, failureSummary: string) 
       state: returnedNoticeText ? "已提示" : failed ? "失败" : request.status,
       tone: returnedNoticeText ? "warn" : failed ? "error" : "ok",
       detail: returnedNoticeText
-        ? "这次失败已经按公告式接口格式返回给用户，后台保留原始失败原因。"
+        ? isIpBanRequest(request)
+          ? "这次调用命中了 IP 封禁规则，并已按公告式接口格式返回给用户。"
+          : "这次失败已经按公告式接口格式返回给用户，后台保留原始失败原因。"
         : failed
           ? failureSummary
           : "调用成功完成，后台已记录用量与费用。",
@@ -2353,6 +2439,12 @@ function describeRequestFailure(request: ApiRequestDetail) {
 
   if (!hasRequestError(request)) {
     return "这条调用没有报错。";
+  }
+
+  if (isIpBanRequest(request)) {
+    return returnedNoticeText
+      ? "这条调用命中了 IP 封禁规则，网关没有转发到上游，并已把封禁内容按公告式提示返回给用户。"
+      : "这条调用命中了 IP 封禁规则，网关没有转发到上游，已直接返回封禁报错。";
   }
 
   if (returnedNoticeText) {
@@ -2430,6 +2522,7 @@ function formatJsonValue(value: unknown) {
 
 function AdminRequests({
   requests,
+  ipBanRules,
   users,
   filters,
   hasMore,
@@ -2437,8 +2530,10 @@ function AdminRequests({
   onFiltersChange,
   onLoadMore,
   onSearch,
+  onRulesChanged,
 }: {
   requests: ApiRequest[];
+  ipBanRules: IpBanRule[];
   users: AdminUser[];
   filters: RequestFilters;
   hasMore: boolean;
@@ -2446,7 +2541,15 @@ function AdminRequests({
   onFiltersChange: (filters: RequestFilters) => void;
   onLoadMore: () => void;
   onSearch: (filters: RequestFilters) => void;
+  onRulesChanged: (rules: IpBanRule[]) => void;
 }) {
+  const [ipInput, setIpInput] = useState("");
+  const [banMode, setBanMode] = useState<IpBanMode>("error");
+  const [banMessage, setBanMessage] = useState(defaultIpBanMessage);
+  const [banReason, setBanReason] = useState("");
+  const [banBusyIp, setBanBusyIp] = useState<string | null>(null);
+  const [banError, setBanError] = useState<string | null>(null);
+
   function update<K extends keyof RequestFilters>(key: K, value: RequestFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
   }
@@ -2456,8 +2559,159 @@ function AdminRequests({
     onSearch(filters);
   }
 
+  async function saveRule(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    setBanError(null);
+
+    const normalizedIp = normalizeIpForCompare(ipInput);
+    if (!normalizedIp) {
+      setBanError("请填写有效 IP。");
+      return;
+    }
+
+    setBanBusyIp(normalizedIp);
+    try {
+      const result = await apiFetch<{ rules: IpBanRule[] }>("/admin/ip-ban-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          ip: normalizedIp,
+          mode: banMode,
+          message: banMessage.trim() || defaultIpBanMessage,
+          reason: banReason.trim() || null,
+        }),
+      });
+      onRulesChanged(result.rules);
+      setIpInput("");
+      setBanReason("");
+    } catch (error) {
+      setBanError(errorToText(error));
+    } finally {
+      setBanBusyIp(null);
+    }
+  }
+
+  async function quickBanIp(ip: string) {
+    const normalizedIp = normalizeIpForCompare(ip);
+    if (!normalizedIp) {
+      setBanError("这条记录没有有效 IP。");
+      return;
+    }
+
+    setIpInput(normalizedIp);
+    setBanError(null);
+    setBanBusyIp(normalizedIp);
+    try {
+      const result = await apiFetch<{ rules: IpBanRule[] }>("/admin/ip-ban-rules", {
+        method: "POST",
+        body: JSON.stringify({
+          ip: normalizedIp,
+          mode: banMode,
+          message: banMessage.trim() || defaultIpBanMessage,
+          reason: banReason.trim() || "从全站调用记录封禁",
+        }),
+      });
+      onRulesChanged(result.rules);
+    } catch (error) {
+      setBanError(errorToText(error));
+    } finally {
+      setBanBusyIp(null);
+    }
+  }
+
+  async function deleteRule(ip: string) {
+    const confirmed = window.confirm(`确定解除 IP「${ip}」的封禁吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    setBanError(null);
+    setBanBusyIp(ip);
+    try {
+      const result = await apiFetch<{ rules: IpBanRule[] }>(`/admin/ip-ban-rules/${encodeURIComponent(ip)}`, {
+        method: "DELETE",
+      });
+      onRulesChanged(result.rules);
+    } catch (error) {
+      setBanError(errorToText(error));
+    } finally {
+      setBanBusyIp(null);
+    }
+  }
+
   return (
     <div className="grid admin-page">
+      <section className="card ip-ban-card">
+        <div className="section-head">
+          <div>
+            <h2 className="section-title">IP 封禁</h2>
+            <p className="section-subtitle">只影响公开代理调用，后台登录和管理不受影响。</p>
+          </div>
+          <span className="pill strong">{ipBanRules.length} 条</span>
+        </div>
+        {banError ? <div className="error compact-error">{banError}</div> : null}
+        <form className="ip-ban-form" onSubmit={saveRule}>
+          <label className="field">
+            <span>IP</span>
+            <input
+              className="input"
+              value={ipInput}
+              onChange={(event) => setIpInput(event.target.value)}
+              placeholder="例如 203.0.113.10"
+            />
+          </label>
+          <label className="field">
+            <span>返回方式</span>
+            <select className="input" value={banMode} onChange={(event) => setBanMode(event.target.value as IpBanMode)}>
+              <option value="error">封禁报错</option>
+              <option value="notice">公告报错</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>返回内容</span>
+            <input
+              className="input"
+              value={banMessage}
+              onChange={(event) => setBanMessage(event.target.value)}
+              placeholder={defaultIpBanMessage}
+            />
+          </label>
+          <label className="field">
+            <span>备注</span>
+            <input
+              className="input"
+              value={banReason}
+              onChange={(event) => setBanReason(event.target.value)}
+              placeholder="可选"
+            />
+          </label>
+          <button className="button" disabled={Boolean(banBusyIp)} type="submit">
+            <Shield size={17} />
+            {banBusyIp ? "处理中..." : "保存封禁"}
+          </button>
+        </form>
+        <div className="ip-ban-rule-list">
+          {ipBanRules.map((rule) => (
+            <div className="ip-ban-rule" key={rule.ip}>
+              <div>
+                <strong>{rule.ip}</strong>
+                <p>{rule.reason || rule.message}</p>
+              </div>
+              <span className={rule.mode === "notice" ? "pill ok" : "pill warn"}>
+                {rule.mode === "notice" ? "公告报错" : "封禁报错"}
+              </span>
+              <button
+                className="button secondary"
+                disabled={banBusyIp === rule.ip}
+                onClick={() => void deleteRule(rule.ip)}
+                type="button"
+              >
+                解封
+              </button>
+            </div>
+          ))}
+          {ipBanRules.length === 0 ? <div className="empty-state compact">暂无封禁 IP</div> : null}
+        </div>
+      </section>
       <section className="card">
         <div className="section-head">
           <div>
@@ -2551,10 +2805,12 @@ function AdminRequests({
       </section>
       <Requests
         requests={requests}
+        ipBanRules={ipBanRules}
         showCost
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        onBanIp={(ip) => void quickBanIp(ip)}
       />
     </div>
   );
@@ -3242,6 +3498,8 @@ function AdminUsers({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"USER" | "ADMIN">("USER");
   const [initialBalance, setInitialBalance] = useState("0");
+  const [rateLimitPerMinute, setRateLimitPerMinute] = useState(0);
+  const [concurrencyLimit, setConcurrencyLimit] = useState(0);
   const [userSearch, setUserSearch] = useState("");
   const [targetUserId, setTargetUserId] = useState("");
   const [adjustAmount, setAdjustAmount] = useState("10");
@@ -3254,6 +3512,8 @@ function AdminUsers({
   const [editRole, setEditRole] = useState<"USER" | "ADMIN">("USER");
   const [editStatus, setEditStatus] = useState<"ACTIVE" | "DISABLED">("ACTIVE");
   const [editAllowedModels, setEditAllowedModels] = useState("");
+  const [editRateLimitPerMinute, setEditRateLimitPerMinute] = useState(0);
+  const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
   const keyModalUser = users.find((item) => item.id === keyModalUserId) ?? null;
@@ -3275,6 +3535,8 @@ function AdminUsers({
     setEditRole(item.role === "ADMIN" ? "ADMIN" : "USER");
     setEditStatus(item.status === "DISABLED" ? "DISABLED" : "ACTIVE");
     setEditAllowedModels((item.allowedModels ?? []).join("\n"));
+    setEditRateLimitPerMinute(item.rateLimitPerMinute ?? 0);
+    setEditConcurrencyLimit(item.concurrencyLimit ?? 0);
   }
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
@@ -3294,10 +3556,14 @@ function AdminUsers({
           role,
           initialBalance,
           allowedModels: [],
+          rateLimitPerMinute: Number(rateLimitPerMinute),
+          concurrencyLimit: Number(concurrencyLimit),
         }),
       });
       setEmail("");
       setInitialBalance("0");
+      setRateLimitPerMinute(0);
+      setConcurrencyLimit(0);
       setUserModal(null);
       onChanged();
     } catch (createError) {
@@ -3372,13 +3638,15 @@ function AdminUsers({
     try {
       await apiFetch(`/admin/users/${editingUser.id}`, {
         method: "PATCH",
-          body: JSON.stringify({
-            email: editEmail,
-            role: editRole,
-            status: editStatus,
-            allowedModels: parseModelList(editAllowedModels),
-          }),
-        });
+        body: JSON.stringify({
+          email: editEmail,
+          role: editRole,
+          status: editStatus,
+          allowedModels: parseModelList(editAllowedModels),
+          rateLimitPerMinute: Number(editRateLimitPerMinute),
+          concurrencyLimit: Number(editConcurrencyLimit),
+        }),
+      });
       setEditingUser(null);
       onChanged();
     } catch (updateError) {
@@ -3477,6 +3745,7 @@ function AdminUsers({
                   <th>状态</th>
                   <th>余额</th>
                   <th>模型白名单</th>
+                  <th>账号限制</th>
                   <th>Key</th>
                   <th>请求</th>
                   <th>创建时间</th>
@@ -3493,6 +3762,7 @@ function AdminUsers({
                     </td>
                     <td>${money(item.wallet?.balance ?? "0")}</td>
                     <td>{item.allowedModels.length > 0 ? item.allowedModels.join(", ") : "不限"}</td>
+                    <td>{formatRateLimit(item.rateLimitPerMinute)} · 并发 {formatConcurrencyLimit(item.concurrencyLimit)}</td>
                     <td>{item._count.apiKeys}</td>
                     <td>{item._count.apiRequests}</td>
                     <td>{dateTime(item.createdAt)}</td>
@@ -3514,7 +3784,7 @@ function AdminUsers({
                     </td>
                   </tr>
                 ))}
-                {filteredUsers.length === 0 ? <EmptyRow colSpan={9} /> : null}
+                {filteredUsers.length === 0 ? <EmptyRow colSpan={10} /> : null}
               </tbody>
             </table>
           </div>
@@ -3548,6 +3818,8 @@ function AdminUsers({
                 }
               >
                 <MobileField label="余额">${money(item.wallet?.balance ?? "0")}</MobileField>
+                <MobileField label="账号限流">{formatRateLimit(item.rateLimitPerMinute)}</MobileField>
+                <MobileField label="账号并发">{formatConcurrencyLimit(item.concurrencyLimit)}</MobileField>
                 <MobileField label="Key">{item._count.apiKeys}</MobileField>
                 <MobileField label="公告 Key">
                   {(item.apiKeys ?? []).filter((key) => key.noticeEnabled).length}
@@ -3586,6 +3858,30 @@ function AdminUsers({
                 <label className="field">
                   <span>初始余额</span>
                   <input className="input" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} />
+                </label>
+              </div>
+              <div className="grid cols-2">
+                <label className="field">
+                  <span>账号每分钟限流</span>
+                  <input
+                    className="input"
+                    value={rateLimitPerMinute}
+                    min={0}
+                    max={10000}
+                    onChange={(event) => setRateLimitPerMinute(Number(event.target.value))}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  <span>账号并发限制</span>
+                  <input
+                    className="input"
+                    value={concurrencyLimit}
+                    min={0}
+                    max={10000}
+                    onChange={(event) => setConcurrencyLimit(Number(event.target.value))}
+                    type="number"
+                  />
                 </label>
               </div>
             </div>
@@ -3712,8 +4008,6 @@ function AdminUsers({
                   <span>邮箱</span>
                   <input className="input" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} type="email" />
                 </label>
-              </div>
-              <div className="grid cols-3">
                 <label className="field">
                   <span>角色</span>
                   <select className="input" value={editRole} onChange={(event) => setEditRole(event.target.value === "ADMIN" ? "ADMIN" : "USER")}>
@@ -3731,6 +4025,30 @@ function AdminUsers({
                     <option value="ACTIVE">ACTIVE</option>
                     <option value="DISABLED">DISABLED</option>
                   </select>
+                </label>
+              </div>
+              <div className="grid cols-3">
+                <label className="field">
+                  <span>账号每分钟限流</span>
+                  <input
+                    className="input"
+                    value={editRateLimitPerMinute}
+                    min={0}
+                    max={10000}
+                    onChange={(event) => setEditRateLimitPerMinute(Number(event.target.value))}
+                    type="number"
+                  />
+                </label>
+                <label className="field">
+                  <span>账号并发限制</span>
+                  <input
+                    className="input"
+                    value={editConcurrencyLimit}
+                    min={0}
+                    max={10000}
+                    onChange={(event) => setEditConcurrencyLimit(Number(event.target.value))}
+                    type="number"
+                  />
                 </label>
                 <label className="field">
                   <span>模型白名单</span>
@@ -5369,7 +5687,7 @@ function UpstreamProviders({
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com");
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState(100);
-  const [timeoutSeconds, setTimeoutSeconds] = useState(120);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(180);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [keyModalProvider, setKeyModalProvider] = useState<UpstreamProvider | null>(null);
@@ -5647,7 +5965,7 @@ function UpstreamProviders({
     setBaseUrl("https://api.openai.com");
     setApiKey("");
     setPriority(100);
-    setTimeoutSeconds(120);
+    setTimeoutSeconds(180);
   }
 
   function openCreateProvider() {
@@ -6942,6 +7260,15 @@ function formatConcurrencyLimit(value: number | null | undefined) {
   return `${numeric}`;
 }
 
+function formatRateLimit(value: number | null | undefined) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "不限";
+  }
+
+  return `${numeric}/min`;
+}
+
 function seconds(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "-";
@@ -7141,6 +7468,35 @@ function parseModelList(value: string) {
         .filter(Boolean),
     ),
   );
+}
+
+const defaultIpBanMessage = "当前 IP 已被网关封禁，请联系管理员。";
+
+function normalizeIpForCompare(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text || text.includes("/")) {
+    return "";
+  }
+
+  if (text.includes(":")) {
+    try {
+      const hostname = new URL(`http://[${text}]/`).hostname;
+      return hostname.startsWith("[") && hostname.endsWith("]")
+        ? hostname.slice(1, -1).toLowerCase()
+        : hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(text)) {
+    const parts = text.split(".").map(Number);
+    if (parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+      return parts.join(".");
+    }
+  }
+
+  return "";
 }
 
 function toQueryString(filters: RequestFilters, extras: Record<string, string | undefined> = {}) {

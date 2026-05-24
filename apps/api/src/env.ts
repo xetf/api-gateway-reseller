@@ -9,7 +9,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().default("redis://127.0.0.1:6379"),
   UPSTREAM_BASE_URL: z.string().url().default("https://api.openai.com"),
   UPSTREAM_API_KEY: z.string().default(""),
-  UPSTREAM_TIMEOUT_MS: z.coerce.number().default(120000),
+  UPSTREAM_TIMEOUT_MS: z.coerce.number().default(180000),
   DEFAULT_CURRENCY: z.string().default("USD"),
 });
 
