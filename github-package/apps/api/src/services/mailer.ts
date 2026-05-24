@@ -9,17 +9,7 @@ export async function sendEmailLoginCode(
     ttlMinutes: number;
   },
 ) {
-  const transporter = nodemailer.createTransport({
-    host: settings.smtpHost,
-    port: settings.smtpPort,
-    secure: settings.smtpSecure,
-    auth: settings.smtpUser
-      ? {
-          user: settings.smtpUser,
-          pass: settings.smtpPassword,
-        }
-      : undefined,
-  });
+  const transporter = createTransporter(settings);
 
   await transporter.sendMail({
     from: settings.smtpFrom,
@@ -34,5 +24,34 @@ export async function sendEmailLoginCode(
         <p>${input.ttlMinutes} 分钟内有效。若不是你本人操作，请忽略这封邮件。</p>
       </div>
     `,
+  });
+}
+
+export async function sendSmtpTestEmail(
+  settings: AuthSettings,
+  input: {
+    to: string;
+    code: string;
+    ttlMinutes: number;
+  },
+) {
+  await sendEmailLoginCode(settings, {
+    to: input.to,
+    code: input.code,
+    ttlMinutes: input.ttlMinutes,
+  });
+}
+
+function createTransporter(settings: AuthSettings) {
+  return nodemailer.createTransport({
+    host: settings.smtpHost,
+    port: settings.smtpPort,
+    secure: settings.smtpSecure,
+    auth: settings.smtpUser
+      ? {
+          user: settings.smtpUser,
+          pass: settings.smtpPassword,
+        }
+      : undefined,
   });
 }

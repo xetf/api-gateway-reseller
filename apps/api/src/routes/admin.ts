@@ -12,9 +12,11 @@ import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
 import { getApiKeyTotalUsageUsd } from "../services/api-key-limits.js";
 import {
   readAuthSettings,
+  isSmtpConfigured,
   saveAuthSettings,
   toAdminAuthSettings,
 } from "../services/auth-settings.js";
+import { sendSmtpTestEmail } from "../services/mailer.js";
 import {
   checkModelPoolChannel,
   getModelPoolChannelHealthTiming,
@@ -136,6 +138,9 @@ const authSettingsSchema = z.object({
   smtpUser: z.string().trim().max(255),
   smtpPassword: z.string().max(1000).optional(),
   smtpFrom: z.string().trim().max(255),
+});
+const authSettingsTestEmailSchema = authSettingsSchema.extend({
+  testEmail: z.string().trim().email().transform((value) => value.toLowerCase()),
 });
 const adminCreateApiKeySchema = z.object({
   name: z.string().min(1).max(80),
@@ -263,6 +268,35 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     return { settings: toAdminAuthSettings(settings) };
+  });
+
+  app.post("/admin/auth-settings/test-email", async (request, reply) => {
+    const body = authSettingsTestEmailSchema.parse(request.body);
+    const currentSettings = await readAuthSettings();
+    const settings = {
+      ...currentSettings,
+      ...body,
+      smtpPassword: body.smtpPassword?.trim()
+        ? body.smtpPassword
+        : currentSettings.smtpPassword,
+    };
+
+    if (!isSmtpConfigured(settings)) {
+      return reply.status(400).send({ message: "请先填写完整 SMTP Host、端口和发件人。" });
+    }
+
+    try {
+      await sendSmtpTestEmail(settings, {
+        to: body.testEmail,
+        code: "482913",
+        ttlMinutes: Math.max(1, Math.ceil(Number(body.emailCodeTtlSeconds) / 60)),
+      });
+    } catch (error) {
+      app.log.error({ error, email: body.testEmail }, "Failed to send SMTP test email");
+      return reply.status(502).send({ message: "测试邮件发送失败，请检查 SMTP 设置。" });
+    }
+
+    return { ok: true };
   });
 
   app.get("/admin/users", async () => {

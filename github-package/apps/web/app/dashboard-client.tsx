@@ -1090,7 +1090,7 @@ function Login({
   mode: DashboardMode;
   onLogin: (token: string, user: User) => void;
 }) {
-  const [authMode, setAuthMode] = useState<"login" | "code" | "register">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [identifier, setIdentifier] = useState(mode === "admin" ? "admin" : "");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -1101,10 +1101,11 @@ function Login({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [codeLoading, setCodeLoading] = useState(false);
   const isRegistering = mode === "user" && authMode === "register";
-  const isCodeLogin = mode === "user" && authMode === "code";
+  const isUserLogin = mode === "user" && authMode === "login";
   const canUseEmailCode = Boolean(publicAuthSettings?.emailCodeLoginEnabled);
-  const SubmitIcon = isRegistering ? UserPlus : isCodeLogin ? Mail : LogIn;
+  const SubmitIcon = isRegistering ? UserPlus : LogIn;
 
   useEffect(() => {
     if (mode !== "user") {
@@ -1129,7 +1130,7 @@ function Login({
     };
   }, [mode]);
 
-  function switchAuthMode(nextMode: "login" | "code" | "register") {
+  function switchAuthMode(nextMode: "login" | "register") {
     setAuthMode(nextMode);
     setError(null);
     setMessage(null);
@@ -1187,25 +1188,6 @@ function Login({
         return;
       }
 
-      if (isCodeLogin) {
-        if (!emailCode.trim()) {
-          setError("请填写邮箱验证码。");
-          return;
-        }
-
-        const result = await apiFetch<{ token: string; user: User }>("/auth/email-code/login", {
-          method: "POST",
-          body: JSON.stringify({
-            email: identifier,
-            code: emailCode,
-            name: name.trim() || undefined,
-          }),
-          token: null,
-        });
-        onLogin(result.token, result.user);
-        return;
-      }
-
       const result =
         mode === "admin"
           ? await apiFetch<{ token: string; user: User }>("/auth/admin-login", {
@@ -1223,6 +1205,39 @@ function Login({
       setError(errorToText(loginError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitCodeLogin() {
+    setError(null);
+    setMessage(null);
+
+    if (!identifier.trim()) {
+      setError("请先填写邮箱。");
+      return;
+    }
+
+    if (!emailCode.trim()) {
+      setError("请填写邮箱验证码。");
+      return;
+    }
+
+    setCodeLoading(true);
+    try {
+      const result = await apiFetch<{ token: string; user: User }>("/auth/email-code/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: identifier,
+          code: emailCode,
+          name: name.trim() || undefined,
+        }),
+        token: null,
+      });
+      onLogin(result.token, result.user);
+    } catch (loginError) {
+      setError(errorToText(loginError));
+    } finally {
+      setCodeLoading(false);
     }
   }
 
@@ -1248,20 +1263,18 @@ function Login({
         <div className="login-panel">
           <div className="login-header">
             <span className="eyebrow auth-eyebrow">APIshare</span>
-            <h2>{mode === "admin" ? "管理员登录" : isRegistering ? "创建账号" : isCodeLogin ? "邮箱验证码" : "欢迎回来"}</h2>
+            <h2>{mode === "admin" ? "管理员登录" : isRegistering ? "创建账号" : "欢迎回来"}</h2>
             <p>
               {mode === "admin"
                 ? "使用管理员账号进入后台。"
                 : isRegistering
                   ? "注册后自动进入前台。"
-                  : isCodeLogin
-                    ? "收取 6 位验证码后直接登录。"
-                    : "登录前台继续管理你的账号。"}
+                  : "登录前台继续管理你的账号，也可以使用邮箱验证码快速进入。"}
             </p>
           </div>
 
           {mode === "user" ? (
-            <div className={canUseEmailCode ? "auth-switch three" : "auth-switch"} role="tablist" aria-label="登录注册切换">
+            <div className="auth-switch" role="tablist" aria-label="登录注册切换">
               <button
                 aria-selected={authMode === "login"}
                 className={authMode === "login" ? "active" : ""}
@@ -1271,17 +1284,6 @@ function Login({
               >
                 登录
               </button>
-              {canUseEmailCode ? (
-                <button
-                  aria-selected={isCodeLogin}
-                  className={isCodeLogin ? "active" : ""}
-                  onClick={() => switchAuthMode("code")}
-                  role="tab"
-                  type="button"
-                >
-                  验证码
-                </button>
-              ) : null}
               <button
                 aria-selected={isRegistering}
                 className={isRegistering ? "active" : ""}
@@ -1293,6 +1295,9 @@ function Login({
               </button>
             </div>
           ) : null}
+
+          {message ? <div className="success auth-feedback">{message}</div> : null}
+          {error ? <div className="error auth-feedback">{error}</div> : null}
 
           <form className="form login-form" onSubmit={submit}>
             <label className="field">
@@ -1319,57 +1324,18 @@ function Login({
                 />
               </label>
             ) : null}
-            {!isCodeLogin ? (
-              <label className="field">
-                <span>密码</span>
-                <input
-                  autoComplete={isRegistering ? "new-password" : "current-password"}
-                  className="input"
-                  minLength={isRegistering ? 8 : undefined}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                  type="password"
-                  value={password}
-                />
-              </label>
-            ) : null}
-            {isCodeLogin ? (
-              <>
-                {publicAuthSettings?.emailCodeAutoRegisterEnabled ? (
-                  <label className="field">
-                    <span>昵称</span>
-                    <input
-                      autoComplete="name"
-                      className="input"
-                      onChange={(event) => setName(event.target.value)}
-                      placeholder="新用户可选"
-                      type="text"
-                      value={name}
-                    />
-                  </label>
-                ) : null}
-                <label className="field">
-                  <span>邮箱验证码</span>
-                  <div className="input-with-action">
-                    <input
-                      autoComplete="one-time-code"
-                      className="input"
-                      inputMode="numeric"
-                      maxLength={6}
-                      onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                      placeholder="6 位数字"
-                      required
-                      type="text"
-                      value={emailCode}
-                    />
-                    <button className="button secondary" disabled={sendingCode} onClick={sendCode} type="button">
-                      <Mail size={15} />
-                      <span>{sendingCode ? "发送中" : "获取验证码"}</span>
-                    </button>
-                  </div>
-                </label>
-              </>
-            ) : null}
+            <label className="field">
+              <span>密码</span>
+              <input
+                autoComplete={isRegistering ? "new-password" : "current-password"}
+                className="input"
+                minLength={isRegistering ? 8 : undefined}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
             {isRegistering ? (
               <label className="field">
                 <span>确认密码</span>
@@ -1384,8 +1350,6 @@ function Login({
                 />
               </label>
             ) : null}
-            {message ? <div className="success">{message}</div> : null}
-            {error ? <div className="error">{error}</div> : null}
             <button className="button login-submit" disabled={loading} type="submit">
               <SubmitIcon size={17} />
               <span>
@@ -1395,12 +1359,60 @@ function Login({
                     : "登录中..."
                   : isRegistering
                     ? "注册并进入"
-                    : isCodeLogin
-                      ? "验证码登录"
-                      : "登录"}
+                    : "登录"}
               </span>
             </button>
           </form>
+
+          {isUserLogin && canUseEmailCode ? (
+            <div className="code-login-card">
+              <div className="code-login-head">
+                <span className="code-login-icon">
+                  <Mail size={17} />
+                </span>
+                <div>
+                  <strong>邮箱验证码登录</strong>
+                  <span>无需密码，验证码会发送到上方邮箱。</span>
+                </div>
+              </div>
+              {publicAuthSettings?.emailCodeAutoRegisterEnabled ? (
+                <label className="field compact-field">
+                  <span>昵称</span>
+                  <input
+                    autoComplete="name"
+                    className="input"
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="新用户可选"
+                    type="text"
+                    value={name}
+                  />
+                </label>
+              ) : null}
+              <label className="field compact-field">
+                <span>邮箱验证码</span>
+                <div className="input-with-action auth-code-action">
+                  <input
+                    autoComplete="one-time-code"
+                    className="input"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="6 位数字"
+                    type="text"
+                    value={emailCode}
+                  />
+                  <button className="button secondary" disabled={sendingCode} onClick={sendCode} type="button">
+                    <Send size={15} />
+                    <span>{sendingCode ? "发送中" : "获取验证码"}</span>
+                  </button>
+                </div>
+              </label>
+              <button className="button secondary code-login-submit" disabled={codeLoading} onClick={submitCodeLogin} type="button">
+                <KeyRound size={16} />
+                <span>{codeLoading ? "验证中..." : "验证码进入"}</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
     </main>
@@ -3139,6 +3151,9 @@ function AdminAuthSettings({
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPassword, setSmtpPassword] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
+  const [testEmail, setTestEmail] = useState("");
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
@@ -3158,6 +3173,8 @@ function AdminAuthSettings({
     setSmtpUser(settings.smtpUser);
     setSmtpPassword("");
     setSmtpFrom(settings.smtpFrom);
+    setTestEmail(settings.smtpUser);
+    setTestMessage(null);
     setSavedMessage(null);
   }, [settings]);
 
@@ -3194,9 +3211,50 @@ function AdminAuthSettings({
     }
   }
 
+  async function sendTestEmail() {
+    if (!testEmail.trim()) {
+      onError("请填写测试收件邮箱。");
+      return;
+    }
+
+    onError(null);
+    setTestMessage(null);
+    setTestingEmail(true);
+
+    try {
+      await apiFetch("/admin/auth-settings/test-email", {
+        method: "POST",
+        body: JSON.stringify({
+          emailCodeLoginEnabled,
+          emailCodeAutoRegisterEnabled,
+          newUserBonusUsd,
+          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
+          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
+          smtpHost,
+          smtpPort: Number(smtpPort),
+          smtpSecure,
+          smtpUser,
+          ...(smtpPassword.trim() ? { smtpPassword } : {}),
+          smtpFrom,
+          testEmail,
+        }),
+      });
+      setTestMessage(`测试邮件已发送到 ${testEmail.trim()}。`);
+    } catch (sendError) {
+      onError(errorToText(sendError));
+    } finally {
+      setTestingEmail(false);
+    }
+  }
+
   if (!settings) {
     return <p className="muted">登录设置加载中...</p>;
   }
+
+  const previewFrom = smtpFrom.trim() || "APIshare <no-reply@example.com>";
+  const previewTo = smtpUser.trim() || "user@example.com";
+  const previewCode = "482913";
+  const previewTtlMinutes = Math.max(1, Math.ceil(Number(emailCodeTtlSeconds) / 60));
 
   return (
     <form className="form" onSubmit={saveSettings}>
@@ -3320,6 +3378,44 @@ function AdminAuthSettings({
                   value={smtpPassword}
                 />
               </label>
+            </div>
+            <div className="email-preview">
+              <div className="email-preview-toolbar">
+                <div>
+                  <span className="eyebrow">邮件预览</span>
+                  <strong>APIshare 登录验证码</strong>
+                </div>
+                <span>{smtpSecure ? "SSL/TLS" : "STARTTLS"}</span>
+              </div>
+              <div className="email-preview-meta">
+                <span>From</span>
+                <strong>{previewFrom}</strong>
+                <span>To</span>
+                <strong>{previewTo}</strong>
+              </div>
+              <div className="email-test-row">
+                <label className="field">
+                  <span>测试收件邮箱</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setTestEmail(event.target.value)}
+                    placeholder="user@example.com"
+                    type="email"
+                    value={testEmail}
+                  />
+                </label>
+                <button className="button secondary" disabled={testingEmail} onClick={sendTestEmail} type="button">
+                  <Send size={16} />
+                  {testingEmail ? "发送中..." : "发送测试"}
+                </button>
+              </div>
+              {testMessage ? <div className="success compact-success">{testMessage}</div> : null}
+              <div className="email-preview-body">
+                <h3>APIshare 登录验证码</h3>
+                <p>你的验证码是：</p>
+                <div className="email-preview-code">{previewCode}</div>
+                <p>{previewTtlMinutes} 分钟内有效。若不是你本人操作，请忽略这封邮件。</p>
+              </div>
             </div>
           </div>
         </section>
