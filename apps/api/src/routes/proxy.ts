@@ -1381,10 +1381,6 @@ function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: 
     upstreamBody = buildResponsesCompatibilityBody(upstreamBody);
   }
 
-  if (endpoint.startsWith("/v1/responses")) {
-    upstreamBody = sanitizeResponsesBody(upstreamBody);
-  }
-
   if (!upstreamBody.stream || endpoint.startsWith("/v1/responses")) {
     return upstreamBody;
   }
@@ -1437,108 +1433,6 @@ function buildResponsesCompatibilityBody(body: ProxyBody): ProxyBody {
   }
 
   return normalized;
-}
-
-function sanitizeResponsesBody(body: ProxyBody): ProxyBody {
-  if (!Array.isArray(body.input)) {
-    return body;
-  }
-
-  let mutated = false;
-  const sanitizedInput: unknown[] = [];
-
-  for (const item of body.input) {
-    const sanitizedItem = sanitizeResponsesInputItem(item);
-    if (sanitizedItem === null) {
-      mutated = true;
-      continue;
-    }
-
-    if (sanitizedItem !== item) {
-      mutated = true;
-    }
-
-    sanitizedInput.push(sanitizedItem);
-  }
-
-  return mutated ? { ...body, input: sanitizedInput } : body;
-}
-
-function sanitizeResponsesInputItem(item: unknown) {
-  if (!isPlainObject(item)) {
-    return item;
-  }
-
-  const clone: Record<string, unknown> = { ...item };
-  const type = typeof clone.type === "string" ? clone.type : "";
-  const hasEncryptedContent = Object.prototype.hasOwnProperty.call(clone, "encrypted_content");
-
-  if (hasEncryptedContent && !looksLikeEncryptedContent(clone.encrypted_content)) {
-    delete clone.encrypted_content;
-
-    if (type === "compaction") {
-      return null;
-    }
-
-    if (type === "reasoning" && !hasMeaningfulReasoningItem(clone)) {
-      return null;
-    }
-  }
-
-  if (type === "compaction" && !hasEncryptedContent) {
-    return null;
-  }
-
-  return clone;
-}
-
-function hasMeaningfulReasoningItem(item: Record<string, unknown>) {
-  return (
-    hasMeaningfulValue(item.content) ||
-    hasMeaningfulValue(item.summary) ||
-    hasMeaningfulValue(item.text) ||
-    hasMeaningfulValue(item.output_text)
-  );
-}
-
-function hasMeaningfulValue(value: unknown) {
-  if (value === null || value === undefined) {
-    return false;
-  }
-
-  if (typeof value === "string") {
-    return value.trim().length > 0;
-  }
-
-  if (Array.isArray(value)) {
-    return value.length > 0;
-  }
-
-  if (typeof value === "object") {
-    return Object.keys(value).length > 0;
-  }
-
-  return true;
-}
-
-function looksLikeEncryptedContent(value: unknown) {
-  if (typeof value !== "string") {
-    return false;
-  }
-
-  if (value.trim() !== value) {
-    return false;
-  }
-
-  if (value.length < 80) {
-    return false;
-  }
-
-  if (/\s/.test(value)) {
-    return false;
-  }
-
-  return /^[A-Za-z0-9._~+/=-]+$/.test(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
