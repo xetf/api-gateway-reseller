@@ -12,6 +12,26 @@ import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.j
 import { buildUpstreamUrl, getDefaultProvider, getProviderForModel } from "../services/upstream.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
+type ModelRoute = NonNullable<Awaited<ReturnType<typeof getProviderForModel>>>;
+type UpstreamAttemptRoute = {
+  provider: ModelRoute["provider"] | Awaited<ReturnType<typeof getDefaultProvider>>;
+  price: ModelRoute["price"] | null;
+  channelId?: string;
+  upstreamProviderKeyId?: string;
+  release?: () => Promise<void>;
+};
+
+type UpstreamAttemptResult =
+  | { kind: "sent" }
+  | {
+      kind: "failed";
+      statusCode: number;
+      message: string;
+      retryableFailure: boolean;
+      responseBody?: string;
+      responseContentType?: string;
+    };
+
 const proxiedEndpoints = new Set([
   "/v1/chat/completions",
   "/v1/embeddings",
@@ -143,37 +163,33 @@ export async function proxyRoutes(app: FastifyInstance) {
 
     const clientIp = getClientIp(request);
     const callerIpIdentity = clientIp ?? apiKey.id;
-    const modelRoute = billable && model ? await getProviderForModel(callerIpIdentity, model) : null;
-    const provider = modelRoute?.provider ?? await getDefaultProvider();
-    const price = modelRoute?.price ?? null;
-    const channelId = modelRoute?.channelId;
-    const upstreamProviderKeyId = modelRoute?.provider.upstreamProviderKeyId === "env"
-      ? undefined
-      : modelRoute?.provider.upstreamProviderKeyId;
-    const releaseModelPoolReservation = modelRoute?.release;
+    const initialRoute = await selectUpstreamRoute({
+      billable,
+      model,
+      callerIdentity: callerIpIdentity,
+    });
     const billableModel = billable ? model : undefined;
 
-    if (billable && (!price || !price.enabled)) {
+    if (billable && (!initialRoute.price || !initialRoute.price.enabled)) {
       return sendApiError(reply, 400, `Model ${model} is not enabled on any active upstream`);
     }
 
     const start = performance.now();
     const concurrencyLock = await acquireApiKeyConcurrency(app, apiKey.id, apiKey.concurrencyLimit);
     if (!concurrencyLock.ok) {
-      await releaseModelPoolReservation?.();
+      await initialRoute.release?.();
       return sendApiError(reply, 429, "API key concurrency limit exceeded", "rate_limit_error");
     }
     bindConcurrencyRelease(reply, concurrencyLock.release);
-    if (releaseModelPoolReservation) {
-      bindLifecycleRelease(reply, releaseModelPoolReservation);
-    }
+    const routeRelease = createMutableLifecycleRelease(reply);
+    routeRelease.set(initialRoute.release);
 
     const apiRequest = await prisma.apiRequest.create({
       data: {
         userId: user.id,
         apiKeyId: apiKey.id,
-        upstreamProviderKeyId,
-        upstreamProvider: provider.name,
+        upstreamProviderKeyId: getLoggedUpstreamProviderKeyId(initialRoute),
+        upstreamProvider: initialRoute.provider.name,
         model: model ?? inferModelFromEndpoint(endpoint),
         endpoint,
         method: request.method,
@@ -184,216 +200,75 @@ export async function proxyRoutes(app: FastifyInstance) {
       },
     });
 
-    const upstreamBody = buildUpstreamBody(endpoint, body, provider);
-    const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
-    let streamFirstTokenFetchTimedOut = false;
+    let activeRoute = initialRoute;
+    const skippedChannelIds = new Set<string>();
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
-      const firstTokenFetchTimeout = requestedStream
-        ? startFirstTokenTimeout(start, () => {
-            streamFirstTokenFetchTimedOut = true;
-            controller.abort(createFirstTokenTimeoutError());
-          })
-        : undefined;
-
-      const upstreamResponse = await fetch(
-        buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
-        {
-          method: request.method,
-          headers: {
-            Authorization: `Bearer ${provider.apiKey}`,
-            "Content-Type": "application/json",
-            Accept: body.stream ? "text/event-stream" : "application/json",
-          },
-          body: request.method === "GET" || request.method === "DELETE"
-            ? undefined
-            : JSON.stringify(upstreamBody),
-          signal: controller.signal,
-        },
-      ).finally(() => {
-        clearTimeout(timeout);
-        if (firstTokenFetchTimeout) {
-          clearTimeout(firstTokenFetchTimeout);
-        }
-      });
-
-      await prisma.apiRequest.update({
-        where: { id: apiRequest.id },
-        data: {
-          httpStatus: upstreamResponse.status,
-          upstreamRequestId: upstreamResponse.headers.get("x-request-id"),
-        },
-      });
-
-      if (!upstreamResponse.ok) {
-        const text = await upstreamResponse.text();
-        const recoveryNotice = getGatewayRecoveryNotice(text);
-        await markRequestFailed(
-          apiRequest,
-          text.slice(0, 2000),
-          upstreamResponse.status,
-          Math.round(performance.now() - start),
-        );
-        if (recoveryNotice) {
-          await markRecoveryNoticeReturned(apiRequest.id, recoveryNotice, "upstream_non_ok");
-          return sendApiKeyNotice(
-            reply,
-            endpoint,
-            body,
-            upstreamRequestUrl,
-            recoveryNotice,
-            request.headers.accept,
-          );
-        }
-        if (billable && model) {
-          await recordStickyModelPoolResult({
-            callerIdentity: callerIpIdentity,
-            model,
-            channelId,
-            upstreamProviderKeyId,
-            failed: true,
-            latencyMs: Math.round(performance.now() - start),
-          });
-          await recordModelPoolUserCallResult({
-            userId: user.id,
-            apiKeyId: apiKey.id,
-            callerIdentity: callerIpIdentity,
-            model,
-            channelId,
-            failed: true,
-            logger: app.log,
-          });
-        }
-        reply.status(upstreamResponse.status);
-        reply.header(
-          "content-type",
-          upstreamResponse.headers.get("content-type") ?? "application/json",
-        );
-        return reply.send(text);
-      }
-
-      const shouldStream = shouldStreamResponse(upstreamResponse, body, upstreamRequestUrl);
-
-      if (shouldStream && billable && price) {
-        return proxyStream({
-          reply,
-          upstreamResponse,
-          apiRequestId: apiRequest.id,
-          endpoint,
-          requestBody: upstreamBody,
-          userId: user.id,
-          callerIdentity: callerIpIdentity,
-          apiKeyId: apiKey.id,
-          priceId: price.id,
-          model: billableModel ?? price.model,
-          channelId,
-          upstreamProviderKeyId,
-          startedAt: start,
-          logger: app.log,
-        });
-      }
-
-      if (shouldStream) {
-        return proxyPassthroughStream({
-          reply,
-          upstreamResponse,
-          apiRequestId: apiRequest.id,
-          startedAt: start,
-        });
-      }
-
-      const contentType = upstreamResponse.headers.get("content-type") ?? "";
-      const responseBody = contentType.includes("application/json")
-        ? await upstreamResponse.json()
-        : await upstreamResponse.text();
-
-      if (!billable || !price) {
-        await prisma.apiRequest.update({
-          where: { id: apiRequest.id },
-          data: {
-            status: "SUCCESS",
-            latencyMs: Math.round(performance.now() - start),
-          },
-        });
-
-        reply.status(upstreamResponse.status);
-        reply.header("content-type", contentType || "application/json");
-        return reply.send(responseBody);
-      }
-
-      const usage = usageFromOpenAIResponse(responseBody);
-      assertBillableUsage(usage);
-      await chargeForRequest({
-        requestId: apiRequest.id,
-        userId: user.id,
-        price,
-        usage,
-        startedAt: start,
-      });
-      await recordStickyModelPoolResult({
-        callerIdentity: callerIpIdentity,
-        model: billableModel ?? price.model,
-        channelId,
-        upstreamProviderKeyId,
-        latencyMs: Math.round(performance.now() - start),
-      });
-      await recordModelPoolUserCallResult({
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const result = await runUpstreamAttempt({
+        app,
+        request,
+        reply,
+        body,
+        endpoint,
+        upstreamRequestUrl,
+        apiRequestId: apiRequest.id,
         userId: user.id,
         apiKeyId: apiKey.id,
         callerIdentity: callerIpIdentity,
-        model: billableModel ?? price.model,
-        channelId,
-        failed: false,
-        logger: app.log,
+        route: activeRoute,
+        billable,
+        model,
+        billableModel,
+        startedAt: start,
+        attempt,
       });
 
-      reply.status(upstreamResponse.status);
-      reply.header("content-type", contentType || "application/json");
-      return reply.send(responseBody);
-    } catch (error) {
-      const effectiveError = streamFirstTokenFetchTimedOut ? createFirstTokenTimeoutError() : error;
-      const message = effectiveError instanceof Error ? effectiveError.message : "Upstream request failed";
-      const statusCode = isFirstTokenTimeoutError(effectiveError) ? 504 : 502;
-      const recoveryNotice = getGatewayRecoveryNotice(effectiveError);
-      await markRequestFailed(
-        apiRequest,
-        message,
-        statusCode,
-        Math.round(performance.now() - start),
+      if (result.kind === "sent") {
+        return;
+      }
+
+      if (
+        attempt >= 2 ||
+        !billable ||
+        !model ||
+        !activeRoute.channelId ||
+        reply.sent ||
+        !result.retryableFailure
+      ) {
+        return sendFinalAttemptFailure(reply, apiRequest.id, result, start);
+      }
+
+      skippedChannelIds.add(activeRoute.channelId);
+      const nextRoute = await selectUpstreamRoute({
+        billable,
+        model,
+        callerIdentity: callerIpIdentity,
+        excludeChannelIds: [...skippedChannelIds],
+        bypassSticky: true,
+        skipStickyUpdate: true,
+      });
+
+      if (!nextRoute.channelId || nextRoute.channelId === activeRoute.channelId || !nextRoute.price?.enabled) {
+        await nextRoute.release?.();
+        return sendFinalAttemptFailure(reply, apiRequest.id, result, start);
+      }
+
+      app.log.info(
+        {
+          model,
+          requestId: apiRequest.id,
+          fromChannelId: activeRoute.channelId,
+          fromProvider: activeRoute.provider.name,
+          toChannelId: nextRoute.channelId,
+          toProvider: nextRoute.provider.name,
+          status: result.statusCode,
+        },
+        "Retrying upstream request on another model pool channel",
       );
-      if (recoveryNotice) {
-        await markRecoveryNoticeReturned(apiRequest.id, recoveryNotice, "proxy_catch");
-        return sendApiKeyNotice(
-          reply,
-          endpoint,
-          body,
-          upstreamRequestUrl,
-          recoveryNotice,
-          request.headers.accept,
-        );
-      }
-      if (billable && model) {
-        await recordStickyModelPoolResult({
-          callerIdentity: callerIpIdentity,
-          model,
-          channelId,
-          upstreamProviderKeyId,
-          failed: true,
-          latencyMs: Math.round(performance.now() - start),
-        });
-        await recordModelPoolUserCallResult({
-          userId: user.id,
-          apiKeyId: apiKey.id,
-          callerIdentity: callerIpIdentity,
-          model,
-          channelId,
-          failed: true,
-          logger: app.log,
-        });
-      }
-      return sendApiError(reply, statusCode, message, statusCode === 504 ? "timeout_error" : "upstream_error");
+      await activeRoute.release?.();
+      activeRoute = nextRoute;
+      routeRelease.set(nextRoute.release);
+      await updateApiRequestRoute(apiRequest.id, nextRoute, result.statusCode);
     }
     });
   }
@@ -416,6 +291,445 @@ function bindLifecycleRelease(reply: FastifyReply, release: () => Promise<void>)
   reply.raw.once("finish", releaseOnce);
   reply.raw.once("close", releaseOnce);
   reply.raw.once("error", releaseOnce);
+}
+
+function createMutableLifecycleRelease(reply: FastifyReply) {
+  let release: (() => Promise<void>) | undefined;
+
+  bindLifecycleRelease(reply, async () => {
+    await release?.();
+  });
+
+  return {
+    set(nextRelease: (() => Promise<void>) | undefined) {
+      release = nextRelease;
+    },
+  };
+}
+
+async function selectUpstreamRoute(params: {
+  billable: boolean;
+  model?: string;
+  callerIdentity: string;
+  excludeChannelIds?: string[];
+  bypassSticky?: boolean;
+  skipStickyUpdate?: boolean;
+}): Promise<UpstreamAttemptRoute> {
+  const modelRoute = params.billable && params.model
+    ? await getProviderForModel(params.callerIdentity, params.model, {
+        excludeChannelIds: params.excludeChannelIds,
+        bypassSticky: params.bypassSticky,
+        skipStickyUpdate: params.skipStickyUpdate,
+      })
+    : null;
+
+  if (modelRoute) {
+    return {
+      provider: modelRoute.provider,
+      price: modelRoute.price,
+      channelId: modelRoute.channelId,
+      upstreamProviderKeyId: getLoggedUpstreamProviderKeyId(modelRoute),
+      release: modelRoute.release,
+    };
+  }
+
+  return {
+    provider: await getDefaultProvider(),
+    price: null,
+  };
+}
+
+function getLoggedUpstreamProviderKeyId(route: Pick<UpstreamAttemptRoute, "upstreamProviderKeyId" | "provider">) {
+  const providerKeyId = "upstreamProviderKeyId" in route.provider
+    ? route.provider.upstreamProviderKeyId
+    : undefined;
+  const keyId = route.upstreamProviderKeyId ?? providerKeyId;
+  return keyId === "env" ? undefined : keyId;
+}
+
+async function updateApiRequestRoute(
+  requestId: string,
+  route: UpstreamAttemptRoute,
+  previousStatusCode?: number,
+) {
+  await prisma.apiRequest.update({
+    where: { id: requestId },
+    data: {
+      upstreamProvider: route.provider.name,
+      upstreamProviderKeyId: getLoggedUpstreamProviderKeyId(route),
+      httpStatus: previousStatusCode,
+    },
+  });
+}
+
+async function sendFinalAttemptFailure(
+  reply: FastifyReply,
+  requestId: string,
+  result: Extract<UpstreamAttemptResult, { kind: "failed" }>,
+  startedAt: number,
+) {
+  await markRequestFailed(
+    { id: requestId },
+    result.message,
+    result.statusCode,
+    Math.round(performance.now() - startedAt),
+  );
+
+  if (result.responseBody !== undefined) {
+    reply.status(result.statusCode);
+    reply.header("content-type", result.responseContentType ?? "application/json");
+    return reply.send(result.responseBody);
+  }
+
+  return sendApiError(
+    reply,
+    result.statusCode,
+    result.message,
+    result.statusCode === 504 ? "timeout_error" : "upstream_error",
+  );
+}
+
+async function runUpstreamAttempt(params: {
+  app: FastifyInstance;
+  request: ApiRequestWithUser;
+  reply: FastifyReply;
+  body: ProxyBody;
+  endpoint: string;
+  upstreamRequestUrl: string;
+  apiRequestId: string;
+  userId: string;
+  apiKeyId: string;
+  callerIdentity: string;
+  route: UpstreamAttemptRoute;
+  billable: boolean;
+  model?: string;
+  billableModel?: string;
+  startedAt: number;
+  attempt: number;
+}): Promise<UpstreamAttemptResult> {
+  const {
+    app,
+    request,
+    reply,
+    body,
+    endpoint,
+    upstreamRequestUrl,
+    apiRequestId,
+    userId,
+    apiKeyId,
+    callerIdentity,
+    route,
+    billable,
+    model,
+    billableModel,
+    startedAt,
+  } = params;
+  const { provider, price, channelId } = route;
+  const upstreamProviderKeyId = getLoggedUpstreamProviderKeyId(route);
+  const upstreamBody = buildUpstreamBody(endpoint, body, provider);
+  const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
+  let streamFirstTokenFetchTimedOut = false;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
+    const firstTokenFetchTimeout = requestedStream
+      ? startFirstTokenTimeout(startedAt, () => {
+          streamFirstTokenFetchTimedOut = true;
+          controller.abort(createFirstTokenTimeoutError());
+        })
+      : undefined;
+
+    const upstreamResponse = await fetch(
+      buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
+      {
+        method: request.method,
+        headers: {
+          Authorization: `Bearer ${provider.apiKey}`,
+          "Content-Type": "application/json",
+          Accept: body.stream ? "text/event-stream" : "application/json",
+        },
+        body: request.method === "GET" || request.method === "DELETE"
+          ? undefined
+          : JSON.stringify(upstreamBody),
+        signal: controller.signal,
+      },
+    ).finally(() => {
+      clearTimeout(timeout);
+      if (firstTokenFetchTimeout) {
+        clearTimeout(firstTokenFetchTimeout);
+      }
+    });
+
+    await prisma.apiRequest.update({
+      where: { id: apiRequestId },
+      data: {
+        upstreamProvider: provider.name,
+        upstreamProviderKeyId,
+        httpStatus: upstreamResponse.status,
+        upstreamRequestId: upstreamResponse.headers.get("x-request-id"),
+      },
+    });
+
+    if (!upstreamResponse.ok) {
+      const text = await upstreamResponse.text();
+      const statusCode = upstreamResponse.status;
+      const retryableFailure = isRetryableUpstreamStatus(statusCode);
+
+      if (retryableFailure && params.attempt < 2 && billable && model && channelId) {
+        await recordFailedChannelAttempt({
+          userId,
+          apiKeyId,
+          callerIdentity,
+          model,
+          channelId,
+          upstreamProviderKeyId,
+          retryableFailure,
+          startedAt,
+          logger: app.log,
+        });
+        return {
+          kind: "failed",
+          statusCode,
+          message: text.slice(0, 2000),
+          retryableFailure,
+          responseBody: text,
+          responseContentType: upstreamResponse.headers.get("content-type") ?? "application/json",
+        };
+      }
+
+      const recoveryNotice = getGatewayRecoveryNotice(text);
+      await markRequestFailed(
+        { id: apiRequestId },
+        text.slice(0, 2000),
+        statusCode,
+        Math.round(performance.now() - startedAt),
+      );
+      if (recoveryNotice) {
+        await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "upstream_non_ok");
+        sendApiKeyNotice(
+          reply,
+          endpoint,
+          body,
+          upstreamRequestUrl,
+          recoveryNotice,
+          request.headers.accept,
+        );
+        return { kind: "sent" };
+      }
+      if (billable && model) {
+        await recordFailedChannelAttempt({
+          userId,
+          apiKeyId,
+          callerIdentity,
+          model,
+          channelId,
+          upstreamProviderKeyId,
+          retryableFailure,
+          startedAt,
+          logger: app.log,
+        });
+      }
+      reply.status(statusCode);
+      reply.header(
+        "content-type",
+        upstreamResponse.headers.get("content-type") ?? "application/json",
+      );
+      reply.send(text);
+      return { kind: "sent" };
+    }
+
+    const shouldStream = shouldStreamResponse(upstreamResponse, body, upstreamRequestUrl);
+
+    if (shouldStream && billable && price) {
+      await proxyStream({
+        reply,
+        upstreamResponse,
+        apiRequestId,
+        endpoint,
+        requestBody: upstreamBody,
+        userId,
+        callerIdentity,
+        apiKeyId,
+        priceId: price.id,
+        model: billableModel ?? price.model,
+        channelId,
+        upstreamProviderKeyId,
+        startedAt,
+        logger: app.log,
+      });
+      return { kind: "sent" };
+    }
+
+    if (shouldStream) {
+      await proxyPassthroughStream({
+        reply,
+        upstreamResponse,
+        apiRequestId,
+        startedAt,
+      });
+      return { kind: "sent" };
+    }
+
+    const contentType = upstreamResponse.headers.get("content-type") ?? "";
+    const responseBody = contentType.includes("application/json")
+      ? await upstreamResponse.json()
+      : await upstreamResponse.text();
+
+    if (!billable || !price) {
+      await prisma.apiRequest.update({
+        where: { id: apiRequestId },
+        data: {
+          status: "SUCCESS",
+          latencyMs: Math.round(performance.now() - startedAt),
+        },
+      });
+
+      reply.status(upstreamResponse.status);
+      reply.header("content-type", contentType || "application/json");
+      reply.send(responseBody);
+      return { kind: "sent" };
+    }
+
+    const usage = usageFromOpenAIResponse(responseBody);
+    assertBillableUsage(usage);
+    await chargeForRequest({
+      requestId: apiRequestId,
+      userId,
+      price,
+      usage,
+      startedAt,
+    });
+    const latencyMs = Math.round(performance.now() - startedAt);
+    await recordStickyModelPoolResult({
+      callerIdentity,
+      model: billableModel ?? price.model,
+      channelId,
+      upstreamProviderKeyId,
+      firstTokenLatencyMs: null,
+      latencyMs,
+    });
+    await recordModelPoolUserCallResult({
+      userId,
+      apiKeyId,
+      callerIdentity,
+      model: billableModel ?? price.model,
+      channelId,
+      failed: false,
+      firstTokenLatencyMs: null,
+      latencyMs,
+      logger: app.log,
+    });
+
+    reply.status(upstreamResponse.status);
+    reply.header("content-type", contentType || "application/json");
+    reply.send(responseBody);
+    return { kind: "sent" };
+  } catch (error) {
+    const effectiveError = streamFirstTokenFetchTimedOut ? createFirstTokenTimeoutError() : error;
+    const message = effectiveError instanceof Error ? effectiveError.message : "Upstream request failed";
+    const statusCode = isFirstTokenTimeoutError(effectiveError) ? 504 : 502;
+    const retryableFailure = isRetryableProxyError(effectiveError);
+
+    if (retryableFailure && params.attempt < 2 && billable && model && channelId) {
+      await recordFailedChannelAttempt({
+        userId,
+        apiKeyId,
+        callerIdentity,
+        model,
+        channelId,
+        upstreamProviderKeyId,
+        retryableFailure,
+        startedAt,
+        logger: app.log,
+      });
+      return {
+        kind: "failed",
+        statusCode,
+        message,
+        retryableFailure,
+      };
+    }
+
+    const recoveryNotice = getGatewayRecoveryNotice(effectiveError);
+    await markRequestFailed(
+      { id: apiRequestId },
+      message,
+      statusCode,
+      Math.round(performance.now() - startedAt),
+    );
+    if (recoveryNotice) {
+      await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "proxy_catch");
+      sendApiKeyNotice(
+        reply,
+        endpoint,
+        body,
+        upstreamRequestUrl,
+        recoveryNotice,
+        request.headers.accept,
+      );
+      return { kind: "sent" };
+    }
+    if (billable && model) {
+      await recordFailedChannelAttempt({
+        userId,
+        apiKeyId,
+        callerIdentity,
+        model,
+        channelId,
+        upstreamProviderKeyId,
+        retryableFailure,
+        startedAt,
+        logger: app.log,
+      });
+    }
+    return {
+      kind: "failed",
+      statusCode,
+      message,
+      retryableFailure,
+    };
+  }
+}
+
+async function recordFailedChannelAttempt(params: {
+  userId: string;
+  apiKeyId: string;
+  callerIdentity: string;
+  model: string;
+  channelId?: string;
+  upstreamProviderKeyId?: string | null;
+  retryableFailure: boolean;
+  startedAt: number;
+  logger?: {
+    warn: (value: unknown, message?: string) => void;
+    info?: (value: unknown, message?: string) => void;
+  };
+}) {
+  if (!params.retryableFailure) {
+    return;
+  }
+
+  const latencyMs = Math.round(performance.now() - params.startedAt);
+  await recordStickyModelPoolResult({
+    callerIdentity: params.callerIdentity,
+    model: params.model,
+    channelId: params.channelId,
+    upstreamProviderKeyId: params.upstreamProviderKeyId,
+    failed: params.retryableFailure,
+    latencyMs,
+  });
+  await recordModelPoolUserCallResult({
+    userId: params.userId,
+    apiKeyId: params.apiKeyId,
+    callerIdentity: params.callerIdentity,
+    model: params.model,
+    channelId: params.channelId,
+    failed: params.retryableFailure,
+    retryableFailure: params.retryableFailure,
+    latencyMs,
+    logger: params.logger,
+  });
 }
 
 async function acquireApiKeyConcurrency(
@@ -1054,8 +1368,12 @@ function pickForwardedFor(value: string | string[] | undefined) {
 function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: string; baseUrl: string }) {
   let upstreamBody = body;
 
+  if (endpoint === "/v1/responses") {
+    upstreamBody = normalizeResponsesCreateBody(upstreamBody);
+  }
+
   if (endpoint === "/v1/responses" && isShareApiProvider(provider)) {
-    upstreamBody = buildShareApiResponsesBody(body);
+    upstreamBody = buildShareApiResponsesBody(upstreamBody);
   }
 
   if (endpoint.startsWith("/v1/responses")) {
@@ -1075,6 +1393,16 @@ function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: 
   };
 }
 
+function normalizeResponsesCreateBody(body: ProxyBody): ProxyBody {
+  const normalized: ProxyBody = { ...body };
+
+  if (!Object.prototype.hasOwnProperty.call(normalized, "instructions")) {
+    normalized.instructions = "";
+  }
+
+  return normalized;
+}
+
 function isShareApiProvider(provider: { name: string; baseUrl: string }) {
   try {
     const host = new URL(provider.baseUrl).hostname.toLowerCase();
@@ -1088,10 +1416,6 @@ function buildShareApiResponsesBody(body: ProxyBody): ProxyBody {
   const normalized: ProxyBody = { ...body };
 
   delete normalized.max_output_tokens;
-
-  if (!Object.prototype.hasOwnProperty.call(normalized, "instructions")) {
-    normalized.instructions = "";
-  }
 
   if (typeof normalized.input === "string") {
     normalized.input = [{ role: "user", content: normalized.input }];
@@ -1259,6 +1583,7 @@ async function proxyStream(params: {
           model,
           channelId,
           failed: true,
+          retryableFailure: true,
           logger,
         });
         controller.error(error);
@@ -1377,6 +1702,8 @@ async function proxyStream(params: {
           model,
           channelId,
           failed: false,
+          firstTokenLatencyMs,
+          latencyMs: Math.round(performance.now() - startedAt),
           logger,
         });
       } catch (error) {
@@ -1410,6 +1737,7 @@ async function proxyStream(params: {
           model,
           channelId,
           failed: true,
+          retryableFailure: isRetryableProxyError(error),
           logger,
         });
         controller.error(error);
@@ -1538,6 +1866,18 @@ function createFirstTokenTimeoutError() {
 
 function isFirstTokenTimeoutError(error: unknown) {
   return error instanceof Error && error.name === "FirstTokenTimeoutError";
+}
+
+function isRetryableUpstreamStatus(statusCode: number) {
+  return statusCode === 408 || statusCode === 429 || statusCode >= 500;
+}
+
+function isRetryableProxyError(error: unknown) {
+  return isFirstTokenTimeoutError(error) || error instanceof TypeError || isAbortError(error);
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function createMissingUsageError() {

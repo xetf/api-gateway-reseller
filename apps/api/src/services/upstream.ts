@@ -8,7 +8,6 @@ import {
 import {
   getInflightPenaltyMs,
   getSpeedScoreMs,
-  getSpeedWindowMs,
   reserveBalancedModelPoolChannel,
 } from "./model-pool-load-balancer.js";
 import { reserveProviderKey, type UpstreamKeyReservation } from "./upstream-provider-keys.js";
@@ -20,6 +19,11 @@ type RoutedProvider = Provider & {
   upstreamProviderKeyId?: string;
   upstreamProviderKeyName?: string;
   upstreamProviderKeyPrefix?: string;
+};
+type ModelRouteOptions = {
+  excludeChannelIds?: string[];
+  bypassSticky?: boolean;
+  skipStickyUpdate?: boolean;
 };
 
 export async function getDefaultProvider() {
@@ -49,7 +53,7 @@ export async function getDefaultProvider() {
   };
 }
 
-export async function getProviderForModel(callerIdentity: string, model: string): Promise<{
+export async function getProviderForModel(callerIdentity: string, model: string, options: ModelRouteOptions = {}): Promise<{
   provider: RoutedProvider;
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId?: string;
@@ -80,10 +84,11 @@ export async function getProviderForModel(callerIdentity: string, model: string)
     return null;
   }
 
-  const stickyRouteState = await getStickyModelPoolRoute(callerIdentity, model);
+  const excludedChannelIds = new Set(options.excludeChannelIds ?? []);
+  const stickyRouteState = options.bypassSticky ? null : await getStickyModelPoolRoute(callerIdentity, model);
   if (stickyRouteState) {
     const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyRouteState.channelId);
-    if (stickyChannel) {
+    if (stickyChannel && !excludedChannelIds.has(stickyChannel.id)) {
       const stickyRoute = await getRouteForChannelWithKey(
         model,
         stickyChannel,
@@ -91,6 +96,10 @@ export async function getProviderForModel(callerIdentity: string, model: string)
       );
 
       if (stickyRoute) {
+        if (options.skipStickyUpdate) {
+          return stickyRoute;
+        }
+
         await setStickyModelPoolChannel(
           callerIdentity,
           model,
@@ -109,7 +118,10 @@ export async function getProviderForModel(callerIdentity: string, model: string)
     );
   }
 
-  const routeCandidates = await getRouteCandidates(model, modelPool.channels);
+  const routeCandidates = await getRouteCandidates(
+    model,
+    modelPool.channels.filter((channel) => !excludedChannelIds.has(channel.id)),
+  );
   if (routeCandidates.length === 0) {
     return null;
   }
@@ -125,6 +137,10 @@ export async function getProviderForModel(callerIdentity: string, model: string)
 
     const preparedRoute = await prepareRoute(balancedRoute);
     if (preparedRoute) {
+      if (options.skipStickyUpdate) {
+        return preparedRoute;
+      }
+
       await setStickyModelPoolChannel(
         callerIdentity,
         model,
@@ -189,12 +205,8 @@ async function getBalancedRoute(
   }
 
   const fastestScoreMs = routes[0]?.speedScoreMs ?? 0;
-  const speedWindowMs = getSpeedWindowMs(fastestScoreMs);
-  const eligibleRoutes = routes.filter(
-    (route) => route.speedScoreMs <= fastestScoreMs + speedWindowMs,
-  );
   const reservation = await reserveBalancedModelPoolChannel(
-    eligibleRoutes.map((route) => ({
+    routes.map((route) => ({
       channelId: route.channelId,
       speedScoreMs: route.speedScoreMs,
     })),
@@ -202,7 +214,7 @@ async function getBalancedRoute(
   );
 
   if (reservation) {
-    const route = eligibleRoutes.find((candidate) => candidate.channelId === reservation.channelId);
+    const route = routes.find((candidate) => candidate.channelId === reservation.channelId);
     if (route) {
       return {
         provider: route.provider,

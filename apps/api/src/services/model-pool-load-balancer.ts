@@ -7,9 +7,14 @@ export type LoadBalanceCandidate = {
 
 const inflightTtlSeconds = 180;
 const refreshInflightTtlMs = 30_000;
+const recentPickTtlSeconds = 60;
 
 function inflightKey(channelId: string) {
   return `modelpool:balance:inflight:${channelId}`;
+}
+
+function recentPickKey(channelId: string) {
+  return `modelpool:balance:recent:${channelId}`;
 }
 
 export function getSpeedScoreMs(params: {
@@ -26,6 +31,10 @@ export function getSpeedWindowMs(fastestScoreMs: number) {
 
 export function getInflightPenaltyMs(fastestScoreMs: number) {
   return Math.max(300, fastestScoreMs * 0.2);
+}
+
+export function getRecentPickPenaltyMs(fastestScoreMs: number) {
+  return Math.max(120, fastestScoreMs * 0.08);
 }
 
 export async function reserveBalancedModelPoolChannel(
@@ -52,10 +61,18 @@ async function reserveChannelAtomically(
   candidates: LoadBalanceCandidate[],
   penaltyMs: number,
 ) {
-  const keys = candidates.map((candidate) => inflightKey(candidate.channelId));
+  const keys = candidates.flatMap((candidate) => [
+    inflightKey(candidate.channelId),
+    recentPickKey(candidate.channelId),
+  ]);
+  const recentPickPenaltyMs = getRecentPickPenaltyMs(
+    Math.min(...candidates.map((candidate) => candidate.speedScoreMs)),
+  );
   const args = [
     String(inflightTtlSeconds),
     String(penaltyMs),
+    String(recentPickTtlSeconds),
+    String(recentPickPenaltyMs),
     ...candidates.flatMap((candidate) => [
       candidate.channelId,
       String(candidate.speedScoreMs),
@@ -64,29 +81,38 @@ async function reserveChannelAtomically(
 
   const result = await redis.eval(
     `
-local ttl = tonumber(ARGV[1])
-local penalty = tonumber(ARGV[2])
-local bestIndex = 1
-local bestScore = nil
-local argIndex = 3
+	local ttl = tonumber(ARGV[1])
+	local penalty = tonumber(ARGV[2])
+	local recentTtl = tonumber(ARGV[3])
+	local recentPenalty = tonumber(ARGV[4])
+	local bestIndex = 1
+	local bestScore = nil
+	local argIndex = 5
 
-for index = 1, #KEYS do
-  local speed = tonumber(ARGV[argIndex + 1])
-  local inflight = tonumber(redis.call("GET", KEYS[index]) or "0")
-  local score = speed + (inflight * penalty)
+	for index = 1, (#KEYS / 2) do
+	  local speed = tonumber(ARGV[argIndex + 1])
+	  local inflightKeyIndex = ((index - 1) * 2) + 1
+	  local recentKeyIndex = inflightKeyIndex + 1
+	  local inflight = tonumber(redis.call("GET", KEYS[inflightKeyIndex]) or "0")
+	  local recent = tonumber(redis.call("GET", KEYS[recentKeyIndex]) or "0")
+	  local score = speed + (inflight * penalty) + (recent * recentPenalty)
 
-  if bestScore == nil or score < bestScore then
-    bestScore = score
-    bestIndex = index
-  end
+	  if bestScore == nil or score < bestScore then
+	    bestScore = score
+	    bestIndex = index
+	  end
 
-  argIndex = argIndex + 2
-end
+	  argIndex = argIndex + 2
+	end
 
-redis.call("INCR", KEYS[bestIndex])
-redis.call("EXPIRE", KEYS[bestIndex], ttl)
-return ARGV[3 + ((bestIndex - 1) * 2)]
-`,
+	local selectedInflightKeyIndex = ((bestIndex - 1) * 2) + 1
+	local selectedRecentKeyIndex = selectedInflightKeyIndex + 1
+	redis.call("INCR", KEYS[selectedInflightKeyIndex])
+	redis.call("EXPIRE", KEYS[selectedInflightKeyIndex], ttl)
+	redis.call("INCR", KEYS[selectedRecentKeyIndex])
+	redis.call("EXPIRE", KEYS[selectedRecentKeyIndex], recentTtl)
+	return ARGV[5 + ((bestIndex - 1) * 2)]
+	`,
     keys.length,
     ...keys,
     ...args,
