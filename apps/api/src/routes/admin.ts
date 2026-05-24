@@ -44,7 +44,9 @@ import {
 } from "../services/unified-pricing.js";
 import {
   deleteIpBanRule,
+  ipBanErrorUsageSource,
   ipBanModes,
+  ipBanNoticeUsageSource,
   listIpBanRules,
   saveIpBanRule,
 } from "../services/ip-ban-rules.js";
@@ -185,6 +187,42 @@ const ipBanRuleSchema = z.object({
   message: z.string().max(8000).optional().nullable(),
   reason: z.string().max(1000).optional().nullable(),
 });
+const adminRequestResultTypes = ["notice", "ip_ban", "error"] as const;
+const adminRequestsQuerySchema = z.object({
+  q: z.string().optional(),
+  userId: z.string().optional(),
+  model: z.string().optional(),
+  status: z.enum(["PENDING", "SUCCESS", "FAILED"]).optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
+  clientIp: z.string().optional(),
+  apiKey: z.string().optional(),
+  upstreamProvider: z.string().optional(),
+  upstreamKey: z.string().optional(),
+  endpoint: z.string().optional(),
+  httpStatus: z.string().optional(),
+  resultType: z.enum(adminRequestResultTypes).optional(),
+  minTokens: z.string().optional(),
+  maxTokens: z.string().optional(),
+  minChargedUsd: z.string().optional(),
+  maxChargedUsd: z.string().optional(),
+  minUpstreamCostUsd: z.string().optional(),
+  maxUpstreamCostUsd: z.string().optional(),
+  minGrossProfitUsd: z.string().optional(),
+  maxGrossProfitUsd: z.string().optional(),
+  minLatencyMs: z.string().optional(),
+  maxLatencyMs: z.string().optional(),
+  minFirstTokenLatencyMs: z.string().optional(),
+  maxFirstTokenLatencyMs: z.string().optional(),
+  cursor: z.string().optional(),
+  take: z.coerce.number().int().min(1).max(300).default(120),
+});
+type AdminRequestsQuery = z.infer<typeof adminRequestsQuerySchema>;
+type FiniteRange = {
+  min?: number;
+  max?: number;
+};
+const recoveryNoticeUsageSource = "gateway_recovery_notice";
 
 const adminApiKeySelect = {
   id: true,
@@ -204,6 +242,353 @@ const adminApiKeySelect = {
   lastUsedAt: true,
   createdAt: true,
 } satisfies Prisma.ApiKeySelect;
+
+function cleanAdminRequestFilter(value: string | undefined) {
+  return value?.trim() ?? "";
+}
+
+function badAdminRequestFilter(message: string) {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+function parseOptionalFiniteNumber(value: string | undefined, label: string) {
+  const text = cleanAdminRequestFilter(value);
+  if (!text) {
+    return undefined;
+  }
+
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric)) {
+    throw badAdminRequestFilter(`${label} must be a finite number`);
+  }
+
+  return numeric;
+}
+
+function parseFiniteRange(min: string | undefined, max: string | undefined, label: string): FiniteRange | null {
+  const range = {
+    min: parseOptionalFiniteNumber(min, `${label} min`),
+    max: parseOptionalFiniteNumber(max, `${label} max`),
+  };
+
+  if (range.min === undefined && range.max === undefined) {
+    return null;
+  }
+
+  if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+    throw badAdminRequestFilter(`${label} min cannot be greater than max`);
+  }
+
+  return range;
+}
+
+function intRangeFilter(range: FiniteRange): Prisma.IntFilter<"ApiRequest"> {
+  return {
+    ...(range.min !== undefined ? { gte: Math.ceil(range.min) } : {}),
+    ...(range.max !== undefined ? { lte: Math.floor(range.max) } : {}),
+  };
+}
+
+function decimalRangeFilter(range: FiniteRange): Prisma.DecimalFilter<"ApiRequest"> {
+  return {
+    ...(range.min !== undefined ? { gte: new Decimal(range.min).toFixed(8) } : {}),
+    ...(range.max !== undefined ? { lte: new Decimal(range.max).toFixed(8) } : {}),
+  };
+}
+
+function responseSourceFilter(...sources: string[]): Prisma.ApiRequestWhereInput {
+  return {
+    OR: sources.map((source) => ({
+      responseUsage: {
+        path: ["source"],
+        equals: source,
+      },
+    })),
+  };
+}
+
+function noticeResultFilter(): Prisma.ApiRequestWhereInput {
+  return {
+    AND: [
+      responseSourceFilter(recoveryNoticeUsageSource, ipBanNoticeUsageSource),
+      {
+        responseUsage: {
+          path: ["returnedToUser"],
+          equals: true,
+        },
+      },
+    ],
+  };
+}
+
+function ipBanResultFilter(): Prisma.ApiRequestWhereInput {
+  return {
+    OR: [
+      responseSourceFilter(ipBanNoticeUsageSource, ipBanErrorUsageSource),
+      {
+        errorMessage: {
+          contains: "IP banned",
+          mode: "insensitive",
+        },
+      },
+    ],
+  };
+}
+
+function ordinaryErrorResultFilter(): Prisma.ApiRequestWhereInput {
+  return {
+    status: "FAILED",
+    NOT: [noticeResultFilter(), ipBanResultFilter()],
+  };
+}
+
+async function findGrossProfitRequestIds(range: FiniteRange) {
+  const minClause = range.min !== undefined
+    ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") >= ${new Decimal(range.min).toFixed(8)}::numeric`
+    : Prisma.empty;
+  const maxClause = range.max !== undefined
+    ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") <= ${new Decimal(range.max).toFixed(8)}::numeric`
+    : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`
+      SELECT id
+      FROM "ApiRequest"
+      WHERE 1 = 1
+      ${minClause}
+      ${maxClause}
+    `,
+  );
+
+  return rows.map((row) => row.id);
+}
+
+async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
+  const andFilters: Prisma.ApiRequestWhereInput[] = [];
+  const q = cleanAdminRequestFilter(query.q);
+  const clientIp = cleanAdminRequestFilter(query.clientIp);
+  const apiKey = cleanAdminRequestFilter(query.apiKey);
+  const upstreamProvider = cleanAdminRequestFilter(query.upstreamProvider);
+  const upstreamKey = cleanAdminRequestFilter(query.upstreamKey);
+  const endpoint = cleanAdminRequestFilter(query.endpoint);
+  const httpStatus = parseOptionalFiniteNumber(query.httpStatus, "HTTP status");
+  const tokenRange = parseFiniteRange(query.minTokens, query.maxTokens, "total token range");
+  const chargedRange = parseFiniteRange(query.minChargedUsd, query.maxChargedUsd, "charged USD range");
+  const upstreamCostRange = parseFiniteRange(query.minUpstreamCostUsd, query.maxUpstreamCostUsd, "upstream cost USD range");
+  const grossProfitRange = parseFiniteRange(query.minGrossProfitUsd, query.maxGrossProfitUsd, "gross profit USD range");
+  const latencyRange = parseFiniteRange(query.minLatencyMs, query.maxLatencyMs, "latency ms range");
+  const firstTokenLatencyRange = parseFiniteRange(
+    query.minFirstTokenLatencyMs,
+    query.maxFirstTokenLatencyMs,
+    "first token latency ms range",
+  );
+
+  if (query.userId) {
+    andFilters.push({ userId: query.userId });
+  }
+
+  if (query.model) {
+    andFilters.push({
+      model: {
+        contains: query.model,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (query.status) {
+    andFilters.push({ status: query.status });
+  }
+
+  if (query.dateFrom || query.dateTo) {
+    andFilters.push({
+      createdAt: {
+        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+      },
+    });
+  }
+
+  if (q) {
+    andFilters.push({
+      OR: [
+        {
+          model: {
+            contains: q,
+            mode: "insensitive",
+          },
+        },
+        {
+          endpoint: {
+            contains: q,
+            mode: "insensitive",
+          },
+        },
+        {
+          clientIp: {
+            contains: q,
+            mode: "insensitive",
+          },
+        },
+        {
+          user: {
+            email: {
+              contains: q,
+              mode: "insensitive",
+            },
+          },
+        },
+      ],
+    });
+  }
+
+  if (clientIp) {
+    andFilters.push({
+      clientIp: {
+        contains: clientIp,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (apiKey) {
+    andFilters.push({
+      apiKey: {
+        is: {
+          OR: [
+            { name: { contains: apiKey, mode: "insensitive" } },
+            { keyPrefix: { contains: apiKey, mode: "insensitive" } },
+          ],
+        },
+      },
+    });
+  }
+
+  if (upstreamProvider) {
+    andFilters.push({
+      upstreamProvider: {
+        contains: upstreamProvider,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (upstreamKey) {
+    andFilters.push({
+      upstreamProviderKey: {
+        is: {
+          OR: [
+            { name: { contains: upstreamKey, mode: "insensitive" } },
+            { keyPrefix: { contains: upstreamKey, mode: "insensitive" } },
+          ],
+        },
+      },
+    });
+  }
+
+  if (endpoint) {
+    andFilters.push({
+      endpoint: {
+        contains: endpoint,
+        mode: "insensitive",
+      },
+    });
+  }
+
+  if (httpStatus !== undefined) {
+    if (!Number.isInteger(httpStatus) || httpStatus < 100 || httpStatus > 599) {
+      throw badAdminRequestFilter("HTTP status must be an integer between 100 and 599");
+    }
+    andFilters.push({ httpStatus });
+  }
+
+  if (query.resultType === "notice") {
+    andFilters.push(noticeResultFilter());
+  } else if (query.resultType === "ip_ban") {
+    andFilters.push(ipBanResultFilter());
+  } else if (query.resultType === "error") {
+    andFilters.push(ordinaryErrorResultFilter());
+  }
+
+  if (tokenRange) {
+    andFilters.push({ totalTokens: intRangeFilter(tokenRange) });
+  }
+
+  if (chargedRange) {
+    andFilters.push({ chargedAmountUsd: decimalRangeFilter(chargedRange) });
+  }
+
+  if (upstreamCostRange) {
+    andFilters.push({ upstreamCostUsd: decimalRangeFilter(upstreamCostRange) });
+  }
+
+  if (latencyRange) {
+    andFilters.push({ latencyMs: intRangeFilter(latencyRange) });
+  }
+
+  if (firstTokenLatencyRange) {
+    andFilters.push({ firstTokenLatencyMs: intRangeFilter(firstTokenLatencyRange) });
+  }
+
+  if (grossProfitRange) {
+    const matchingIds = await findGrossProfitRequestIds(grossProfitRange);
+    andFilters.push(matchingIds.length > 0 ? { id: { in: matchingIds } } : { id: "__no_matching_request__" });
+  }
+
+  return andFilters.length > 0 ? { AND: andFilters } : undefined;
+}
+
+async function getAdminRequestsSummary(where: Prisma.ApiRequestWhereInput | undefined) {
+  const [aggregate, statusGroups] = await Promise.all([
+    prisma.apiRequest.aggregate({
+      where,
+      _count: { _all: true },
+      _sum: {
+        inputTokens: true,
+        cachedInputTokens: true,
+        outputTokens: true,
+        totalTokens: true,
+        chargedAmountUsd: true,
+        upstreamCostUsd: true,
+      },
+      _avg: {
+        latencyMs: true,
+        firstTokenLatencyMs: true,
+      },
+    }),
+    prisma.apiRequest.groupBy({
+      by: ["status"],
+      where,
+      _count: { _all: true },
+    }),
+  ]);
+  const countByStatus = Object.fromEntries(
+    statusGroups.map((group) => [group.status, group._count._all]),
+  );
+  const totalCount = aggregate._count._all;
+  const successCount = countByStatus.SUCCESS ?? 0;
+  const failedCount = countByStatus.FAILED ?? 0;
+  const pendingCount = countByStatus.PENDING ?? 0;
+  const chargedAmountUsd = new Decimal(aggregate._sum.chargedAmountUsd?.toString() ?? "0");
+  const upstreamCostUsd = new Decimal(aggregate._sum.upstreamCostUsd?.toString() ?? "0");
+
+  return {
+    totalCount,
+    successCount,
+    failedCount,
+    pendingCount,
+    failureRate: totalCount > 0 ? (failedCount / totalCount) * 100 : 0,
+    inputTokens: aggregate._sum.inputTokens ?? 0,
+    cachedInputTokens: aggregate._sum.cachedInputTokens ?? 0,
+    outputTokens: aggregate._sum.outputTokens ?? 0,
+    totalTokens: aggregate._sum.totalTokens ?? 0,
+    chargedAmountUsd: chargedAmountUsd.toFixed(8),
+    upstreamCostUsd: upstreamCostUsd.toFixed(8),
+    grossProfitUsd: chargedAmountUsd.minus(upstreamCostUsd).toFixed(8),
+    avgLatencyMs: aggregate._avg.latencyMs,
+    avgFirstTokenLatencyMs: aggregate._avg.firstTokenLatencyMs,
+  };
+}
 
 export async function adminRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
@@ -863,132 +1248,67 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/requests", async (request) => {
-    const query = z
-      .object({
-        q: z.string().optional(),
-        userId: z.string().optional(),
-        model: z.string().optional(),
-        status: z.enum(["PENDING", "SUCCESS", "FAILED"]).optional(),
-        dateFrom: z.string().datetime().optional(),
-        dateTo: z.string().datetime().optional(),
-        cursor: z.string().optional(),
-        take: z.coerce.number().int().min(1).max(300).default(120),
-      })
-      .parse(request.query);
-    const andFilters = [];
+    const query = adminRequestsQuerySchema.parse(request.query);
+    const where = await buildAdminRequestsWhere(query);
 
-    if (query.userId) {
-      andFilters.push({ userId: query.userId });
-    }
-
-    if (query.model) {
-      andFilters.push({
-        model: {
-          contains: query.model,
-          mode: "insensitive" as const,
-        },
-      });
-    }
-
-    if (query.status) {
-      andFilters.push({ status: query.status });
-    }
-
-    if (query.dateFrom || query.dateTo) {
-      andFilters.push({
-        createdAt: {
-          ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-          ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-        },
-      });
-    }
-
-    if (query.q) {
-      andFilters.push({
-        OR: [
-          {
-            model: {
-              contains: query.q,
-              mode: "insensitive" as const,
+    const [rows, summary, ipBanRules] = await Promise.all([
+      prisma.apiRequest.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: query.take + 1,
+        ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        select: {
+          id: true,
+          upstreamProvider: true,
+          upstreamProviderKey: {
+            select: {
+              id: true,
+              name: true,
+              keyPrefix: true,
             },
           },
-          {
-            endpoint: {
-              contains: query.q,
-              mode: "insensitive" as const,
+          clientIp: true,
+          apiKey: {
+            select: {
+              id: true,
+              name: true,
+              keyPrefix: true,
             },
           },
-          {
-            clientIp: {
-              contains: query.q,
-              mode: "insensitive" as const,
+          model: true,
+          endpoint: true,
+          method: true,
+          status: true,
+          httpStatus: true,
+          inputTokens: true,
+          cachedInputTokens: true,
+          outputTokens: true,
+          totalTokens: true,
+          chargedAmountUsd: true,
+          upstreamCostUsd: true,
+          latencyMs: true,
+          firstTokenLatencyMs: true,
+          errorMessage: true,
+          responseUsage: true,
+          createdAt: true,
+          user: {
+            select: {
+              email: true,
             },
           },
-          {
-            user: {
-              email: {
-                contains: query.q,
-                mode: "insensitive" as const,
-              },
-            },
-          },
-        ],
-      });
-    }
-
-    const rows = await prisma.apiRequest.findMany({
-      where: andFilters.length > 0 ? { AND: andFilters } : undefined,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: query.take + 1,
-      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-      select: {
-        id: true,
-        upstreamProvider: true,
-        upstreamProviderKey: {
-          select: {
-            id: true,
-            name: true,
-            keyPrefix: true,
-          },
         },
-        clientIp: true,
-        apiKey: {
-          select: {
-            id: true,
-            name: true,
-            keyPrefix: true,
-          },
-        },
-        model: true,
-        endpoint: true,
-        method: true,
-        status: true,
-        httpStatus: true,
-        inputTokens: true,
-        cachedInputTokens: true,
-        outputTokens: true,
-        totalTokens: true,
-        chargedAmountUsd: true,
-        upstreamCostUsd: true,
-        latencyMs: true,
-        firstTokenLatencyMs: true,
-        errorMessage: true,
-        responseUsage: true,
-        createdAt: true,
-        user: {
-          select: {
-            email: true,
-          },
-        },
-      },
-    });
+      }),
+      getAdminRequestsSummary(where),
+      listIpBanRules(),
+    ]);
     const hasMore = rows.length > query.take;
     const requests = hasMore ? rows.slice(0, query.take) : rows;
 
     return {
       requests,
       hasMore,
-      ipBanRules: await listIpBanRules(),
+      summary,
+      ipBanRules,
       nextCursor: hasMore ? requests.at(-1)?.id ?? null : null,
     };
   });

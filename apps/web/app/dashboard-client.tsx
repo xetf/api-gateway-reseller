@@ -127,8 +127,26 @@ type Summary = {
   requests: ApiRequest[];
 };
 
+type AdminRequestsSummary = {
+  totalCount: number;
+  successCount: number;
+  failedCount: number;
+  pendingCount: number;
+  failureRate: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  chargedAmountUsd: string;
+  upstreamCostUsd: string;
+  grossProfitUsd: string;
+  avgLatencyMs: number | null;
+  avgFirstTokenLatencyMs: number | null;
+};
+
 type AdminRequestsPage = {
   requests: ApiRequest[];
+  summary: AdminRequestsSummary;
   ipBanRules?: IpBanRule[];
   hasMore: boolean;
   nextCursor?: string | null;
@@ -456,7 +474,93 @@ type RequestFilters = {
   status: "" | "PENDING" | "SUCCESS" | "FAILED";
   dateFrom: string;
   dateTo: string;
+  clientIp: string;
+  apiKey: string;
+  upstreamProvider: string;
+  upstreamKey: string;
+  endpoint: string;
+  httpStatus: string;
+  resultType: "" | "notice" | "ip_ban" | "error";
+  minTokens: string;
+  maxTokens: string;
+  minChargedUsd: string;
+  maxChargedUsd: string;
+  minUpstreamCostUsd: string;
+  maxUpstreamCostUsd: string;
+  minGrossProfitUsd: string;
+  maxGrossProfitUsd: string;
+  minLatencyMs: string;
+  maxLatencyMs: string;
+  minFirstTokenLatencyMs: string;
+  maxFirstTokenLatencyMs: string;
 };
+
+const emptyRequestFilters: RequestFilters = {
+  q: "",
+  userId: "",
+  model: "",
+  status: "",
+  dateFrom: "",
+  dateTo: "",
+  clientIp: "",
+  apiKey: "",
+  upstreamProvider: "",
+  upstreamKey: "",
+  endpoint: "",
+  httpStatus: "",
+  resultType: "",
+  minTokens: "",
+  maxTokens: "",
+  minChargedUsd: "",
+  maxChargedUsd: "",
+  minUpstreamCostUsd: "",
+  maxUpstreamCostUsd: "",
+  minGrossProfitUsd: "",
+  maxGrossProfitUsd: "",
+  minLatencyMs: "",
+  maxLatencyMs: "",
+  minFirstTokenLatencyMs: "",
+  maxFirstTokenLatencyMs: "",
+};
+
+const emptyAdminRequestsSummary: AdminRequestsSummary = {
+  totalCount: 0,
+  successCount: 0,
+  failedCount: 0,
+  pendingCount: 0,
+  failureRate: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  chargedAmountUsd: "0",
+  upstreamCostUsd: "0",
+  grossProfitUsd: "0",
+  avgLatencyMs: null,
+  avgFirstTokenLatencyMs: null,
+};
+
+const advancedRequestFilterKeys = [
+  "clientIp",
+  "apiKey",
+  "upstreamProvider",
+  "upstreamKey",
+  "endpoint",
+  "httpStatus",
+  "resultType",
+  "minTokens",
+  "maxTokens",
+  "minChargedUsd",
+  "maxChargedUsd",
+  "minUpstreamCostUsd",
+  "maxUpstreamCostUsd",
+  "minGrossProfitUsd",
+  "maxGrossProfitUsd",
+  "minLatencyMs",
+  "maxLatencyMs",
+  "minFirstTokenLatencyMs",
+  "maxFirstTokenLatencyMs",
+] as const satisfies readonly (keyof RequestFilters)[];
 
 const frontNav = [
   { id: "overview", label: "前台总览", icon: BarChart3 },
@@ -584,6 +688,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminRequests, setAdminRequests] = useState<ApiRequest[]>([]);
+  const [adminRequestsSummary, setAdminRequestsSummary] = useState<AdminRequestsSummary>(emptyAdminRequestsSummary);
   const [adminRequestsNextCursor, setAdminRequestsNextCursor] = useState<string | null>(null);
   const [adminRequestsHasMore, setAdminRequestsHasMore] = useState(false);
   const [adminRequestsLoadingMore, setAdminRequestsLoadingMore] = useState(false);
@@ -597,14 +702,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
-  const [requestFilters, setRequestFilters] = useState<RequestFilters>({
-    q: "",
-    userId: "",
-    model: "",
-    status: "",
-    dateFrom: "",
-    dateTo: "",
-  });
+  const [requestFilters, setRequestFilters] = useState<RequestFilters>(emptyRequestFilters);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const loadingModelPoolsRef = useRef(false);
@@ -668,6 +766,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setRedeemCodes([]);
       setAuthSettings(null);
       setAdminRequests([]);
+      setAdminRequestsSummary(emptyAdminRequestsSummary);
       setAdminRequestsNextCursor(null);
       setAdminRequestsHasMore(false);
       setAdminRequestsLoadingMore(false);
@@ -790,6 +889,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         { token: authToken },
       );
       setAdminRequests((current) => (append ? mergeRequests(current, result.requests) : result.requests));
+      setAdminRequestsSummary(result.summary ?? emptyAdminRequestsSummary);
       if (result.ipBanRules) {
         setIpBanRules(result.ipBanRules);
       }
@@ -1026,17 +1126,18 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           ) : null}
           {mode === "admin" && activeTab === "admin-requests" ? (
             <AdminRequests
-	              requests={adminRequests}
-	              ipBanRules={ipBanRules}
-	              users={adminUsers}
+              requests={adminRequests}
+              summary={adminRequestsSummary}
+              ipBanRules={ipBanRules}
+              users={adminUsers}
               filters={requestFilters}
               onFiltersChange={setRequestFilters}
               hasMore={adminRequestsHasMore}
               loadingMore={adminRequestsLoadingMore}
-	              onLoadMore={loadMoreAdminRequests}
-	              onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
-	              onRulesChanged={setIpBanRules}
-	            />
+              onLoadMore={loadMoreAdminRequests}
+              onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
+              onRulesChanged={setIpBanRules}
+            />
           ) : null}
         </div>
       </section>
@@ -2510,8 +2611,95 @@ function formatJsonValue(value: unknown) {
   }
 }
 
+function countAdvancedRequestFilters(filters: RequestFilters) {
+  return advancedRequestFilterKeys.filter((key) => filters[key].trim()).length;
+}
+
+function RequestSummaryCards({ summary }: { summary: AdminRequestsSummary }) {
+  return (
+    <div className="request-summary-grid" aria-live="polite">
+      <div className="request-summary-tile">
+        <span>匹配记录</span>
+        <strong>{formatNumber(summary.totalCount)}</strong>
+        <small>
+          成功 {formatNumber(summary.successCount)} · 失败 {formatNumber(summary.failedCount)} · 待处理 {formatNumber(summary.pendingCount)}
+        </small>
+      </div>
+      <div className="request-summary-tile">
+        <span>失败率</span>
+        <strong>{formatPercent(summary.failureRate)}</strong>
+        <small>按全部匹配记录计算</small>
+      </div>
+      <div className="request-summary-tile">
+        <span>Token</span>
+        <strong>{formatNumber(summary.totalTokens)}</strong>
+        <small>
+          输入 {formatNumber(summary.inputTokens)} · 缓存 {formatNumber(summary.cachedInputTokens)} · 输出 {formatNumber(summary.outputTokens)}
+        </small>
+      </div>
+      <div className="request-summary-tile">
+        <span>费用与毛利</span>
+        <strong>${money(summary.grossProfitUsd)}</strong>
+        <small>
+          扣费 ${money(summary.chargedAmountUsd)} · 成本 ${money(summary.upstreamCostUsd)}
+        </small>
+      </div>
+      <div className="request-summary-tile">
+        <span>平均耗时</span>
+        <strong>{seconds(summary.avgLatencyMs)}</strong>
+        <small>首 token {seconds(summary.avgFirstTokenLatencyMs)}</small>
+      </div>
+    </div>
+  );
+}
+
+function RangeFilter({
+  label,
+  minValue,
+  maxValue,
+  onMinChange,
+  onMaxChange,
+  step = "any",
+}: {
+  label: string;
+  minValue: string;
+  maxValue: string;
+  onMinChange: (value: string) => void;
+  onMaxChange: (value: string) => void;
+  step?: string;
+}) {
+  return (
+    <div className="range-field">
+      <span>{label}</span>
+      <div className="range-inputs">
+        <input
+          aria-label={`${label} 最小值`}
+          className="input"
+          inputMode="decimal"
+          onChange={(event) => onMinChange(event.target.value)}
+          placeholder="最小"
+          step={step}
+          type="number"
+          value={minValue}
+        />
+        <input
+          aria-label={`${label} 最大值`}
+          className="input"
+          inputMode="decimal"
+          onChange={(event) => onMaxChange(event.target.value)}
+          placeholder="最大"
+          step={step}
+          type="number"
+          value={maxValue}
+        />
+      </div>
+    </div>
+  );
+}
+
 function AdminRequests({
   requests,
+  summary,
   ipBanRules,
   users,
   filters,
@@ -2523,6 +2711,7 @@ function AdminRequests({
   onRulesChanged,
 }: {
   requests: ApiRequest[];
+  summary: AdminRequestsSummary;
   ipBanRules: IpBanRule[];
   users: AdminUser[];
   filters: RequestFilters;
@@ -2540,9 +2729,17 @@ function AdminRequests({
   const [banBusyIp, setBanBusyIp] = useState<string | null>(null);
   const [banError, setBanError] = useState<string | null>(null);
   const [banModalOpen, setBanModalOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const activeAdvancedCount = countAdvancedRequestFilters(filters);
 
   function update<K extends keyof RequestFilters>(key: K, value: RequestFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
+  }
+
+  function resetFilters() {
+    const nextFilters = { ...emptyRequestFilters };
+    onFiltersChange(nextFilters);
+    onSearch(nextFilters);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -2620,11 +2817,11 @@ function AdminRequests({
 
   return (
     <div className="grid admin-page admin-requests-page">
-      <section className="card">
+      <section className="card admin-request-filter-card">
         <div className="section-head">
           <div>
             <h2 className="section-title">账单与调用筛选</h2>
-            <p className="section-subtitle">按用户、模型、状态和时间快速查账。</p>
+            <p className="section-subtitle">统计按全部匹配记录计算，列表继续分页加载。</p>
           </div>
           <div className="button-row">
             <button className="button secondary" onClick={() => openBanModal()} type="button">
@@ -2633,89 +2830,214 @@ function AdminRequests({
               <span className="button-count">{ipBanRules.length}</span>
             </button>
             <button
+              aria-expanded={advancedOpen}
+              className={advancedOpen ? "button secondary active" : "button secondary"}
+              onClick={() => setAdvancedOpen((open) => !open)}
+              type="button"
+            >
+              <SlidersHorizontal size={17} />
+              高级筛选
+              {activeAdvancedCount > 0 ? <span className="button-count">{activeAdvancedCount}</span> : null}
+            </button>
+            <button
               className="button secondary"
-              onClick={() => {
-                const nextFilters: RequestFilters = {
-                  q: "",
-                  userId: "",
-                  model: "",
-                  status: "",
-                  dateFrom: "",
-                  dateTo: "",
-                };
-                onFiltersChange(nextFilters);
-                onSearch(nextFilters);
-              }}
+              onClick={resetFilters}
               type="button"
             >
               重置
             </button>
           </div>
         </div>
-        <form className="filter-bar" onSubmit={submit}>
-          <label className="field">
-            <span>关键词</span>
-            <input
-              className="input"
-              value={filters.q}
-              onChange={(event) => update("q", event.target.value)}
-              placeholder="用户邮箱 / 模型 / 接口"
-            />
-          </label>
-          <label className="field">
-            <span>用户</span>
-            <select className="input" value={filters.userId} onChange={(event) => update("userId", event.target.value)}>
-              <option value="">全部用户</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>模型</span>
-            <input
-              className="input"
-              value={filters.model}
-              onChange={(event) => update("model", event.target.value)}
-              placeholder="gpt-5.5"
-            />
-          </label>
-          <label className="field">
-            <span>状态</span>
-            <select
-              className="input"
-              value={filters.status}
-              onChange={(event) => update("status", event.target.value as RequestFilters["status"])}
-            >
-              <option value="">全部状态</option>
-              <option value="SUCCESS">SUCCESS</option>
-              <option value="FAILED">FAILED</option>
-              <option value="PENDING">PENDING</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>开始</span>
-            <input
-              className="input"
-              value={filters.dateFrom}
-              onChange={(event) => update("dateFrom", event.target.value)}
-              type="datetime-local"
-            />
-          </label>
-          <label className="field">
-            <span>结束</span>
-            <input
-              className="input"
-              value={filters.dateTo}
-              onChange={(event) => update("dateTo", event.target.value)}
-              type="datetime-local"
-            />
-          </label>
-          <button className="button" type="submit">
-            查询
-          </button>
+        <RequestSummaryCards summary={summary} />
+        <form className="admin-request-filter-form" onSubmit={submit}>
+          <div className="filter-bar request-common-filter-bar">
+            <label className="field">
+              <span>关键词</span>
+              <input
+                className="input"
+                value={filters.q}
+                onChange={(event) => update("q", event.target.value)}
+                placeholder="用户邮箱 / 模型 / 接口"
+              />
+            </label>
+            <label className="field">
+              <span>用户</span>
+              <select className="input" value={filters.userId} onChange={(event) => update("userId", event.target.value)}>
+                <option value="">全部用户</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>模型</span>
+              <input
+                className="input"
+                value={filters.model}
+                onChange={(event) => update("model", event.target.value)}
+                placeholder="gpt-5.5"
+              />
+            </label>
+            <label className="field">
+              <span>状态</span>
+              <select
+                className="input"
+                value={filters.status}
+                onChange={(event) => update("status", event.target.value as RequestFilters["status"])}
+              >
+                <option value="">全部状态</option>
+                <option value="SUCCESS">SUCCESS</option>
+                <option value="FAILED">FAILED</option>
+                <option value="PENDING">PENDING</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>开始</span>
+              <input
+                className="input"
+                value={filters.dateFrom}
+                onChange={(event) => update("dateFrom", event.target.value)}
+                type="datetime-local"
+              />
+            </label>
+            <label className="field">
+              <span>结束</span>
+              <input
+                className="input"
+                value={filters.dateTo}
+                onChange={(event) => update("dateTo", event.target.value)}
+                type="datetime-local"
+              />
+            </label>
+            <button className="button" type="submit">
+              查询
+            </button>
+          </div>
+          {advancedOpen ? (
+            <div className="advanced-filter-panel">
+              <div className="advanced-filter-grid">
+                <label className="field">
+                  <span>IP</span>
+                  <input
+                    className="input"
+                    value={filters.clientIp}
+                    onChange={(event) => update("clientIp", event.target.value)}
+                    placeholder="203.0.113.10"
+                  />
+                </label>
+                <label className="field">
+                  <span>API Key</span>
+                  <input
+                    className="input"
+                    value={filters.apiKey}
+                    onChange={(event) => update("apiKey", event.target.value)}
+                    placeholder="名称 / 前缀"
+                  />
+                </label>
+                <label className="field">
+                  <span>上游 Provider</span>
+                  <input
+                    className="input"
+                    value={filters.upstreamProvider}
+                    onChange={(event) => update("upstreamProvider", event.target.value)}
+                    placeholder="openai"
+                  />
+                </label>
+                <label className="field">
+                  <span>上游 Key</span>
+                  <input
+                    className="input"
+                    value={filters.upstreamKey}
+                    onChange={(event) => update("upstreamKey", event.target.value)}
+                    placeholder="名称 / 前缀"
+                  />
+                </label>
+                <label className="field">
+                  <span>接口 endpoint</span>
+                  <input
+                    className="input"
+                    value={filters.endpoint}
+                    onChange={(event) => update("endpoint", event.target.value)}
+                    placeholder="/v1/chat/completions"
+                  />
+                </label>
+                <label className="field">
+                  <span>HTTP 状态</span>
+                  <input
+                    className="input"
+                    inputMode="numeric"
+                    max={599}
+                    min={100}
+                    onChange={(event) => update("httpStatus", event.target.value)}
+                    placeholder="403"
+                    step={1}
+                    type="number"
+                    value={filters.httpStatus}
+                  />
+                </label>
+                <label className="field">
+                  <span>返回类型</span>
+                  <select
+                    className="input"
+                    value={filters.resultType}
+                    onChange={(event) => update("resultType", event.target.value as RequestFilters["resultType"])}
+                  >
+                    <option value="">全部</option>
+                    <option value="notice">已公告提示</option>
+                    <option value="ip_ban">IP 封禁</option>
+                    <option value="error">普通失败</option>
+                  </select>
+                </label>
+                <RangeFilter
+                  label="总 token"
+                  minValue={filters.minTokens}
+                  maxValue={filters.maxTokens}
+                  onMinChange={(value) => update("minTokens", value)}
+                  onMaxChange={(value) => update("maxTokens", value)}
+                  step="1"
+                />
+                <RangeFilter
+                  label="扣费 USD"
+                  minValue={filters.minChargedUsd}
+                  maxValue={filters.maxChargedUsd}
+                  onMinChange={(value) => update("minChargedUsd", value)}
+                  onMaxChange={(value) => update("maxChargedUsd", value)}
+                />
+                <RangeFilter
+                  label="上游成本 USD"
+                  minValue={filters.minUpstreamCostUsd}
+                  maxValue={filters.maxUpstreamCostUsd}
+                  onMinChange={(value) => update("minUpstreamCostUsd", value)}
+                  onMaxChange={(value) => update("maxUpstreamCostUsd", value)}
+                />
+                <RangeFilter
+                  label="毛利 USD"
+                  minValue={filters.minGrossProfitUsd}
+                  maxValue={filters.maxGrossProfitUsd}
+                  onMinChange={(value) => update("minGrossProfitUsd", value)}
+                  onMaxChange={(value) => update("maxGrossProfitUsd", value)}
+                />
+                <RangeFilter
+                  label="总耗时 ms"
+                  minValue={filters.minLatencyMs}
+                  maxValue={filters.maxLatencyMs}
+                  onMinChange={(value) => update("minLatencyMs", value)}
+                  onMaxChange={(value) => update("maxLatencyMs", value)}
+                  step="1"
+                />
+                <RangeFilter
+                  label="首 token ms"
+                  minValue={filters.minFirstTokenLatencyMs}
+                  maxValue={filters.maxFirstTokenLatencyMs}
+                  onMinChange={(value) => update("minFirstTokenLatencyMs", value)}
+                  onMaxChange={(value) => update("maxFirstTokenLatencyMs", value)}
+                  step="1"
+                />
+              </div>
+            </div>
+          ) : null}
         </form>
       </section>
       <Requests
@@ -7529,6 +7851,12 @@ function toQueryString(filters: RequestFilters, extras: Record<string, string | 
   }
   if (filters.dateTo) {
     params.set("dateTo", new Date(filters.dateTo).toISOString());
+  }
+  for (const key of advancedRequestFilterKeys) {
+    const value = filters[key].trim();
+    if (value) {
+      params.set(key, value);
+    }
   }
   for (const [key, value] of Object.entries(extras)) {
     if (value !== undefined && value !== "") {
