@@ -84,6 +84,11 @@ await app.register(jwt, {
 });
 
 app.setErrorHandler((error, _request, reply) => {
+  if (reply.sent || reply.raw.headersSent || reply.raw.destroyed) {
+    app.log.error(error);
+    return;
+  }
+
   if (error instanceof ZodError) {
     return reply.status(400).send({
       message: "Validation error",

@@ -90,6 +90,8 @@ const proxyRoutePatterns = [
 ];
 const streamFirstTokenTimeoutMs = 60_000;
 const streamFirstTokenTimeoutMessage = "Stream first token timeout after 60 seconds";
+const clientStreamClosedStatusCode = 499;
+const clientStreamClosedMessage = "Client closed the stream before the gateway finished sending the response";
 const missingUsageMessage = "Upstream response did not include billable token usage";
 const staleResponsesContextNotice =
   "这个会话的上下文已经失效，不能继续接着上一轮回答。请新建对话，或清空当前会话上下文后重试。";
@@ -1577,6 +1579,7 @@ async function proxyStream(params: {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const safeController = createSafeStreamController(controller, reply);
       const reader = upstreamResponse.body?.getReader();
       if (!reader) {
         const error = new Error("Stream body missing");
@@ -1599,7 +1602,7 @@ async function proxyStream(params: {
           retryableFailure: true,
           logger,
         });
-        controller.error(error);
+        safeController.error(error);
         return;
       }
       let firstTokenTimedOut = false;
@@ -1622,14 +1625,18 @@ async function proxyStream(params: {
 
         hasForwardedStream = true;
         for (const chunk of bufferedStreamChunks) {
-          controller.enqueue(encoder.encode(chunk));
+          if (!safeController.enqueue(encoder.encode(chunk))) {
+            throw createClientStreamClosedError();
+          }
         }
         bufferedStreamChunks.length = 0;
       };
       const forwardStreamText = (text: string) => {
         if (hasForwardedStream || firstTokenLatencyMs !== null) {
           flushBufferedStreamChunks();
-          controller.enqueue(encoder.encode(text));
+          if (!safeController.enqueue(encoder.encode(text))) {
+            throw createClientStreamClosedError();
+          }
           return;
         }
 
@@ -1721,6 +1728,20 @@ async function proxyStream(params: {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
+        if (isClientStreamClosedError(error)) {
+          await markRequestFailed(
+            { id: apiRequestId },
+            clientStreamClosedMessage,
+            clientStreamClosedStatusCode,
+            Math.round(performance.now() - startedAt),
+          );
+          logger?.info?.(
+            { apiRequestId, model, channelId },
+            "Client stream closed before gateway completed response",
+          );
+          return;
+        }
+
         const recoveryNotice = hasForwardedStream
           ? null
           : getGatewayRecoveryNotice(rawStreamText) ?? getGatewayRecoveryNotice(error);
@@ -1732,7 +1753,7 @@ async function proxyStream(params: {
         );
         if (recoveryNotice) {
           await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "stream_recovery_notice");
-          controller.enqueue(encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)));
+          safeController.enqueue(encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)));
           return;
         }
         await recordStickyModelPoolResult({
@@ -1753,11 +1774,11 @@ async function proxyStream(params: {
           retryableFailure: isRetryableProxyError(error),
           logger,
         });
-        controller.error(error);
+        safeController.error(error);
         return;
       } finally {
         clearTimeout(firstTokenTimeout);
-        safeCloseStreamController(controller);
+        safeController.close();
       }
     },
   });
@@ -1781,11 +1802,12 @@ async function proxyPassthroughStream(params: {
   let firstTokenLatencyMs: number | null = null;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const safeController = createSafeStreamController(controller, reply);
       const reader = upstreamResponse.body?.getReader();
       if (!reader) {
         const error = new Error("Stream body missing");
         await markRequestFailed({ id: apiRequestId }, error.message, 502, Math.round(performance.now() - startedAt));
-        controller.error(error);
+        safeController.error(error);
         return;
       }
       let firstTokenTimedOut = false;
@@ -1809,7 +1831,9 @@ async function proxyPassthroughStream(params: {
               firstTokenLatencyMs = Math.round(performance.now() - startedAt);
               clearTimeout(firstTokenTimeout);
             }
-            controller.enqueue(value);
+            if (!safeController.enqueue(value)) {
+              throw createClientStreamClosedError();
+            }
           }
         }
 
@@ -1827,17 +1851,20 @@ async function proxyPassthroughStream(params: {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stream failed";
+        const clientStreamClosed = isClientStreamClosedError(error);
         await markRequestFailed(
           { id: apiRequestId },
-          message,
-          isFirstTokenTimeoutError(error) ? 504 : 502,
+          clientStreamClosed ? clientStreamClosedMessage : message,
+          clientStreamClosed ? clientStreamClosedStatusCode : isFirstTokenTimeoutError(error) ? 504 : 502,
           Math.round(performance.now() - startedAt),
         );
-        controller.error(error);
+        if (!clientStreamClosed) {
+          safeController.error(error);
+        }
         return;
       } finally {
         clearTimeout(firstTokenTimeout);
-        safeCloseStreamController(controller);
+        safeController.close();
       }
     },
   });
@@ -1851,18 +1878,109 @@ async function proxyPassthroughStream(params: {
   return reply.send(Readable.fromWeb(stream as unknown as import("node:stream/web").ReadableStream));
 }
 
-function safeCloseStreamController(controller: ReadableStreamDefaultController<Uint8Array>) {
-  try {
-    controller.close();
-  } catch (error) {
-    if (!isClosedControllerError(error)) {
-      throw error;
-    }
-  }
+function createSafeStreamController(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  reply: FastifyReply,
+) {
+  let closed = false;
+
+  const isReplyClosed = () => reply.raw.destroyed || reply.raw.writableEnded;
+
+  return {
+    enqueue(value: Uint8Array) {
+      if (closed || isReplyClosed()) {
+        closed = true;
+        return false;
+      }
+
+      try {
+        controller.enqueue(value);
+        return true;
+      } catch (error) {
+        if (isClosedControllerError(error)) {
+          closed = true;
+          return false;
+        }
+
+        throw error;
+      }
+    },
+    error(error: unknown) {
+      if (closed || isReplyClosed()) {
+        closed = true;
+        return;
+      }
+
+      try {
+        controller.error(error);
+      } catch (controllerError) {
+        if (!isClosedControllerError(controllerError)) {
+          throw controllerError;
+        }
+      } finally {
+        closed = true;
+      }
+    },
+    close() {
+      if (closed || isReplyClosed()) {
+        closed = true;
+        return;
+      }
+
+      try {
+        controller.close();
+      } catch (error) {
+        if (!isClosedControllerError(error)) {
+          throw error;
+        }
+      } finally {
+        closed = true;
+      }
+    },
+  };
 }
 
 function isClosedControllerError(error: unknown) {
-  return error instanceof TypeError && error.message.includes("Controller is already closed");
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("controller is already closed") ||
+    (message.includes("invalid state") && message.includes("closed"))
+  );
+}
+
+function createClientStreamClosedError() {
+  const error = new Error(clientStreamClosedMessage);
+  error.name = "ClientStreamClosedError";
+  return error;
+}
+
+function isClientStreamClosedError(error: unknown) {
+  if (error instanceof Error && error.name === "ClientStreamClosedError") {
+    return true;
+  }
+
+  if (isClosedControllerError(error)) {
+    return true;
+  }
+
+  if (getErrorCode(error) === "ERR_STREAM_PREMATURE_CLOSE") {
+    return true;
+  }
+
+  return error instanceof Error && error.message === "Premature close";
+}
+
+function getErrorCode(error: unknown) {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return null;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
 }
 
 function startFirstTokenTimeout(startedAt: number, onTimeout: () => void) {
