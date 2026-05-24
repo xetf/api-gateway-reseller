@@ -894,6 +894,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   }
 
   const currentPage = pageMeta[activeTab];
+  const fixedWorkspace = mode === "admin" && activeTab === "admin-requests";
 
   return (
     <main className="shell">
@@ -932,7 +933,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           )}
         </nav>
       </aside>
-      <section className="main">
+      <section className={fixedWorkspace ? "main main-fixed-page" : "main"}>
         <div className="topbar">
           <div className="page-heading">
             <span className="eyebrow">{currentPage.eyebrow}</span>
@@ -957,7 +958,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           </div>
         </div>
 
-        <div className="workspace">
+        <div className={fixedWorkspace ? "workspace workspace-fixed-page" : "workspace"}>
           {error ? <div className="notice">{error}</div> : null}
           {loading ? <p className="muted">加载中...</p> : null}
 
@@ -1988,7 +1989,6 @@ function Requests({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
-  onBanIp,
 }: {
   requests: ApiRequest[];
   compact?: boolean;
@@ -1997,7 +1997,6 @@ function Requests({
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
-  onBanIp?: (ip: string) => void;
 }) {
   const [selectedRequest, setSelectedRequest] = useState<ApiRequestDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -2085,7 +2084,6 @@ function Requests({
                   <IpCell
                     ip={item.clientIp}
                     banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
-                    onBan={showCost && onBanIp ? onBanIp : undefined}
                   />
                 </td>
 	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
@@ -2151,7 +2149,6 @@ function Requests({
 		              <IpCell
 		                ip={item.clientIp}
 		                banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
-		                onBan={showCost && onBanIp ? onBanIp : undefined}
 		              />
 		            </MobileField>
 	            <MobileField label="输入">{formatNumber(item.inputTokens)}</MobileField>
@@ -2210,11 +2207,9 @@ function Requests({
 function IpCell({
   ip,
   banned,
-  onBan,
 }: {
   ip?: string | null;
   banned: boolean;
-  onBan?: (ip: string) => void;
 }) {
   if (!ip) {
     return <span>-</span>;
@@ -2224,11 +2219,6 @@ function IpCell({
     <div className="ip-cell">
       <span>{ip}</span>
       {banned ? <span className="ip-ban-pill">已封禁</span> : null}
-      {onBan && !banned ? (
-        <button className="ip-ban-inline-button" onClick={() => onBan(ip)} type="button">
-          封禁
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -2549,6 +2539,7 @@ function AdminRequests({
   const [banReason, setBanReason] = useState("");
   const [banBusyIp, setBanBusyIp] = useState<string | null>(null);
   const [banError, setBanError] = useState<string | null>(null);
+  const [banModalOpen, setBanModalOpen] = useState(false);
 
   function update<K extends keyof RequestFilters>(key: K, value: RequestFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
@@ -2590,32 +2581,21 @@ function AdminRequests({
     }
   }
 
-  async function quickBanIp(ip: string) {
-    const normalizedIp = normalizeIpForCompare(ip);
-    if (!normalizedIp) {
-      setBanError("这条记录没有有效 IP。");
-      return;
+  function openBanModal(ip?: string) {
+    if (ip) {
+      const normalizedIp = normalizeIpForCompare(ip);
+      if (!normalizedIp) {
+        setBanError("这条记录没有有效 IP。");
+      } else {
+        setIpInput(normalizedIp);
+        setBanReason((current) => current || "从全站调用记录封禁");
+        setBanError(null);
+      }
+    } else {
+      setBanError(null);
     }
 
-    setIpInput(normalizedIp);
-    setBanError(null);
-    setBanBusyIp(normalizedIp);
-    try {
-      const result = await apiFetch<{ rules: IpBanRule[] }>("/admin/ip-ban-rules", {
-        method: "POST",
-        body: JSON.stringify({
-          ip: normalizedIp,
-          mode: banMode,
-          message: banMessage.trim() || defaultIpBanMessage,
-          reason: banReason.trim() || "从全站调用记录封禁",
-        }),
-      });
-      onRulesChanged(result.rules);
-    } catch (error) {
-      setBanError(errorToText(error));
-    } finally {
-      setBanBusyIp(null);
-    }
+    setBanModalOpen(true);
   }
 
   async function deleteRule(ip: string) {
@@ -2639,103 +2619,38 @@ function AdminRequests({
   }
 
   return (
-    <div className="grid admin-page">
-      <section className="card ip-ban-card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">IP 封禁</h2>
-            <p className="section-subtitle">只影响公开代理调用，后台登录和管理不受影响。</p>
-          </div>
-          <span className="pill strong">{ipBanRules.length} 条</span>
-        </div>
-        {banError ? <div className="error compact-error">{banError}</div> : null}
-        <form className="ip-ban-form" onSubmit={saveRule}>
-          <label className="field">
-            <span>IP</span>
-            <input
-              className="input"
-              value={ipInput}
-              onChange={(event) => setIpInput(event.target.value)}
-              placeholder="例如 203.0.113.10"
-            />
-          </label>
-          <label className="field">
-            <span>返回方式</span>
-            <select className="input" value={banMode} onChange={(event) => setBanMode(event.target.value as IpBanMode)}>
-              <option value="error">封禁报错</option>
-              <option value="notice">公告报错</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>返回内容</span>
-            <input
-              className="input"
-              value={banMessage}
-              onChange={(event) => setBanMessage(event.target.value)}
-              placeholder={defaultIpBanMessage}
-            />
-          </label>
-          <label className="field">
-            <span>备注</span>
-            <input
-              className="input"
-              value={banReason}
-              onChange={(event) => setBanReason(event.target.value)}
-              placeholder="可选"
-            />
-          </label>
-          <button className="button" disabled={Boolean(banBusyIp)} type="submit">
-            <Shield size={17} />
-            {banBusyIp ? "处理中..." : "保存封禁"}
-          </button>
-        </form>
-        <div className="ip-ban-rule-list">
-          {ipBanRules.map((rule) => (
-            <div className="ip-ban-rule" key={rule.ip}>
-              <div>
-                <strong>{rule.ip}</strong>
-                <p>{rule.reason || rule.message}</p>
-              </div>
-              <span className={rule.mode === "notice" ? "pill ok" : "pill warn"}>
-                {rule.mode === "notice" ? "公告报错" : "封禁报错"}
-              </span>
-              <button
-                className="button secondary"
-                disabled={banBusyIp === rule.ip}
-                onClick={() => void deleteRule(rule.ip)}
-                type="button"
-              >
-                解封
-              </button>
-            </div>
-          ))}
-          {ipBanRules.length === 0 ? <div className="empty-state compact">暂无封禁 IP</div> : null}
-        </div>
-      </section>
+    <div className="grid admin-page admin-requests-page">
       <section className="card">
         <div className="section-head">
           <div>
             <h2 className="section-title">账单与调用筛选</h2>
             <p className="section-subtitle">按用户、模型、状态和时间快速查账。</p>
           </div>
-          <button
-            className="button secondary"
-            onClick={() => {
-              const nextFilters: RequestFilters = {
-                q: "",
-                userId: "",
-                model: "",
-                status: "",
-                dateFrom: "",
-                dateTo: "",
-              };
-              onFiltersChange(nextFilters);
-              onSearch(nextFilters);
-            }}
-            type="button"
-          >
-            重置
-          </button>
+          <div className="button-row">
+            <button className="button secondary" onClick={() => openBanModal()} type="button">
+              <Shield size={17} />
+              IP 封禁
+              <span className="button-count">{ipBanRules.length}</span>
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => {
+                const nextFilters: RequestFilters = {
+                  q: "",
+                  userId: "",
+                  model: "",
+                  status: "",
+                  dateFrom: "",
+                  dateTo: "",
+                };
+                onFiltersChange(nextFilters);
+                onSearch(nextFilters);
+              }}
+              type="button"
+            >
+              重置
+            </button>
+          </div>
         </div>
         <form className="filter-bar" onSubmit={submit}>
           <label className="field">
@@ -2810,8 +2725,86 @@ function AdminRequests({
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
-        onBanIp={(ip) => void quickBanIp(ip)}
       />
+      {banModalOpen ? (
+        <ModalShell
+          title="IP 封禁"
+          description="只影响公开代理调用，后台登录和管理不受影响。"
+          onClose={() => setBanModalOpen(false)}
+          wide
+        >
+          <div className="modal-body ip-ban-modal-body">
+            {banError ? <div className="error compact-error">{banError}</div> : null}
+            <form className="ip-ban-form" onSubmit={saveRule}>
+              <label className="field">
+                <span>IP</span>
+                <input
+                  className="input"
+                  value={ipInput}
+                  onChange={(event) => setIpInput(event.target.value)}
+                  placeholder="例如 203.0.113.10"
+                />
+              </label>
+              <label className="field">
+                <span>返回方式</span>
+                <select className="input" value={banMode} onChange={(event) => setBanMode(event.target.value as IpBanMode)}>
+                  <option value="error">封禁报错</option>
+                  <option value="notice">公告报错</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>返回内容</span>
+                <input
+                  className="input"
+                  value={banMessage}
+                  onChange={(event) => setBanMessage(event.target.value)}
+                  placeholder={defaultIpBanMessage}
+                />
+              </label>
+              <label className="field">
+                <span>备注</span>
+                <input
+                  className="input"
+                  value={banReason}
+                  onChange={(event) => setBanReason(event.target.value)}
+                  placeholder="可选"
+                />
+              </label>
+              <button className="button" disabled={Boolean(banBusyIp)} type="submit">
+                <Shield size={17} />
+                {banBusyIp ? "处理中..." : "保存封禁"}
+              </button>
+            </form>
+            <div className="ip-ban-rule-list">
+              {ipBanRules.map((rule) => (
+                <div className="ip-ban-rule" key={rule.ip}>
+                  <div>
+                    <strong>{rule.ip}</strong>
+                    <p>{rule.reason || rule.message}</p>
+                  </div>
+                  <span className={rule.mode === "notice" ? "pill ok" : "pill warn"}>
+                    {rule.mode === "notice" ? "公告报错" : "封禁报错"}
+                  </span>
+                  <button
+                    className="button secondary"
+                    disabled={banBusyIp === rule.ip}
+                    onClick={() => void deleteRule(rule.ip)}
+                    type="button"
+                  >
+                    解封
+                  </button>
+                </div>
+              ))}
+              {ipBanRules.length === 0 ? <div className="empty-state compact">暂无封禁 IP</div> : null}
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="button secondary" onClick={() => setBanModalOpen(false)} type="button">
+              关闭
+            </button>
+          </div>
+        </ModalShell>
+      ) : null}
     </div>
   );
 }
