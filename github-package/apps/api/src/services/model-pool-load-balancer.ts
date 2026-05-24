@@ -3,6 +3,7 @@ import { redis } from "../lib/redis.js";
 export type LoadBalanceCandidate = {
   channelId: string;
   speedScoreMs: number;
+  stickyOccupancy?: number;
 };
 
 const inflightTtlSeconds = 180;
@@ -34,7 +35,11 @@ export function getInflightPenaltyMs(fastestScoreMs: number) {
 }
 
 export function getRecentPickPenaltyMs(fastestScoreMs: number) {
-  return Math.max(120, fastestScoreMs * 0.08);
+  return Math.max(400, fastestScoreMs * 0.2);
+}
+
+export function getStickyOccupancyPenaltyMs(fastestScoreMs: number) {
+  return Math.max(800, fastestScoreMs * 0.35);
 }
 
 export async function reserveBalancedModelPoolChannel(
@@ -68,14 +73,19 @@ async function reserveChannelAtomically(
   const recentPickPenaltyMs = getRecentPickPenaltyMs(
     Math.min(...candidates.map((candidate) => candidate.speedScoreMs)),
   );
+  const stickyOccupancyPenaltyMs = getStickyOccupancyPenaltyMs(
+    Math.min(...candidates.map((candidate) => candidate.speedScoreMs)),
+  );
   const args = [
     String(inflightTtlSeconds),
     String(penaltyMs),
     String(recentPickTtlSeconds),
     String(recentPickPenaltyMs),
+    String(stickyOccupancyPenaltyMs),
     ...candidates.flatMap((candidate) => [
       candidate.channelId,
       String(candidate.speedScoreMs),
+      String(candidate.stickyOccupancy ?? 0),
     ]),
   ];
 
@@ -85,24 +95,26 @@ async function reserveChannelAtomically(
 	local penalty = tonumber(ARGV[2])
 	local recentTtl = tonumber(ARGV[3])
 	local recentPenalty = tonumber(ARGV[4])
+	local stickyPenalty = tonumber(ARGV[5])
 	local bestIndex = 1
 	local bestScore = nil
-	local argIndex = 5
+	local argIndex = 6
 
 	for index = 1, (#KEYS / 2) do
 	  local speed = tonumber(ARGV[argIndex + 1])
+	  local sticky = tonumber(ARGV[argIndex + 2] or "0")
 	  local inflightKeyIndex = ((index - 1) * 2) + 1
 	  local recentKeyIndex = inflightKeyIndex + 1
 	  local inflight = tonumber(redis.call("GET", KEYS[inflightKeyIndex]) or "0")
 	  local recent = tonumber(redis.call("GET", KEYS[recentKeyIndex]) or "0")
-	  local score = speed + (inflight * penalty) + (recent * recentPenalty)
+	  local score = speed + (inflight * penalty) + (recent * recentPenalty) + (sticky * stickyPenalty)
 
 	  if bestScore == nil or score < bestScore then
 	    bestScore = score
 	    bestIndex = index
 	  end
 
-	  argIndex = argIndex + 2
+	  argIndex = argIndex + 3
 	end
 
 	local selectedInflightKeyIndex = ((bestIndex - 1) * 2) + 1
@@ -111,7 +123,7 @@ async function reserveChannelAtomically(
 	redis.call("EXPIRE", KEYS[selectedInflightKeyIndex], ttl)
 	redis.call("INCR", KEYS[selectedRecentKeyIndex])
 	redis.call("EXPIRE", KEYS[selectedRecentKeyIndex], recentTtl)
-	return ARGV[5 + ((bestIndex - 1) * 2)]
+	return ARGV[6 + ((bestIndex - 1) * 3)]
 	`,
     keys.length,
     ...keys,

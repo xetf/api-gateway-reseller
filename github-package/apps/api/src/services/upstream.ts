@@ -2,6 +2,7 @@ import { prisma } from "@gateway/db";
 import { env } from "../env.js";
 import {
   clearStickyModelPoolChannel,
+  getStickyChannelOccupancies,
   getStickyModelPoolRoute,
   setStickyModelPoolChannel,
 } from "./model-pool-stickiness.js";
@@ -187,8 +188,17 @@ async function getRouteCandidates(
     }),
   );
 
-  return routes
-    .filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route))
+  const availableRoutes = routes
+    .filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route));
+  const stickyOccupancies = await getStickyChannelOccupancies(
+    availableRoutes.map((route) => route.channelId),
+  );
+
+  return availableRoutes
+    .map((route) => ({
+      ...route,
+      stickyOccupancy: stickyOccupancies.get(route.channelId) ?? 0,
+    }))
     .sort((a, b) => a.speedScoreMs - b.speedScoreMs);
 }
 
@@ -198,6 +208,7 @@ async function getBalancedRoute(
     price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
     channelId: string;
     speedScoreMs: number;
+    stickyOccupancy: number;
   }>,
 ) {
   if (routes.length === 0) {
@@ -209,6 +220,7 @@ async function getBalancedRoute(
     routes.map((route) => ({
       channelId: route.channelId,
       speedScoreMs: route.speedScoreMs,
+      stickyOccupancy: route.stickyOccupancy,
     })),
     getInflightPenaltyMs(fastestScoreMs),
   );

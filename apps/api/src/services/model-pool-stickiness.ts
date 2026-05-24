@@ -19,6 +19,10 @@ export function stickyProviderKeyOccupancyKey(upstreamProviderKeyId: string) {
   return `modelpool:sticky-key-callers:${upstreamProviderKeyId}`;
 }
 
+export function stickyChannelOccupancyKey(channelId: string) {
+  return `modelpool:sticky-channel-callers:${channelId}`;
+}
+
 function stickyOccupancyMember(callerIdentity: string, model: string) {
   return JSON.stringify([callerIdentity, model]);
 }
@@ -79,6 +83,17 @@ export async function setStickyModelPoolChannel(
       );
     }
 
+    if (previousRoute?.channelId && previousRoute.channelId !== channelId) {
+      operations.zrem(
+        stickyChannelOccupancyKey(previousRoute.channelId),
+        member,
+      );
+    }
+
+    const channelOccupancyKey = stickyChannelOccupancyKey(channelId);
+    operations.zadd(channelOccupancyKey, expiresAtMs, member);
+    operations.expire(channelOccupancyKey, stickyOccupancyTtlSeconds);
+
     if (upstreamProviderKeyId) {
       const occupancyKey = stickyProviderKeyOccupancyKey(upstreamProviderKeyId);
       operations.zadd(occupancyKey, expiresAtMs, member);
@@ -108,6 +123,23 @@ export async function getStickyProviderKeyOccupancies(upstreamProviderKeyIds: st
   return new Map(entries);
 }
 
+export async function getStickyChannelOccupancies(channelIds: string[]) {
+  const uniqueIds = [...new Set(channelIds)];
+  const entries = await Promise.all(
+    uniqueIds.map(async (channelId) => {
+      try {
+        const occupancyKey = stickyChannelOccupancyKey(channelId);
+        await redis.zremrangebyscore(occupancyKey, "-inf", Date.now());
+        return [channelId, await redis.zcard(occupancyKey)] as const;
+      } catch {
+        return [channelId, 0] as const;
+      }
+    }),
+  );
+
+  return new Map(entries);
+}
+
 export async function clearStickyModelPoolChannel(
   callerIdentity: string,
   model: string,
@@ -124,6 +156,12 @@ export async function clearStickyModelPoolChannel(
       if (currentRoute?.upstreamProviderKeyId) {
         operations.zrem(
           stickyProviderKeyOccupancyKey(currentRoute.upstreamProviderKeyId),
+          stickyOccupancyMember(callerIdentity, model),
+        );
+      }
+      if (currentRoute?.channelId) {
+        operations.zrem(
+          stickyChannelOccupancyKey(currentRoute.channelId),
           stickyOccupancyMember(callerIdentity, model),
         );
       }
