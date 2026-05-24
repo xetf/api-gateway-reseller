@@ -116,7 +116,7 @@ export async function proxyRoutes(app: FastifyInstance) {
 
     const body = (request.body ?? {}) as ProxyBody;
     const { apiKey, user } = request.apiAuth;
-    if (apiKey.noticeEnabled && apiKey.noticeText?.trim()) {
+    if (apiKey.noticeEnabled && apiKey.noticeText?.trim() && shouldReturnApiKeyNotice(endpoint, request.method)) {
       return sendApiKeyNotice(
         reply,
         endpoint,
@@ -1251,6 +1251,17 @@ function isAllowedMethod(endpoint: string, method: string) {
   }
 
   return /^\/v1\/responses\/[^/]+$/.test(endpoint) && (method === "GET" || method === "DELETE");
+}
+
+function shouldReturnApiKeyNotice(endpoint: string, method: string) {
+  return (
+    method === "POST" &&
+    (endpoint === "/v1/chat/completions" ||
+      endpoint === "/v1/completions" ||
+      endpoint === "/v1/embeddings" ||
+      endpoint === "/v1/images/generations" ||
+      endpoint === "/v1/responses")
+  );
 }
 
 function isBillableEndpoint(endpoint: string, method: string) {
