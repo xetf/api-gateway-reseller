@@ -76,6 +76,10 @@ const staleResponsesContextNotice = [
   "请新建对话，或清空当前会话上下文后重试。",
   "如果你的客户端使用 Responses API，请不要在 store=false 时复用 previous_response_id、rs_... item 或旧 input item；需要跨轮复用时请开启 store=true。",
 ].join("\n");
+const invalidEncryptedContentNotice = [
+  "这次 Responses 请求里有无效的 encrypted_content，通常是把压缩摘要或普通文本误塞进了上下文。",
+  "网关已尽量过滤明显异常的条目；如果仍失败，请新建对话或清空上下文后重试。",
+].join("\n");
 const missingUsageNotice = [
   "这次上游没有返回可计费用量，网关无法安全完成扣费。",
   "请新建对话或清空当前会话上下文后重试；如果仍失败，请换一个上游渠道或联系管理员查看后台失败记录。",
@@ -544,6 +548,13 @@ function getGatewayRecoveryNotice(error: unknown) {
 
   if (isStoreFalseItemError) {
     return staleResponsesContextNotice;
+  }
+
+  if (
+    normalized.includes("invalid_encrypted_content") ||
+    normalized.includes("encrypted content could not be decrypted or parsed")
+  ) {
+    return invalidEncryptedContentNotice;
   }
 
   if (normalized.includes(missingUsageMessage.toLowerCase())) {
@@ -1047,6 +1058,10 @@ function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: 
     upstreamBody = buildShareApiResponsesBody(body);
   }
 
+  if (endpoint.startsWith("/v1/responses")) {
+    upstreamBody = sanitizeResponsesBody(upstreamBody);
+  }
+
   if (!upstreamBody.stream || endpoint.startsWith("/v1/responses")) {
     return upstreamBody;
   }
@@ -1083,6 +1098,112 @@ function buildShareApiResponsesBody(body: ProxyBody): ProxyBody {
   }
 
   return normalized;
+}
+
+function sanitizeResponsesBody(body: ProxyBody): ProxyBody {
+  if (!Array.isArray(body.input)) {
+    return body;
+  }
+
+  let mutated = false;
+  const sanitizedInput: unknown[] = [];
+
+  for (const item of body.input) {
+    const sanitizedItem = sanitizeResponsesInputItem(item);
+    if (sanitizedItem === null) {
+      mutated = true;
+      continue;
+    }
+
+    if (sanitizedItem !== item) {
+      mutated = true;
+    }
+
+    sanitizedInput.push(sanitizedItem);
+  }
+
+  return mutated ? { ...body, input: sanitizedInput } : body;
+}
+
+function sanitizeResponsesInputItem(item: unknown) {
+  if (!isPlainObject(item)) {
+    return item;
+  }
+
+  const clone: Record<string, unknown> = { ...item };
+  const type = typeof clone.type === "string" ? clone.type : "";
+  const hasEncryptedContent = Object.prototype.hasOwnProperty.call(clone, "encrypted_content");
+
+  if (hasEncryptedContent && !looksLikeEncryptedContent(clone.encrypted_content)) {
+    delete clone.encrypted_content;
+
+    if (type === "compaction") {
+      return null;
+    }
+
+    if (type === "reasoning" && !hasMeaningfulReasoningItem(clone)) {
+      return null;
+    }
+  }
+
+  if (type === "compaction" && !hasEncryptedContent) {
+    return null;
+  }
+
+  return clone;
+}
+
+function hasMeaningfulReasoningItem(item: Record<string, unknown>) {
+  return (
+    hasMeaningfulValue(item.content) ||
+    hasMeaningfulValue(item.summary) ||
+    hasMeaningfulValue(item.text) ||
+    hasMeaningfulValue(item.output_text)
+  );
+}
+
+function hasMeaningfulValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+
+  return true;
+}
+
+function looksLikeEncryptedContent(value: unknown) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  if (value.trim() !== value) {
+    return false;
+  }
+
+  if (value.length < 80) {
+    return false;
+  }
+
+  if (/\s/.test(value)) {
+    return false;
+  }
+
+  return /^[A-Za-z0-9._~+/=-]+$/.test(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function proxyStream(params: {

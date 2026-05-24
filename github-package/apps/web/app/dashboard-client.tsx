@@ -8,7 +8,6 @@ import {
   KeyRound,
   LogIn,
   LogOut,
-  Mail,
   Pencil,
   Plus,
   RefreshCw,
@@ -20,7 +19,6 @@ import {
   SlidersHorizontal,
   Ticket,
   Trash2,
-  UserPlus,
   Users,
 } from "lucide-react";
 import { FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -29,8 +27,6 @@ import { apiBaseUrl, apiFetch, clearToken, getToken, setToken } from "../lib/api
 type User = {
   id: string;
   email: string;
-  username?: string | null;
-  name?: string | null;
   role: "USER" | "ADMIN";
   status: "ACTIVE" | "DISABLED" | string;
   allowedModels: string[];
@@ -416,11 +412,6 @@ type AuthSettings = {
   smtpFrom: string;
   smtpConfigured: boolean;
 };
-
-type PublicAuthSettings = Pick<
-  AuthSettings,
-  "emailCodeLoginEnabled" | "emailCodeAutoRegisterEnabled" | "newUserBonusUsd" | "smtpConfigured"
->;
 
 type RedeemCode = {
   id: string;
@@ -931,7 +922,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           </div>
           <div className="topbar-side">
             <div className="account-chip">
-              <span>{mode === "admin" ? user.username ?? user.email : user.email}</span>
+              <span>{user.email}</span>
               {user.role === "ADMIN" ? <strong>管理员</strong> : null}
             </div>
             <div className="button-row">
@@ -1090,51 +1081,14 @@ function Login({
   mode: DashboardMode;
   onLogin: (token: string, user: User) => void;
 }) {
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [identifier, setIdentifier] = useState(mode === "admin" ? "admin" : "");
-  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [emailCode, setEmailCode] = useState("");
-  const [publicAuthSettings, setPublicAuthSettings] = useState<PublicAuthSettings | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
-  const [codeLoading, setCodeLoading] = useState(false);
-  const isRegistering = mode === "user" && authMode === "register";
-  const isUserLogin = mode === "user" && authMode === "login";
-  const canUseEmailCode = Boolean(publicAuthSettings?.emailCodeLoginEnabled);
-  const SubmitIcon = isRegistering ? UserPlus : LogIn;
-
-  useEffect(() => {
-    if (mode !== "user") {
-      return;
-    }
-
-    let cancelled = false;
-    void apiFetch<{ settings: PublicAuthSettings }>("/auth/settings", { token: null })
-      .then((result) => {
-        if (!cancelled) {
-          setPublicAuthSettings(result.settings);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPublicAuthSettings(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
-
-  function switchAuthMode(nextMode: "login" | "register") {
-    setAuthMode(nextMode);
-    setError(null);
-    setMessage(null);
-  }
+  const isUserMode = mode === "user";
 
   async function sendCode() {
     setError(null);
@@ -1164,23 +1118,17 @@ function Login({
     setLoading(true);
     setError(null);
     try {
-      if (isRegistering) {
-        if (password.length < 8) {
-          setError("密码至少 8 位。");
+      if (isUserMode) {
+        if (!emailCode.trim()) {
+          setError("请填写邮箱验证码。");
           return;
         }
 
-        if (password !== confirmPassword) {
-          setError("两次输入的密码不一致。");
-          return;
-        }
-
-        const result = await apiFetch<{ token: string; user: User }>("/auth/register", {
+        const result = await apiFetch<{ token: string; user: User }>("/auth/email-code/login", {
           method: "POST",
           body: JSON.stringify({
             email: identifier,
-            name: name.trim() || undefined,
-            password,
+            code: emailCode,
           }),
           token: null,
         });
@@ -1188,18 +1136,11 @@ function Login({
         return;
       }
 
-      const result =
-        mode === "admin"
-          ? await apiFetch<{ token: string; user: User }>("/auth/admin-login", {
-              method: "POST",
-              body: JSON.stringify({ username: identifier, password }),
-              token: null,
-            })
-          : await apiFetch<{ token: string; user: User }>("/auth/login", {
-              method: "POST",
-              body: JSON.stringify({ email: identifier, password }),
-              token: null,
-            });
+      const result = await apiFetch<{ token: string; user: User }>("/auth/admin-login", {
+        method: "POST",
+        body: JSON.stringify({ username: identifier, password }),
+        token: null,
+      });
       onLogin(result.token, result.user);
     } catch (loginError) {
       setError(errorToText(loginError));
@@ -1208,93 +1149,26 @@ function Login({
     }
   }
 
-  async function submitCodeLogin() {
-    setError(null);
-    setMessage(null);
-
-    if (!identifier.trim()) {
-      setError("请先填写邮箱。");
-      return;
-    }
-
-    if (!emailCode.trim()) {
-      setError("请填写邮箱验证码。");
-      return;
-    }
-
-    setCodeLoading(true);
-    try {
-      const result = await apiFetch<{ token: string; user: User }>("/auth/email-code/login", {
-        method: "POST",
-        body: JSON.stringify({
-          email: identifier,
-          code: emailCode,
-          name: name.trim() || undefined,
-        }),
-        token: null,
-      });
-      onLogin(result.token, result.user);
-    } catch (loginError) {
-      setError(errorToText(loginError));
-    } finally {
-      setCodeLoading(false);
-    }
-  }
-
   return (
     <main className="login-page">
-      <section className="login-shell" aria-label={mode === "admin" ? "APIshare 管理员登录" : "APIshare 前台登录注册"}>
+      <section className="login-shell" aria-label={mode === "admin" ? "APIshare 管理员登录" : "APIshare 前台邮箱登录"}>
         <div className="login-brand-panel">
-          <div className="login-brand-lockup">
-            <span className="login-logo">A</span>
-            <span>APIshare</span>
-          </div>
           <div className="login-brand-copy">
-            <span className="eyebrow auth-eyebrow">{mode === "admin" ? "控制台" : "前台入口"}</span>
+            {mode === "admin" ? <span className="eyebrow auth-eyebrow">控制台</span> : null}
             <h1>{mode === "admin" ? "APIshare Admin" : "APIshare"}</h1>
-            <p>{mode === "admin" ? "运营、用户和网关配置集中管理。" : "模型 API 分享与计费入口。"}</p>
-          </div>
-          <div className="login-signal">
-            <span>OpenAI-compatible</span>
-            <strong>/v1</strong>
+            {mode === "admin" ? <p>运营、用户和网关配置集中管理。</p> : null}
           </div>
         </div>
 
         <div className="login-panel">
           <div className="login-header">
-            <span className="eyebrow auth-eyebrow">APIshare</span>
-            <h2>{mode === "admin" ? "管理员登录" : isRegistering ? "创建账号" : "欢迎回来"}</h2>
+            <h2>{mode === "admin" ? "管理员登录" : "登录"}</h2>
             <p>
               {mode === "admin"
                 ? "使用管理员账号进入后台。"
-                : isRegistering
-                  ? "注册后自动进入前台。"
-                  : "登录前台继续管理你的账号，也可以使用邮箱验证码快速进入。"}
+                : "新邮箱会自动创建账户"}
             </p>
           </div>
-
-          {mode === "user" ? (
-            <div className="auth-switch" role="tablist" aria-label="登录注册切换">
-              <button
-                aria-selected={authMode === "login"}
-                className={authMode === "login" ? "active" : ""}
-                onClick={() => switchAuthMode("login")}
-                role="tab"
-                type="button"
-              >
-                登录
-              </button>
-              <button
-                aria-selected={isRegistering}
-                className={isRegistering ? "active" : ""}
-                onClick={() => switchAuthMode("register")}
-                role="tab"
-                type="button"
-              >
-                注册
-              </button>
-            </div>
-          ) : null}
 
           {message ? <div className="success auth-feedback">{message}</div> : null}
           {error ? <div className="error auth-feedback">{error}</div> : null}
@@ -1311,85 +1185,9 @@ function Login({
                 value={identifier}
               />
             </label>
-            {isRegistering ? (
+            {isUserMode ? (
               <label className="field">
-                <span>昵称</span>
-                <input
-                  autoComplete="name"
-                  className="input"
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="可选"
-                  type="text"
-                  value={name}
-                />
-              </label>
-            ) : null}
-            <label className="field">
-              <span>密码</span>
-              <input
-                autoComplete={isRegistering ? "new-password" : "current-password"}
-                className="input"
-                minLength={isRegistering ? 8 : undefined}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                type="password"
-                value={password}
-              />
-            </label>
-            {isRegistering ? (
-              <label className="field">
-                <span>确认密码</span>
-                <input
-                  autoComplete="new-password"
-                  className="input"
-                  minLength={8}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  required
-                  type="password"
-                  value={confirmPassword}
-                />
-              </label>
-            ) : null}
-            <button className="button login-submit" disabled={loading} type="submit">
-              <SubmitIcon size={17} />
-              <span>
-                {loading
-                  ? isRegistering
-                    ? "注册中..."
-                    : "登录中..."
-                  : isRegistering
-                    ? "注册并进入"
-                    : "登录"}
-              </span>
-            </button>
-          </form>
-
-          {isUserLogin && canUseEmailCode ? (
-            <div className="code-login-card">
-              <div className="code-login-head">
-                <span className="code-login-icon">
-                  <Mail size={17} />
-                </span>
-                <div>
-                  <strong>邮箱验证码登录</strong>
-                  <span>无需密码，验证码会发送到上方邮箱。</span>
-                </div>
-              </div>
-              {publicAuthSettings?.emailCodeAutoRegisterEnabled ? (
-                <label className="field compact-field">
-                  <span>昵称</span>
-                  <input
-                    autoComplete="name"
-                    className="input"
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="新用户可选"
-                    type="text"
-                    value={name}
-                  />
-                </label>
-              ) : null}
-              <label className="field compact-field">
-                <span>邮箱验证码</span>
+                <span>验证码</span>
                 <div className="input-with-action auth-code-action">
                   <input
                     autoComplete="one-time-code"
@@ -1397,22 +1195,35 @@ function Login({
                     inputMode="numeric"
                     maxLength={6}
                     onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                    placeholder="6 位数字"
+                    required
                     type="text"
                     value={emailCode}
                   />
                   <button className="button secondary" disabled={sendingCode} onClick={sendCode} type="button">
-                    <Send size={15} />
                     <span>{sendingCode ? "发送中" : "获取验证码"}</span>
                   </button>
                 </div>
               </label>
-              <button className="button secondary code-login-submit" disabled={codeLoading} onClick={submitCodeLogin} type="button">
-                <KeyRound size={16} />
-                <span>{codeLoading ? "验证中..." : "验证码进入"}</span>
-              </button>
-            </div>
-          ) : null}
+            ) : (
+              <label className="field">
+                <span>密码</span>
+                <input
+                  autoComplete="current-password"
+                  className="input"
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
+              </label>
+            )}
+            <button className="button login-submit" disabled={loading} type="submit">
+              {isUserMode ? null : <LogIn size={17} />}
+              <span>
+                {loading ? "登录中..." : "登录"}
+              </span>
+            </button>
+          </form>
         </div>
       </section>
     </main>
@@ -2552,6 +2363,10 @@ function describeRequestFailure(request: ApiRequestDetail) {
     return "客户端复用了已经失效的 Responses 上下文 item。通常需要新建对话、清空上下文，或在客户端开启 store=true 后再跨轮复用 previous_response_id / rs_ item。";
   }
 
+  if (normalized.includes("invalid_encrypted_content") || normalized.includes("encrypted content could not be decrypted or parsed")) {
+    return "客户端传入了无效的 Responses encrypted_content，通常是把压缩摘要或普通文本误放进了上下文。";
+  }
+
   if (normalized.includes("upstream response did not include billable token usage")) {
     return "上游没有返回可计费 usage，网关无法安全扣费，所以这次调用被拦截为失败。";
   }
@@ -3140,8 +2955,6 @@ function AdminAuthSettings({
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
-  const [emailCodeLoginEnabled, setEmailCodeLoginEnabled] = useState(false);
-  const [emailCodeAutoRegisterEnabled, setEmailCodeAutoRegisterEnabled] = useState(true);
   const [newUserBonusUsd, setNewUserBonusUsd] = useState("0");
   const [emailCodeTtlSeconds, setEmailCodeTtlSeconds] = useState(600);
   const [emailCodeCooldownSeconds, setEmailCodeCooldownSeconds] = useState(60);
@@ -3162,8 +2975,6 @@ function AdminAuthSettings({
       return;
     }
 
-    setEmailCodeLoginEnabled(settings.emailCodeLoginEnabled);
-    setEmailCodeAutoRegisterEnabled(settings.emailCodeAutoRegisterEnabled);
     setNewUserBonusUsd(settings.newUserBonusUsd);
     setEmailCodeTtlSeconds(settings.emailCodeTtlSeconds);
     setEmailCodeCooldownSeconds(settings.emailCodeCooldownSeconds);
@@ -3188,8 +2999,8 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings", {
         method: "PUT",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
+          emailCodeLoginEnabled: true,
+          emailCodeAutoRegisterEnabled: true,
           newUserBonusUsd,
           emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
           emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
@@ -3225,8 +3036,8 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings/test-email", {
         method: "POST",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
+          emailCodeLoginEnabled: true,
+          emailCodeAutoRegisterEnabled: true,
           newUserBonusUsd,
           emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
           emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
@@ -3263,27 +3074,11 @@ function AdminAuthSettings({
           <div className="section-head">
             <div>
               <h2 className="section-title">邮箱验证码</h2>
-              <p className="section-subtitle">开启后前台登录页会显示“验证码”登录。</p>
+              <p className="section-subtitle">用户账号固定使用邮箱验证码。</p>
             </div>
-            <StatusPill status={emailCodeLoginEnabled ? "ACTIVE" : "DISABLED"} />
+            <StatusPill status="ACTIVE" />
           </div>
           <div className="form">
-            <label className="check-row">
-              <input
-                checked={emailCodeLoginEnabled}
-                onChange={(event) => setEmailCodeLoginEnabled(event.target.checked)}
-                type="checkbox"
-              />
-              开启邮箱验证码登录
-            </label>
-            <label className="check-row">
-              <input
-                checked={emailCodeAutoRegisterEnabled}
-                onChange={(event) => setEmailCodeAutoRegisterEnabled(event.target.checked)}
-                type="checkbox"
-              />
-              验证码登录时自动创建新用户
-            </label>
             <div className="grid cols-2">
               <label className="field">
                 <span>新用户赠送余额 USD</span>
@@ -3321,8 +3116,9 @@ function AdminAuthSettings({
               />
             </label>
             <div className="info-list">
+              <InfoLine label="登录方式" value="邮箱验证码" />
+              <InfoLine label="创建账号" value="首次验证自动创建" />
               <InfoLine label="赠送余额" value={`$${money(newUserBonusUsd)}`} />
-              <InfoLine label="自动注册" value={emailCodeAutoRegisterEnabled ? "开启" : "关闭"} />
             </div>
           </div>
         </section>
@@ -3444,7 +3240,6 @@ function AdminUsers({
   onError: (error: string | null) => void;
 }) {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [role, setRole] = useState<"USER" | "ADMIN">("USER");
   const [initialBalance, setInitialBalance] = useState("0");
   const [userSearch, setUserSearch] = useState("");
@@ -3456,10 +3251,8 @@ function AdminUsers({
   const [keyModalUserId, setKeyModalUserId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editEmail, setEditEmail] = useState("");
-  const [editName, setEditName] = useState("");
   const [editRole, setEditRole] = useState<"USER" | "ADMIN">("USER");
   const [editStatus, setEditStatus] = useState<"ACTIVE" | "DISABLED">("ACTIVE");
-  const [editPassword, setEditPassword] = useState("");
   const [editAllowedModels, setEditAllowedModels] = useState("");
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
@@ -3479,10 +3272,8 @@ function AdminUsers({
     setUserModal(null);
     setEditingUser(item);
     setEditEmail(item.email);
-    setEditName(item.name ?? "");
     setEditRole(item.role === "ADMIN" ? "ADMIN" : "USER");
     setEditStatus(item.status === "DISABLED" ? "DISABLED" : "ACTIVE");
-    setEditPassword("");
     setEditAllowedModels((item.allowedModels ?? []).join("\n"));
   }
 
@@ -3495,37 +3286,23 @@ function AdminUsers({
       return;
     }
 
-    if (password.length < 8) {
-      onError("新用户密码至少 8 位。可以点“生成密码”。");
-      return;
-    }
-
     try {
       await apiFetch("/admin/users", {
         method: "POST",
         body: JSON.stringify({
           email,
-          password,
           role,
           initialBalance,
           allowedModels: [],
         }),
       });
       setEmail("");
-      setPassword("");
       setInitialBalance("0");
       setUserModal(null);
       onChanged();
     } catch (createError) {
       onError(errorToText(createError));
     }
-  }
-
-  function generatePassword() {
-    const generated = `u${Math.random().toString(36).slice(2, 8)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-    setPassword(generated);
   }
 
   async function adjustBalance(event: FormEvent<HTMLFormElement>) {
@@ -3595,15 +3372,13 @@ function AdminUsers({
     try {
       await apiFetch(`/admin/users/${editingUser.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          email: editEmail,
-          name: editName || null,
-          role: editRole,
-          status: editStatus,
-          allowedModels: parseModelList(editAllowedModels),
-          ...(editPassword ? { password: editPassword } : {}),
-        }),
-      });
+          body: JSON.stringify({
+            email: editEmail,
+            role: editRole,
+            status: editStatus,
+            allowedModels: parseModelList(editAllowedModels),
+          }),
+        });
       setEditingUser(null);
       onChanged();
     } catch (updateError) {
@@ -3641,7 +3416,7 @@ function AdminUsers({
         <section className="action-panel">
           <div>
             <h2>用户操作</h2>
-            <p>创建账号、调整余额和设置模型权限都从弹窗完成。</p>
+            <p>创建账号、调整余额和设置模型权限都从弹窗完成。用户通过邮箱验证码进入。</p>
           </div>
           <div className="button-row">
             <button
@@ -3796,21 +3571,6 @@ function AdminUsers({
                 <span>邮箱</span>
                 <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
               </label>
-              <label className="field">
-                <span>密码</span>
-                <div className="input-with-action">
-                  <input
-                    className="input"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="至少 8 位"
-                    type="text"
-                  />
-                  <button className="button secondary" onClick={generatePassword} type="button">
-                    生成
-                  </button>
-                </div>
-              </label>
               <div className="grid cols-2">
                 <label className="field">
                   <span>角色</span>
@@ -3951,20 +3711,6 @@ function AdminUsers({
                 <label className="field">
                   <span>邮箱</span>
                   <input className="input" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} type="email" />
-                </label>
-                <label className="field">
-                  <span>名称</span>
-                  <input className="input" value={editName} onChange={(event) => setEditName(event.target.value)} />
-                </label>
-                <label className="field">
-                  <span>新密码</span>
-                  <input
-                    className="input"
-                    value={editPassword}
-                    onChange={(event) => setEditPassword(event.target.value)}
-                    placeholder="留空则不修改"
-                    type="password"
-                  />
                 </label>
               </div>
               <div className="grid cols-3">

@@ -13,34 +13,12 @@ import {
 import { hashPassword, requireUser, verifyPassword } from "../services/auth.js";
 import { sendEmailLoginCode } from "../services/mailer.js";
 
-const loginSchema = z.object({
-  email: z.string().trim().email().transform((value) => value.toLowerCase()),
-  password: z.string().min(1),
-});
-
-const registerSchema = z.object({
-  email: z.string().trim().email().transform((value) => value.toLowerCase()),
-  name: z
-    .string()
-    .trim()
-    .max(120)
-    .optional()
-    .transform((value) => value || undefined),
-  password: z.string().min(8),
-});
-
 const emailCodeSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
 });
 
 const emailCodeLoginSchema = emailCodeSchema.extend({
   code: z.string().trim().regex(/^\d{6}$/),
-  name: z
-    .string()
-    .trim()
-    .max(120)
-    .optional()
-    .transform((value) => value || undefined),
 });
 
 const adminLoginSchema = z.object({
@@ -55,38 +33,14 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/auth/register", async (request, reply) => {
-    const body = registerSchema.parse(request.body);
-    const passwordHash = await hashPassword(body.password);
-    const settings = await readAuthSettings();
-    const newUserBonus = new Decimal(settings.newUserBonusUsd);
-
-    try {
-      const user = await prisma.$transaction(async (tx) => {
-        return createPublicUser(tx, {
-          email: body.email,
-          name: body.name,
-          passwordHash,
-          newUserBonus,
-        });
-      });
-
-      return authResponse(app, user);
-    } catch (error) {
-      if (isUniqueConstraintError(error)) {
-        return reply.status(409).send({ message: "Email already exists" });
-      }
-
-      throw error;
-    }
+    return reply.status(410).send({
+      message: "用户账号只支持邮箱验证码进入，请获取邮箱验证码完成登录或自动创建账号。",
+    });
   });
 
   app.post("/auth/email-code/send", async (request, reply) => {
     const body = emailCodeSchema.parse(request.body);
     const settings = await readAuthSettings();
-
-    if (!settings.emailCodeLoginEnabled) {
-      return reply.status(403).send({ message: "Email code login is disabled" });
-    }
 
     if (!isSmtpConfigured(settings)) {
       return reply.status(503).send({ message: "SMTP is not configured" });
@@ -128,10 +82,6 @@ export async function authRoutes(app: FastifyInstance) {
     const body = emailCodeLoginSchema.parse(request.body);
     const settings = await readAuthSettings();
 
-    if (!settings.emailCodeLoginEnabled) {
-      return reply.status(403).send({ message: "Email code login is disabled" });
-    }
-
     const attemptsKey = emailCodeAttemptsKey(body.email);
     const attempts = await app.redis.incr(attemptsKey);
     if (attempts === 1) {
@@ -156,10 +106,6 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     if (!user) {
-      if (!settings.emailCodeAutoRegisterEnabled) {
-        return reply.status(404).send({ message: "账号不存在，请先注册。" });
-      }
-
       const passwordHash = await hashPassword(randomBytes(32).toString("base64url"));
       const newUserBonus = new Decimal(settings.newUserBonusUsd);
 
@@ -167,7 +113,6 @@ export async function authRoutes(app: FastifyInstance) {
         user = await prisma.$transaction(async (tx) => {
           return createPublicUser(tx, {
             email: body.email,
-            name: body.name,
             passwordHash,
             newUserBonus,
           });
@@ -188,22 +133,9 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/auth/login", async (request, reply) => {
-    const body = loginSchema.parse(request.body);
-    const user = await prisma.user.findUnique({
-      where: { email: body.email },
+    return reply.status(410).send({
+      message: "用户账号不支持密码登录，请使用邮箱验证码登录。",
     });
-
-    if (!user || user.status !== "ACTIVE") {
-      return reply.status(401).send({ message: "Invalid email or password" });
-    }
-
-    const valid = await verifyPassword(body.password, user.passwordHash);
-
-    if (!valid) {
-      return reply.status(401).send({ message: "Invalid email or password" });
-    }
-
-    return authResponse(app, user);
   });
 
   app.post("/auth/admin-login", async (request, reply) => {
@@ -232,8 +164,6 @@ export async function authRoutes(app: FastifyInstance) {
       select: {
         id: true,
         email: true,
-        username: true,
-        name: true,
         role: true,
         status: true,
         allowedModels: true,
@@ -255,8 +185,6 @@ function isUniqueConstraintError(error: unknown) {
 type PublicUser = {
   id: string;
   email: string;
-  username: string | null;
-  name: string | null;
   role: string;
   allowedModels: string[];
 };
@@ -278,8 +206,6 @@ function serializeAuthUser(user: PublicUser) {
   return {
     id: user.id,
     email: user.email,
-    username: user.username,
-    name: user.name,
     role: user.role,
     allowedModels: user.allowedModels,
   };
@@ -289,7 +215,6 @@ async function createPublicUser(
   tx: Prisma.TransactionClient,
   input: {
     email: string;
-    name?: string;
     passwordHash: string;
     newUserBonus: Decimal;
   },
@@ -300,7 +225,6 @@ async function createPublicUser(
   const created = await tx.user.create({
     data: {
       email: input.email,
-      name: input.name,
       passwordHash: input.passwordHash,
       role: "USER",
       status: "ACTIVE",

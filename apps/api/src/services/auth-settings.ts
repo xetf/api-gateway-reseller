@@ -31,7 +31,7 @@ export type AuthSettingsInput = Partial<AuthSettings>;
 const authSettingsKey = "auth_settings";
 
 export const defaultAuthSettings: AuthSettings = {
-  emailCodeLoginEnabled: false,
+  emailCodeLoginEnabled: true,
   emailCodeAutoRegisterEnabled: true,
   newUserBonusUsd: "0.00000000",
   emailCodeTtlSeconds: 600,
@@ -86,8 +86,8 @@ export async function saveAuthSettings(input: AuthSettingsInput) {
 
 export function toPublicAuthSettings(settings: AuthSettings): PublicAuthSettings {
   return {
-    emailCodeLoginEnabled: settings.emailCodeLoginEnabled,
-    emailCodeAutoRegisterEnabled: settings.emailCodeAutoRegisterEnabled,
+    emailCodeLoginEnabled: true,
+    emailCodeAutoRegisterEnabled: true,
     newUserBonusUsd: settings.newUserBonusUsd,
     smtpConfigured: isSmtpConfigured(settings),
   };
@@ -116,8 +116,8 @@ export function normalizeMoney(value: string | number | null | undefined) {
 
 function normalizeAuthSettings(settings: AuthSettings): AuthSettings {
   return {
-    emailCodeLoginEnabled: Boolean(settings.emailCodeLoginEnabled),
-    emailCodeAutoRegisterEnabled: Boolean(settings.emailCodeAutoRegisterEnabled),
+    emailCodeLoginEnabled: true,
+    emailCodeAutoRegisterEnabled: true,
     newUserBonusUsd: normalizeMoney(settings.newUserBonusUsd),
     emailCodeTtlSeconds: clampInteger(settings.emailCodeTtlSeconds, 60, 3600, defaultAuthSettings.emailCodeTtlSeconds),
     emailCodeCooldownSeconds: clampInteger(settings.emailCodeCooldownSeconds, 10, 600, defaultAuthSettings.emailCodeCooldownSeconds),

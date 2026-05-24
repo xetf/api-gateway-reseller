@@ -4,6 +4,7 @@ import { Decimal } from "decimal.js";
 import { prisma } from "@gateway/db";
 import { z } from "zod";
 import { exec as execCallback } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
@@ -306,8 +307,6 @@ export async function adminRoutes(app: FastifyInstance) {
       select: {
         id: true,
         email: true,
-        username: true,
-        name: true,
         role: true,
         status: true,
         allowedModels: true,
@@ -354,21 +353,17 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         email: z.string().email().optional(),
-        name: z.string().max(120).nullable().optional(),
         role: z.enum(["USER", "ADMIN"]).optional(),
         status: z.enum(["ACTIVE", "DISABLED"]).optional(),
         allowedModels: z.array(z.string()).optional(),
-        password: z.string().min(8).optional(),
       })
       .parse(request.body);
 
     const data = {
       ...(body.email ? { email: body.email } : {}),
-      ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.role ? { role: body.role } : {}),
       ...(body.status ? { status: body.status } : {}),
       ...(body.allowedModels ? { allowedModels: body.allowedModels } : {}),
-      ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}),
     };
 
     const user = await prisma.user.update({
@@ -377,8 +372,6 @@ export async function adminRoutes(app: FastifyInstance) {
       select: {
         id: true,
         email: true,
-        username: true,
-        name: true,
         role: true,
         status: true,
         allowedModels: true,
@@ -400,8 +393,6 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = z
       .object({
         email: z.string().email(),
-        password: z.string().min(8),
-        name: z.string().optional(),
         role: z.enum(["USER", "ADMIN"]).default("USER"),
         allowedModels: z.array(z.string()).default([]),
         initialBalance: z.string().or(z.number()).optional(),
@@ -413,10 +404,9 @@ export async function adminRoutes(app: FastifyInstance) {
         const created = await tx.user.create({
           data: {
             email: body.email,
-            name: body.name,
             role: body.role,
             allowedModels: body.allowedModels,
-            passwordHash: await hashPassword(body.password),
+            passwordHash: await hashPassword(randomBytes(32).toString("base64url")),
             wallet: {
               create: {
                 balance: body.initialBalance ? String(body.initialBalance) : "0",
