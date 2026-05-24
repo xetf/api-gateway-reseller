@@ -91,19 +91,11 @@ const proxyRoutePatterns = [
 const streamFirstTokenTimeoutMs = 60_000;
 const streamFirstTokenTimeoutMessage = "Stream first token timeout after 60 seconds";
 const missingUsageMessage = "Upstream response did not include billable token usage";
-const staleResponsesContextNotice = [
-  "这个会话的上游上下文已经失效，不能继续接着上一轮回答。",
-  "请新建对话，或清空当前会话上下文后重试。",
-  "如果你的客户端使用 Responses API，请不要在 store=false 时复用 previous_response_id、rs_... item 或旧 input item；需要跨轮复用时请开启 store=true。",
-].join("\n");
-const invalidEncryptedContentNotice = [
-  "这次 Responses 请求里有无效的 encrypted_content，通常是把压缩摘要或普通文本误塞进了上下文。",
-  "网关已尽量过滤明显异常的条目；如果仍失败，请新建对话或清空上下文后重试。",
-].join("\n");
-const missingUsageNotice = [
-  "这次上游没有返回可计费用量，网关无法安全完成扣费。",
-  "请新建对话或清空当前会话上下文后重试；如果仍失败，请换一个上游渠道或联系管理员查看后台失败记录。",
-].join("\n");
+const staleResponsesContextNotice =
+  "这个会话的上下文已经失效，不能继续接着上一轮回答。请新建对话，或清空当前会话上下文后重试。";
+const invalidEncryptedContentNotice =
+  "这次请求里有无效的内容，通常是把压缩摘要或普通文本误塞进了上下文。若重试后仍失败，请新建对话或清空上下文后重试。";
+const missingUsageNotice = "请新建对话或清空当前会话上下文后重试。";
 const recoveryNoticeUsageSource = "gateway_recovery_notice";
 
 export async function proxyRoutes(app: FastifyInstance) {
