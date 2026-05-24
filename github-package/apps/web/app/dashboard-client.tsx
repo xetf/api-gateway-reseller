@@ -7030,7 +7030,7 @@ function ModelPoolChannelCard({
   onSetStatus: (channel: ModelPoolChannel, status: ModelPoolChannelStatus) => void;
 }) {
   const priceStatus = channel.hasPrice && channel.priceEnabled ? "ACTIVE" : channel.hasPrice ? "DISABLED" : "MISSING";
-  const errorText = channel.lastError?.trim();
+  const errorText = formatChannelError(channel.lastError);
   const statusItems = [
     { label: "通道", value: compactStatusLabel(channel.effectiveStatus), tone: compactStatusTone(channel.effectiveStatus) },
     { label: "调度", value: channelScheduleLabel(channel.status), tone: compactStatusTone(channel.status) },
@@ -7119,6 +7119,24 @@ function ModelPoolChannelCard({
       </div>
     </article>
   );
+}
+
+function formatChannelError(value?: string | null) {
+  const text = value?.trim();
+  if (!text) {
+    return "";
+  }
+
+  const normalized = text.toLowerCase();
+  if (
+    (normalized.includes("operation") && normalized.includes("abort")) ||
+    normalized.includes("aborterror") ||
+    normalized.includes("aborted")
+  ) {
+    return "健康检测超时：上游没有及时返回，网关已主动中止这次检测。";
+  }
+
+  return text;
 }
 
 function isCallableModelPoolChannel(channel: ModelPoolChannel) {

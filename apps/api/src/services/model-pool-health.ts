@@ -613,9 +613,10 @@ async function probeProviderKey(input: {
 }) {
   const startedAt = performance.now();
   const controller = new AbortController();
+  const timeoutMs = Math.min(input.timeoutMs, maxCheckMs);
   const timeout = setTimeout(
     () => controller.abort(),
-    Math.min(input.timeoutMs, maxCheckMs),
+    timeoutMs,
   );
 
   try {
@@ -629,12 +630,26 @@ async function probeProviderKey(input: {
   } catch (error) {
     return {
       ok: false as const,
-      message: error instanceof Error ? error.message : "Health check failed",
+      message: formatHealthProbeError(error, timeoutMs),
       latencyMs: Math.round(performance.now() - startedAt),
     };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function formatHealthProbeError(error: unknown, timeoutMs: number) {
+  const message = error instanceof Error ? error.message : "Health check failed";
+  const name = typeof error === "object" && error !== null && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  const normalized = `${name} ${message}`.toLowerCase();
+
+  if (normalized.includes("abort")) {
+    return `健康检测超时：上游在 ${Math.max(1, Math.round(timeoutMs / 1000))} 秒内没有返回，网关主动中止了检测。`;
+  }
+
+  return message;
 }
 
 async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
