@@ -1364,8 +1364,8 @@ function buildUpstreamBody(endpoint: string, body: ProxyBody, provider: { name: 
     upstreamBody = normalizeResponsesCreateBody(upstreamBody);
   }
 
-  if (endpoint === "/v1/responses" && isShareApiProvider(provider)) {
-    upstreamBody = buildShareApiResponsesBody(upstreamBody);
+  if (endpoint === "/v1/responses" && needsResponsesCompatibilityBody(provider)) {
+    upstreamBody = buildResponsesCompatibilityBody(upstreamBody);
   }
 
   if (endpoint.startsWith("/v1/responses")) {
@@ -1395,16 +1395,26 @@ function normalizeResponsesCreateBody(body: ProxyBody): ProxyBody {
   return normalized;
 }
 
-function isShareApiProvider(provider: { name: string; baseUrl: string }) {
+function needsResponsesCompatibilityBody(provider: { name: string; baseUrl: string }) {
   try {
     const host = new URL(provider.baseUrl).hostname.toLowerCase();
-    return host === "share-api.com" || host.endsWith(".share-api.com");
+    return (
+      host === "share-api.com" ||
+      host.endsWith(".share-api.com") ||
+      host === "toltol.me" ||
+      host.endsWith(".toltol.me")
+    );
   } catch {
-    return provider.name.includes("share-api.com") || provider.baseUrl.includes("share-api.com");
+    return (
+      provider.name.includes("share-api.com") ||
+      provider.baseUrl.includes("share-api.com") ||
+      provider.name.includes("toltol.me") ||
+      provider.baseUrl.includes("toltol.me")
+    );
   }
 }
 
-function buildShareApiResponsesBody(body: ProxyBody): ProxyBody {
+function buildResponsesCompatibilityBody(body: ProxyBody): ProxyBody {
   const normalized: ProxyBody = { ...body };
 
   delete normalized.max_output_tokens;
