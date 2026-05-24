@@ -4,18 +4,23 @@ import {
   Activity,
   BarChart3,
   CreditCard,
+  FileSearch,
   KeyRound,
+  LogIn,
   LogOut,
+  Mail,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Send,
   Server,
+  Settings,
   Shield,
   SlidersHorizontal,
   Ticket,
   Trash2,
+  UserPlus,
   Users,
 } from "lucide-react";
 import { FormEvent, type ReactNode, type UIEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -83,6 +88,7 @@ type ApiRequest = {
   latencyMs?: number | null;
   firstTokenLatencyMs?: number | null;
   errorMessage?: string | null;
+  responseUsage?: unknown | null;
   createdAt: string;
   user?: {
     email: string;
@@ -92,6 +98,13 @@ type ApiRequest = {
     name: string;
     keyPrefix: string;
   } | null;
+};
+
+type ApiRequestDetail = ApiRequest & {
+  upstreamRequestId?: string | null;
+  userAgent?: string | null;
+  requestBody?: unknown | null;
+  updatedAt?: string;
 };
 
 type Transaction = {
@@ -390,6 +403,25 @@ type ModelPoolResponse = {
   };
 };
 
+type AuthSettings = {
+  emailCodeLoginEnabled: boolean;
+  emailCodeAutoRegisterEnabled: boolean;
+  newUserBonusUsd: string;
+  emailCodeTtlSeconds: number;
+  emailCodeCooldownSeconds: number;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  smtpFrom: string;
+  smtpConfigured: boolean;
+};
+
+type PublicAuthSettings = Pick<
+  AuthSettings,
+  "emailCodeLoginEnabled" | "emailCodeAutoRegisterEnabled" | "newUserBonusUsd" | "smtpConfigured"
+>;
+
 type RedeemCode = {
   id: string;
   code?: string;
@@ -432,6 +464,7 @@ const frontNav = [
 const adminNav = [
   { id: "admin-overview", label: "后台总览", description: "收入、成本、余额", icon: Shield },
   { id: "admin-users", label: "用户管理", description: "账号、余额、权限", icon: Users },
+  { id: "admin-settings", label: "登录设置", description: "验证码、新用户赠额", icon: Settings },
   { id: "admin-redeem", label: "兑换码", description: "生成、启停、核销", icon: Ticket },
   { id: "admin-upstreams", label: "上游管理", description: "渠道、密钥、模型价格", icon: Server },
   { id: "admin-model-pools", label: "模型池", description: "模型、渠道、健康检测", icon: SlidersHorizontal },
@@ -442,7 +475,7 @@ const adminNavGroups = [
   {
     label: "运营",
     items: adminNav.filter((item) =>
-      ["admin-overview", "admin-users", "admin-redeem"].includes(item.id),
+      ["admin-overview", "admin-users", "admin-settings", "admin-redeem"].includes(item.id),
     ),
   },
   {
@@ -505,6 +538,11 @@ const pageMeta: Record<
     title: "用户管理",
     description: "集中处理账号开通、余额调整、模型白名单和用户状态。",
   },
+  "admin-settings": {
+    eyebrow: "运营中心",
+    title: "登录设置",
+    description: "配置邮箱验证码登录、自动注册和新用户赠送余额。",
+  },
   "admin-redeem": {
     eyebrow: "运营中心",
     title: "兑换码",
@@ -552,6 +590,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [modelPoolHealthCheck, setModelPoolHealthCheck] = useState<ModelPoolHealthCheck | null>(null);
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
+  const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
   const [requestFilters, setRequestFilters] = useState<RequestFilters>({
     q: "",
     userId: "",
@@ -621,6 +660,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setPoolAvailableChannels([]);
       setModelPoolHealthCheck(null);
       setRedeemCodes([]);
+      setAuthSettings(null);
       setAdminRequests([]);
       setAdminRequestsNextCursor(null);
       setAdminRequestsHasMore(false);
@@ -700,6 +740,12 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           token: authToken,
         });
         setRedeemCodes(result.codes);
+      }),
+      loadData("登录设置", async () => {
+        const result = await apiFetch<{ settings: AuthSettings }>("/admin/auth-settings", {
+          token: authToken,
+        });
+        setAuthSettings(result.settings);
       }),
       loadData("调用记录", async () => {
         await refreshAdminRequests({ authToken, filters: requestFilters });
@@ -844,7 +890,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">A</span>
-          API Gateway
+          APIshare
         </div>
         <nav className="nav">
           {mode === "admin" ? (
@@ -953,6 +999,13 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               onError={setError}
             />
           ) : null}
+          {mode === "admin" && activeTab === "admin-settings" ? (
+            <AdminAuthSettings
+              settings={authSettings}
+              onChanged={() => refreshAll()}
+              onError={setError}
+            />
+          ) : null}
           {mode === "admin" && activeTab === "admin-redeem" ? (
             <AdminRedeemCodes
               codes={redeemCodes}
@@ -1037,16 +1090,122 @@ function Login({
   mode: DashboardMode;
   onLogin: (token: string, user: User) => void;
 }) {
+  const [authMode, setAuthMode] = useState<"login" | "code" | "register">("login");
   const [identifier, setIdentifier] = useState(mode === "admin" ? "admin" : "");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [publicAuthSettings, setPublicAuthSettings] = useState<PublicAuthSettings | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const isRegistering = mode === "user" && authMode === "register";
+  const isCodeLogin = mode === "user" && authMode === "code";
+  const canUseEmailCode = Boolean(publicAuthSettings?.emailCodeLoginEnabled);
+  const SubmitIcon = isRegistering ? UserPlus : isCodeLogin ? Mail : LogIn;
+
+  useEffect(() => {
+    if (mode !== "user") {
+      return;
+    }
+
+    let cancelled = false;
+    void apiFetch<{ settings: PublicAuthSettings }>("/auth/settings", { token: null })
+      .then((result) => {
+        if (!cancelled) {
+          setPublicAuthSettings(result.settings);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPublicAuthSettings(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  function switchAuthMode(nextMode: "login" | "code" | "register") {
+    setAuthMode(nextMode);
+    setError(null);
+    setMessage(null);
+  }
+
+  async function sendCode() {
+    setError(null);
+    setMessage(null);
+    if (!identifier.trim()) {
+      setError("请先填写邮箱。");
+      return;
+    }
+
+    setSendingCode(true);
+    try {
+      const result = await apiFetch<{ expiresInSeconds: number }>("/auth/email-code/send", {
+        method: "POST",
+        body: JSON.stringify({ email: identifier }),
+        token: null,
+      });
+      setMessage(`验证码已发送，${Math.ceil(result.expiresInSeconds / 60)} 分钟内有效。`);
+    } catch (sendError) {
+      setError(errorToText(sendError));
+    } finally {
+      setSendingCode(false);
+    }
+  }
 
   async function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     setLoading(true);
     setError(null);
     try {
+      if (isRegistering) {
+        if (password.length < 8) {
+          setError("密码至少 8 位。");
+          return;
+        }
+
+        if (password !== confirmPassword) {
+          setError("两次输入的密码不一致。");
+          return;
+        }
+
+        const result = await apiFetch<{ token: string; user: User }>("/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            email: identifier,
+            name: name.trim() || undefined,
+            password,
+          }),
+          token: null,
+        });
+        onLogin(result.token, result.user);
+        return;
+      }
+
+      if (isCodeLogin) {
+        if (!emailCode.trim()) {
+          setError("请填写邮箱验证码。");
+          return;
+        }
+
+        const result = await apiFetch<{ token: string; user: User }>("/auth/email-code/login", {
+          method: "POST",
+          body: JSON.stringify({
+            email: identifier,
+            code: emailCode,
+            name: name.trim() || undefined,
+          }),
+          token: null,
+        });
+        onLogin(result.token, result.user);
+        return;
+      }
+
       const result =
         mode === "admin"
           ? await apiFetch<{ token: string; user: User }>("/auth/admin-login", {
@@ -1069,34 +1228,181 @@ function Login({
 
   return (
     <main className="login-page">
-      <div className="login-panel">
-        <h1>{mode === "admin" ? "Admin Console" : "API Gateway"}</h1>
-        <p>{mode === "admin" ? "管理员后台入口。" : "登录后管理 API Key、余额和调用账单。"}</p>
-        <form className="form" onSubmit={submit}>
-          <label className="field">
-            <span>{mode === "admin" ? "用户名" : "邮箱"}</span>
-            <input
-              className="input"
-              value={identifier}
-              onChange={(event) => setIdentifier(event.target.value)}
-              type={mode === "admin" ? "text" : "email"}
-            />
-          </label>
-          <label className="field">
-            <span>密码</span>
-            <input
-              className="input"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-            />
-          </label>
-          {error ? <div className="error">{error}</div> : null}
-          <button className="button" disabled={loading} type="submit">
-            {loading ? "登录中..." : "登录"}
-          </button>
-        </form>
-      </div>
+      <section className="login-shell" aria-label={mode === "admin" ? "APIshare 管理员登录" : "APIshare 前台登录注册"}>
+        <div className="login-brand-panel">
+          <div className="login-brand-lockup">
+            <span className="login-logo">A</span>
+            <span>APIshare</span>
+          </div>
+          <div className="login-brand-copy">
+            <span className="eyebrow auth-eyebrow">{mode === "admin" ? "控制台" : "前台入口"}</span>
+            <h1>{mode === "admin" ? "APIshare Admin" : "APIshare"}</h1>
+            <p>{mode === "admin" ? "运营、用户和网关配置集中管理。" : "模型 API 分享与计费入口。"}</p>
+          </div>
+          <div className="login-signal">
+            <span>OpenAI-compatible</span>
+            <strong>/v1</strong>
+          </div>
+        </div>
+
+        <div className="login-panel">
+          <div className="login-header">
+            <span className="eyebrow auth-eyebrow">APIshare</span>
+            <h2>{mode === "admin" ? "管理员登录" : isRegistering ? "创建账号" : isCodeLogin ? "邮箱验证码" : "欢迎回来"}</h2>
+            <p>
+              {mode === "admin"
+                ? "使用管理员账号进入后台。"
+                : isRegistering
+                  ? "注册后自动进入前台。"
+                  : isCodeLogin
+                    ? "收取 6 位验证码后直接登录。"
+                    : "登录前台继续管理你的账号。"}
+            </p>
+          </div>
+
+          {mode === "user" ? (
+            <div className={canUseEmailCode ? "auth-switch three" : "auth-switch"} role="tablist" aria-label="登录注册切换">
+              <button
+                aria-selected={authMode === "login"}
+                className={authMode === "login" ? "active" : ""}
+                onClick={() => switchAuthMode("login")}
+                role="tab"
+                type="button"
+              >
+                登录
+              </button>
+              {canUseEmailCode ? (
+                <button
+                  aria-selected={isCodeLogin}
+                  className={isCodeLogin ? "active" : ""}
+                  onClick={() => switchAuthMode("code")}
+                  role="tab"
+                  type="button"
+                >
+                  验证码
+                </button>
+              ) : null}
+              <button
+                aria-selected={isRegistering}
+                className={isRegistering ? "active" : ""}
+                onClick={() => switchAuthMode("register")}
+                role="tab"
+                type="button"
+              >
+                注册
+              </button>
+            </div>
+          ) : null}
+
+          <form className="form login-form" onSubmit={submit}>
+            <label className="field">
+              <span>{mode === "admin" ? "用户名" : "邮箱"}</span>
+              <input
+                autoComplete={mode === "admin" ? "username" : "email"}
+                className="input"
+                onChange={(event) => setIdentifier(event.target.value)}
+                required
+                type={mode === "admin" ? "text" : "email"}
+                value={identifier}
+              />
+            </label>
+            {isRegistering ? (
+              <label className="field">
+                <span>昵称</span>
+                <input
+                  autoComplete="name"
+                  className="input"
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="可选"
+                  type="text"
+                  value={name}
+                />
+              </label>
+            ) : null}
+            {!isCodeLogin ? (
+              <label className="field">
+                <span>密码</span>
+                <input
+                  autoComplete={isRegistering ? "new-password" : "current-password"}
+                  className="input"
+                  minLength={isRegistering ? 8 : undefined}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
+              </label>
+            ) : null}
+            {isCodeLogin ? (
+              <>
+                {publicAuthSettings?.emailCodeAutoRegisterEnabled ? (
+                  <label className="field">
+                    <span>昵称</span>
+                    <input
+                      autoComplete="name"
+                      className="input"
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="新用户可选"
+                      type="text"
+                      value={name}
+                    />
+                  </label>
+                ) : null}
+                <label className="field">
+                  <span>邮箱验证码</span>
+                  <div className="input-with-action">
+                    <input
+                      autoComplete="one-time-code"
+                      className="input"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="6 位数字"
+                      required
+                      type="text"
+                      value={emailCode}
+                    />
+                    <button className="button secondary" disabled={sendingCode} onClick={sendCode} type="button">
+                      <Mail size={15} />
+                      <span>{sendingCode ? "发送中" : "获取验证码"}</span>
+                    </button>
+                  </div>
+                </label>
+              </>
+            ) : null}
+            {isRegistering ? (
+              <label className="field">
+                <span>确认密码</span>
+                <input
+                  autoComplete="new-password"
+                  className="input"
+                  minLength={8}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={confirmPassword}
+                />
+              </label>
+            ) : null}
+            {message ? <div className="success">{message}</div> : null}
+            {error ? <div className="error">{error}</div> : null}
+            <button className="button login-submit" disabled={loading} type="submit">
+              <SubmitIcon size={17} />
+              <span>
+                {loading
+                  ? isRegistering
+                    ? "注册中..."
+                    : "登录中..."
+                  : isRegistering
+                    ? "注册并进入"
+                    : isCodeLogin
+                      ? "验证码登录"
+                      : "登录"}
+              </span>
+            </button>
+          </form>
+        </div>
+      </section>
     </main>
   );
 }
@@ -1710,7 +2016,7 @@ requires_openai_auth = true
 name = "OpenAI"
 base_url = "${apiBaseUrl}"
 wire_api = "responses"
-requires_openai_auth = true`;
+	requires_openai_auth = true`;
 }
 
 function WalletView({
@@ -1845,6 +2151,10 @@ function Requests({
   loadingMore?: boolean;
   onLoadMore?: () => void;
 }) {
+  const [selectedRequest, setSelectedRequest] = useState<ApiRequestDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
   function handleScroll(event: UIEvent<HTMLDivElement>) {
     if (!onLoadMore || !hasMore || loadingMore) {
       return;
@@ -1856,7 +2166,35 @@ function Requests({
     }
   }
 
+  async function openRequestDetail(item: ApiRequest) {
+    setSelectedRequest(item);
+    setDetailError(null);
+
+    if (!showCost) {
+      return;
+    }
+
+    const authToken = getToken();
+    if (!authToken) {
+      setDetailError("登录已失效，请重新登录后台。");
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const result = await apiFetch<{ request: ApiRequestDetail }>(`/admin/requests/${item.id}`, {
+        token: authToken,
+      });
+      setSelectedRequest(result.request);
+    } catch (error) {
+      setDetailError(errorToText(error));
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   return (
+    <>
     <section className={showCost ? "card requests-card audit-card" : "card requests-card"}>
       <div className="requests-head">
         <h2 className="section-title">{compact ? "最近调用" : showCost ? "全站调用" : "调用记录"}</h2>
@@ -1899,7 +2237,18 @@ function Requests({
                 {showCost ? <td>{formatRequestUpstreamKey(item.upstreamProviderKey)}</td> : null}
                 <td>{item.model}</td>
                 <td>
-                  <StatusPill status={item.status} />
+                  <div className="request-status-cell">
+                    <StatusPill status={item.status} />
+                    {getReturnedNoticeText(item) ? (
+                      <span className="request-notice-pill">已提示</span>
+                    ) : null}
+                    {hasRequestError(item) ? (
+                      <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
+                        <FileSearch size={13} />
+                        详情
+                      </button>
+                    ) : null}
+                  </div>
                 </td>
                 <td>{formatNumber(item.inputTokens)}</td>
                 <td>{formatNumber(item.cachedInputTokens)}</td>
@@ -1961,6 +2310,19 @@ function Requests({
             ) : null}
             <MobileField label="总时间">{seconds(item.latencyMs)}</MobileField>
             <MobileField label="首 token">{seconds(item.firstTokenLatencyMs)}</MobileField>
+            {getReturnedNoticeText(item) ? (
+              <MobileField label="用户返回" wide>
+                已返回公告式提示
+              </MobileField>
+            ) : null}
+            {hasRequestError(item) ? (
+              <div className="mobile-actions">
+                <button className="button secondary" onClick={() => void openRequestDetail(item)} type="button">
+                  <FileSearch size={16} />
+                  查看报错详情
+                </button>
+              </div>
+            ) : null}
           </MobileRecord>
         ))}
         {requests.length === 0 ? <MobileEmpty>暂无调用记录</MobileEmpty> : null}
@@ -1971,7 +2333,272 @@ function Requests({
         </div>
       ) : null}
     </section>
+    {selectedRequest ? (
+      <RequestDetailModal
+        detailError={detailError}
+        loading={detailLoading}
+        onClose={() => {
+          setSelectedRequest(null);
+          setDetailError(null);
+        }}
+        request={selectedRequest}
+      />
+    ) : null}
+    </>
   );
+}
+
+function RequestDetailModal({ request, loading, detailError, onClose }: { request: ApiRequestDetail; loading: boolean; detailError: string | null; onClose: () => void }) {
+  const failureSummary = describeRequestFailure(request);
+  const processSteps = buildRequestProcess(request, failureSummary);
+  const returnedNoticeText = getReturnedNoticeText(request);
+
+  return (
+    <ModalShell title="调用详情" description={`${request.model} · ${dateTime(request.createdAt)}`} onClose={onClose} wide>
+      <div className="modal-body request-detail-modal">
+        {loading ? <div className="info-box">正在加载完整调用记录...</div> : null}
+        {detailError ? <div className="error">详情加载失败：{detailError}</div> : null}
+        <section className="request-detail-section">
+          <div className="request-detail-section-head">
+            <h3>失败原因</h3>
+            <StatusPill status={request.status} />
+          </div>
+          <div className={hasRequestError(request) ? "request-reason-box failed" : "request-reason-box"}>
+            {failureSummary}
+          </div>
+          {request.errorMessage ? (
+            <pre className="request-error-pre">{formatErrorForDisplay(request.errorMessage)}</pre>
+          ) : (
+            <div className="info-box">这条记录没有保存 errorMessage。</div>
+          )}
+        </section>
+
+        {returnedNoticeText ? (
+          <section className="request-detail-section notice-returned-section">
+            <div className="request-detail-section-head">
+              <h3>已返回给用户的提示</h3>
+              <span className="request-notice-pill">公告式提示</span>
+            </div>
+            <div className="request-returned-notice">{returnedNoticeText}</div>
+          </section>
+        ) : null}
+
+        <section className="request-detail-section">
+          <div className="request-detail-section-head">
+            <h3>调用过程</h3>
+            <span className="section-subtitle">按网关处理顺序还原</span>
+          </div>
+          <div className="request-process-list">
+            {processSteps.map((step) => (
+              <div className="request-process-step" key={step.title}>
+                <span className={`request-process-badge ${step.tone}`}>{step.state}</span>
+                <div>
+                  <strong>{step.title}</strong>
+                  <p>{step.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="request-detail-section">
+          <div className="request-detail-section-head">
+            <h3>基础信息</h3>
+          </div>
+          <div className="request-detail-grid">
+            <RequestDetailField label="用户">{request.user?.email ?? "-"}</RequestDetailField>
+            <RequestDetailField label="API Key">{formatRequestApiKey(request.apiKey)}</RequestDetailField>
+            <RequestDetailField label="客户端 IP">{request.clientIp ?? "-"}</RequestDetailField>
+            <RequestDetailField label="User-Agent" wide>{request.userAgent ?? "-"}</RequestDetailField>
+            <RequestDetailField label="接口">{request.method ?? "POST"} {request.endpoint}</RequestDetailField>
+            <RequestDetailField label="模型">{request.model}</RequestDetailField>
+            <RequestDetailField label="上游">{request.upstreamProvider ?? "-"}</RequestDetailField>
+            <RequestDetailField label="上游 Key">{formatRequestUpstreamKey(request.upstreamProviderKey)}</RequestDetailField>
+            <RequestDetailField label="HTTP 状态">{request.httpStatus ?? "-"}</RequestDetailField>
+            <RequestDetailField label="上游请求 ID">{request.upstreamRequestId ?? "-"}</RequestDetailField>
+            <RequestDetailField label="总时间">{seconds(request.latencyMs)}</RequestDetailField>
+            <RequestDetailField label="首 token">{seconds(request.firstTokenLatencyMs)}</RequestDetailField>
+            <RequestDetailField label="创建时间">{dateTime(request.createdAt)}</RequestDetailField>
+            <RequestDetailField label="更新时间">{request.updatedAt ? dateTime(request.updatedAt) : "-"}</RequestDetailField>
+            <RequestDetailField label="Token" wide>
+              输入 {formatNumber(request.inputTokens)} · 缓存 {formatNumber(request.cachedInputTokens)} · 输出 {formatNumber(request.outputTokens)} · 总计 {formatNumber(request.totalTokens)}
+            </RequestDetailField>
+            <RequestDetailField label="费用" wide>
+              用户扣费 ${money(request.chargedAmountUsd)} · 上游成本 ${money(request.upstreamCostUsd ?? "0")} · 毛利 ${money(Number(request.chargedAmountUsd) - Number(request.upstreamCostUsd ?? 0))}
+            </RequestDetailField>
+          </div>
+        </section>
+
+        <section className="request-json-grid">
+          <JsonPanel title="请求体快照" value={request.requestBody} />
+          <JsonPanel title="Usage / 计费快照" value={request.responseUsage} />
+        </section>
+      </div>
+      <div className="modal-footer">
+        <button className="button secondary" onClick={onClose} type="button">关闭</button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function RequestDetailField({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
+  return (
+    <div className={wide ? "request-detail-field wide" : "request-detail-field"}>
+      <span>{label}</span>
+      <strong>{children}</strong>
+    </div>
+  );
+}
+
+function JsonPanel({ title, value }: { title: string; value: unknown }) {
+  return (
+    <div className="request-json-panel">
+      <div className="request-detail-section-head">
+        <h3>{title}</h3>
+      </div>
+      <pre>{formatJsonValue(value)}</pre>
+    </div>
+  );
+}
+
+function hasRequestError(item: ApiRequest) {
+  return item.status === "FAILED" || Boolean(item.errorMessage) || Boolean(item.httpStatus && item.httpStatus >= 400);
+}
+
+function getReturnedNoticeText(item: Pick<ApiRequest, "responseUsage">) {
+  const usage = item.responseUsage;
+
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return null;
+  }
+
+  const record = usage as Record<string, unknown>;
+  if (record.source !== "gateway_recovery_notice" || record.returnedToUser !== true) {
+    return null;
+  }
+
+  return typeof record.noticeText === "string" && record.noticeText.trim()
+    ? record.noticeText
+    : "网关已把这次失败转换成公告式提示返回给用户。";
+}
+
+function buildRequestProcess(request: ApiRequestDetail, failureSummary: string) {
+  const failed = hasRequestError(request);
+  const returnedNoticeText = getReturnedNoticeText(request);
+  return [
+    {
+      title: "1. 网关接收请求",
+      state: "完成",
+      tone: "ok",
+      detail: `${request.method ?? "POST"} ${request.endpoint} · ${dateTime(request.createdAt)} · IP ${request.clientIp ?? "-"}`,
+    },
+    {
+      title: "2. 匹配用户、Key 和上游",
+      state: request.upstreamProvider ? "完成" : "缺失",
+      tone: request.upstreamProvider ? "ok" : "warn",
+      detail: `${request.user?.email ?? "-"} · ${formatRequestApiKey(request.apiKey)} · ${request.upstreamProvider ?? "-"} · ${formatRequestUpstreamKey(request.upstreamProviderKey)}`,
+    },
+    {
+      title: "3. 上游响应",
+      state: request.httpStatus ? (failed ? "异常" : "完成") : "未返回",
+      tone: failed ? "error" : request.httpStatus ? "ok" : "warn",
+      detail: `HTTP ${request.httpStatus ?? "-"} · 上游请求 ID ${request.upstreamRequestId ?? "-"} · 总时间 ${seconds(request.latencyMs)} · 首 token ${seconds(request.firstTokenLatencyMs)}`,
+    },
+    {
+      title: "4. Usage 与扣费",
+      state: failed ? "中断" : "完成",
+      tone: failed ? "warn" : "ok",
+      detail: `总 token ${formatNumber(request.totalTokens)} · 用户扣费 $${money(request.chargedAmountUsd)} · 上游成本 $${money(request.upstreamCostUsd ?? "0")}`,
+    },
+    {
+      title: "5. 最终结果",
+      state: returnedNoticeText ? "已提示" : failed ? "失败" : request.status,
+      tone: returnedNoticeText ? "warn" : failed ? "error" : "ok",
+      detail: returnedNoticeText
+        ? "这次失败已经按公告式接口格式返回给用户，后台保留原始失败原因。"
+        : failed
+          ? failureSummary
+          : "调用成功完成，后台已记录用量与费用。",
+    },
+  ];
+}
+
+function describeRequestFailure(request: ApiRequestDetail) {
+  const message = request.errorMessage?.trim() ?? "";
+  const normalized = message.toLowerCase();
+  const returnedNoticeText = getReturnedNoticeText(request);
+
+  if (!hasRequestError(request)) {
+    return "这条调用没有报错。";
+  }
+
+  if (returnedNoticeText) {
+    return "这条失败已经转换成公告式提示返回给用户，下面保留的是后台记录的原始失败原因。";
+  }
+
+  if (normalized.includes("items are not persisted when store is set to false") || (normalized.includes("item with id") && normalized.includes("not found") && normalized.includes("rs_"))) {
+    return "客户端复用了已经失效的 Responses 上下文 item。通常需要新建对话、清空上下文，或在客户端开启 store=true 后再跨轮复用 previous_response_id / rs_ item。";
+  }
+
+  if (normalized.includes("upstream response did not include billable token usage")) {
+    return "上游没有返回可计费 usage，网关无法安全扣费，所以这次调用被拦截为失败。";
+  }
+
+  if (normalized.includes("first token timeout") || normalized.includes("timeout")) {
+    return "上游在超时时间内没有返回首 token 或完整响应，网关主动中止了这次调用。";
+  }
+
+  if (normalized.includes("aborted") || normalized.includes("internal_error") || normalized.includes("received from peer")) {
+    return "上游连接在响应过程中被中断，常见于上游流式连接异常、客户端上下文失效或上游临时波动。";
+  }
+
+  if (request.httpStatus === 401 || request.httpStatus === 403) {
+    return "上游拒绝了请求，优先检查上游 Key 是否有效、模型权限是否开放、余额或地域限制是否触发。";
+  }
+
+  if (request.httpStatus === 404) {
+    return "上游返回 404，常见原因是模型、接口路径或 Responses 上下文引用不存在。";
+  }
+
+  if (request.httpStatus && request.httpStatus >= 500) {
+    return "上游返回 5xx，说明请求已到达上游但上游处理失败或服务异常。";
+  }
+
+  return message ? "上游或网关返回失败，完整原始错误如下。" : "后台只记录到失败状态，没有保存更详细的 errorMessage。";
+}
+
+function formatErrorForDisplay(message: string) {
+  const trimmed = message.trim();
+  const jsonStart = trimmed.search(/[\[{]/);
+
+  if (jsonStart >= 0) {
+    const prefix = trimmed.slice(0, jsonStart).trim();
+    const jsonText = trimmed.slice(jsonStart);
+    try {
+      const formatted = JSON.stringify(JSON.parse(jsonText), null, 2);
+      return prefix ? `${prefix}\n${formatted}` : formatted;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
+}
+
+function formatJsonValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "暂无记录";
+  }
+
+  if (typeof value === "string") {
+    return formatErrorForDisplay(value);
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function AdminRequests({
@@ -2489,6 +3116,223 @@ function AdminOverviewPanel({
         </div>
       </section>
     </div>
+  );
+}
+
+function AdminAuthSettings({
+  settings,
+  onChanged,
+  onError,
+}: {
+  settings: AuthSettings | null;
+  onChanged: () => void;
+  onError: (error: string | null) => void;
+}) {
+  const [emailCodeLoginEnabled, setEmailCodeLoginEnabled] = useState(false);
+  const [emailCodeAutoRegisterEnabled, setEmailCodeAutoRegisterEnabled] = useState(true);
+  const [newUserBonusUsd, setNewUserBonusUsd] = useState("0");
+  const [emailCodeTtlSeconds, setEmailCodeTtlSeconds] = useState(600);
+  const [emailCodeCooldownSeconds, setEmailCodeCooldownSeconds] = useState(60);
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState(465);
+  const [smtpSecure, setSmtpSecure] = useState(true);
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) {
+      return;
+    }
+
+    setEmailCodeLoginEnabled(settings.emailCodeLoginEnabled);
+    setEmailCodeAutoRegisterEnabled(settings.emailCodeAutoRegisterEnabled);
+    setNewUserBonusUsd(settings.newUserBonusUsd);
+    setEmailCodeTtlSeconds(settings.emailCodeTtlSeconds);
+    setEmailCodeCooldownSeconds(settings.emailCodeCooldownSeconds);
+    setSmtpHost(settings.smtpHost);
+    setSmtpPort(settings.smtpPort);
+    setSmtpSecure(settings.smtpSecure);
+    setSmtpUser(settings.smtpUser);
+    setSmtpPassword("");
+    setSmtpFrom(settings.smtpFrom);
+    setSavedMessage(null);
+  }, [settings]);
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onError(null);
+    setSavedMessage(null);
+    setSaving(true);
+
+    try {
+      await apiFetch("/admin/auth-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          emailCodeLoginEnabled,
+          emailCodeAutoRegisterEnabled,
+          newUserBonusUsd,
+          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
+          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
+          smtpHost,
+          smtpPort: Number(smtpPort),
+          smtpSecure,
+          smtpUser,
+          ...(smtpPassword.trim() ? { smtpPassword } : {}),
+          smtpFrom,
+        }),
+      });
+      setSmtpPassword("");
+      setSavedMessage("登录设置已保存。");
+      onChanged();
+    } catch (saveError) {
+      onError(errorToText(saveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings) {
+    return <p className="muted">登录设置加载中...</p>;
+  }
+
+  return (
+    <form className="form" onSubmit={saveSettings}>
+      <div className="grid cols-2 admin-settings-grid">
+        <section className="card">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">邮箱验证码</h2>
+              <p className="section-subtitle">开启后前台登录页会显示“验证码”登录。</p>
+            </div>
+            <StatusPill status={emailCodeLoginEnabled ? "ACTIVE" : "DISABLED"} />
+          </div>
+          <div className="form">
+            <label className="check-row">
+              <input
+                checked={emailCodeLoginEnabled}
+                onChange={(event) => setEmailCodeLoginEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              开启邮箱验证码登录
+            </label>
+            <label className="check-row">
+              <input
+                checked={emailCodeAutoRegisterEnabled}
+                onChange={(event) => setEmailCodeAutoRegisterEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              验证码登录时自动创建新用户
+            </label>
+            <div className="grid cols-2">
+              <label className="field">
+                <span>新用户赠送余额 USD</span>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  min="0"
+                  onChange={(event) => setNewUserBonusUsd(event.target.value)}
+                  step="0.00000001"
+                  type="number"
+                  value={newUserBonusUsd}
+                />
+              </label>
+              <label className="field">
+                <span>验证码有效期（秒）</span>
+                <input
+                  className="input"
+                  max={3600}
+                  min={60}
+                  onChange={(event) => setEmailCodeTtlSeconds(Number(event.target.value))}
+                  type="number"
+                  value={emailCodeTtlSeconds}
+                />
+              </label>
+            </div>
+            <label className="field">
+              <span>发送冷却（秒）</span>
+              <input
+                className="input"
+                max={600}
+                min={10}
+                onChange={(event) => setEmailCodeCooldownSeconds(Number(event.target.value))}
+                type="number"
+                value={emailCodeCooldownSeconds}
+              />
+            </label>
+            <div className="info-list">
+              <InfoLine label="赠送余额" value={`$${money(newUserBonusUsd)}`} />
+              <InfoLine label="自动注册" value={emailCodeAutoRegisterEnabled ? "开启" : "关闭"} />
+            </div>
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">SMTP 发信</h2>
+              <p className="section-subtitle">用于发送 APIshare 登录验证码邮件。</p>
+            </div>
+            <span className={settings.smtpConfigured ? "pill ok" : "pill warn"}>
+              {settings.smtpConfigured ? "已配置" : "未配置"}
+            </span>
+          </div>
+          <div className="form">
+            <div className="grid cols-2">
+              <label className="field">
+                <span>SMTP Host</span>
+                <input className="input" onChange={(event) => setSmtpHost(event.target.value)} value={smtpHost} />
+              </label>
+              <label className="field">
+                <span>端口</span>
+                <input
+                  className="input"
+                  max={65535}
+                  min={1}
+                  onChange={(event) => setSmtpPort(Number(event.target.value))}
+                  type="number"
+                  value={smtpPort}
+                />
+              </label>
+            </div>
+            <label className="check-row">
+              <input checked={smtpSecure} onChange={(event) => setSmtpSecure(event.target.checked)} type="checkbox" />
+              使用 SSL/TLS
+            </label>
+            <label className="field">
+              <span>发件人 From</span>
+              <input className="input" onChange={(event) => setSmtpFrom(event.target.value)} placeholder="APIshare <no-reply@example.com>" value={smtpFrom} />
+            </label>
+            <div className="grid cols-2">
+              <label className="field">
+                <span>SMTP 用户名</span>
+                <input className="input" onChange={(event) => setSmtpUser(event.target.value)} value={smtpUser} />
+              </label>
+              <label className="field">
+                <span>SMTP 密码</span>
+                <input
+                  className="input"
+                  onChange={(event) => setSmtpPassword(event.target.value)}
+                  placeholder={settings.smtpConfigured ? "留空则不修改" : ""}
+                  type="password"
+                  value={smtpPassword}
+                />
+              </label>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {savedMessage ? <div className="success">{savedMessage}</div> : null}
+      <div className="button-row">
+        <button className="button" disabled={saving} type="submit">
+          <Save size={17} />
+          {saving ? "保存中..." : "保存登录设置"}
+        </button>
+      </div>
+    </form>
   );
 }
 

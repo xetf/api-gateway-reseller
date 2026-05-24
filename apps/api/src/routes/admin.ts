@@ -11,6 +11,11 @@ import { createApiKey, createRedeemCode } from "../lib/crypto.js";
 import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
 import { getApiKeyTotalUsageUsd } from "../services/api-key-limits.js";
 import {
+  readAuthSettings,
+  saveAuthSettings,
+  toAdminAuthSettings,
+} from "../services/auth-settings.js";
+import {
   checkModelPoolChannel,
   getModelPoolChannelHealthTiming,
   getModelPoolHealthCheckIntervalSeconds,
@@ -107,6 +112,31 @@ const noticeTextSchema = z
     const trimmed = value.trim();
     return trimmed ? trimmed : null;
   });
+const nonNegativeMoneySchema = z.string().or(z.number()).transform((value, context) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    context.addIssue({
+      code: "custom",
+      message: "Amount must be a non-negative number",
+    });
+    return z.NEVER;
+  }
+
+  return numeric.toFixed(8);
+});
+const authSettingsSchema = z.object({
+  emailCodeLoginEnabled: z.boolean(),
+  emailCodeAutoRegisterEnabled: z.boolean(),
+  newUserBonusUsd: nonNegativeMoneySchema,
+  emailCodeTtlSeconds: z.number().int().min(60).max(3600),
+  emailCodeCooldownSeconds: z.number().int().min(10).max(600),
+  smtpHost: z.string().trim().max(255),
+  smtpPort: z.number().int().min(1).max(65535),
+  smtpSecure: z.boolean(),
+  smtpUser: z.string().trim().max(255),
+  smtpPassword: z.string().max(1000).optional(),
+  smtpFrom: z.string().trim().max(255),
+});
 const adminCreateApiKeySchema = z.object({
   name: z.string().min(1).max(80),
   rateLimitPerMinute: z.number().int().positive().max(10000).default(60),
@@ -218,6 +248,21 @@ export async function adminRoutes(app: FastifyInstance) {
       apiKeys: apiKeyStats,
       checkedAt: new Date().toISOString(),
     };
+  });
+
+  app.get("/admin/auth-settings", async () => {
+    const settings = await readAuthSettings();
+    return { settings: toAdminAuthSettings(settings) };
+  });
+
+  app.put("/admin/auth-settings", async (request) => {
+    const body = authSettingsSchema.parse(request.body);
+    const settings = await saveAuthSettings({
+      ...body,
+      smtpPassword: body.smtpPassword?.trim() ? body.smtpPassword : undefined,
+    });
+
+    return { settings: toAdminAuthSettings(settings) };
   });
 
   app.get("/admin/users", async () => {
@@ -795,6 +840,7 @@ export async function adminRoutes(app: FastifyInstance) {
         latencyMs: true,
         firstTokenLatencyMs: true,
         errorMessage: true,
+        responseUsage: true,
         createdAt: true,
         user: {
           select: {
@@ -811,6 +857,63 @@ export async function adminRoutes(app: FastifyInstance) {
       hasMore,
       nextCursor: hasMore ? requests.at(-1)?.id ?? null : null,
     };
+  });
+
+  app.get("/admin/requests/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const apiRequest = await prisma.apiRequest.findUnique({
+      where: { id: params.id },
+      select: {
+        id: true,
+        upstreamProvider: true,
+        upstreamRequestId: true,
+        upstreamProviderKey: {
+          select: {
+            id: true,
+            name: true,
+            keyPrefix: true,
+          },
+        },
+        clientIp: true,
+        userAgent: true,
+        apiKey: {
+          select: {
+            id: true,
+            name: true,
+            keyPrefix: true,
+          },
+        },
+        model: true,
+        endpoint: true,
+        method: true,
+        status: true,
+        httpStatus: true,
+        inputTokens: true,
+        cachedInputTokens: true,
+        outputTokens: true,
+        totalTokens: true,
+        chargedAmountUsd: true,
+        upstreamCostUsd: true,
+        latencyMs: true,
+        firstTokenLatencyMs: true,
+        errorMessage: true,
+        requestBody: true,
+        responseUsage: true,
+        createdAt: true,
+        updatedAt: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!apiRequest) {
+      return reply.status(404).send({ message: "Request not found" });
+    }
+
+    return { request: apiRequest };
   });
 
   app.get("/admin/redeem-codes", async () => {

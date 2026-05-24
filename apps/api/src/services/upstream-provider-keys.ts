@@ -1,5 +1,6 @@
 import { prisma, type UpstreamProvider, type UpstreamProviderKey } from "@gateway/db";
 import { redis } from "../lib/redis.js";
+import { getStickyProviderKeyOccupancies } from "./model-pool-stickiness.js";
 
 const initialProviderKeyName = "key-1";
 
@@ -125,6 +126,7 @@ export async function getActiveProviderKeys(
 
 export async function reserveProviderKey(
   provider: Pick<UpstreamProvider, "id" | "apiKey" | "status">,
+  preferredKeyId?: string | null,
 ): Promise<UpstreamKeyReservation | null> {
   const keys = await getActiveProviderKeys(provider);
 
@@ -132,9 +134,24 @@ export async function reserveProviderKey(
     return null;
   }
 
+  if (preferredKeyId) {
+    const preferredKey = keys.find((key) => key.id === preferredKeyId);
+    if (preferredKey) {
+      await prisma.upstreamProviderKey.update({
+        where: { id: preferredKey.id },
+        data: { lastUsedAt: new Date() },
+      });
+      return createKeyReservation(preferredKey);
+    }
+  }
+
+  const stickyOccupancies = await getStickyProviderKeyOccupancies(keys.map((key) => key.id));
+
   try {
-    const selectedKeyId = await reserveKeyAtomically(keys);
-    const selectedKey = keys.find((key) => key.id === selectedKeyId) ?? keys[0];
+    const selectedKeyId = await reserveKeyAtomically(keys, stickyOccupancies);
+    const selectedKey =
+      keys.find((key) => key.id === selectedKeyId) ??
+      chooseFallbackKey(keys, stickyOccupancies);
 
     if (!selectedKey) {
       return null;
@@ -147,7 +164,7 @@ export async function reserveProviderKey(
 
     return createKeyReservation(selectedKey);
   } catch {
-    const fallbackKey = keys[0];
+    const fallbackKey = chooseFallbackKey(keys, stickyOccupancies);
     if (!fallbackKey) {
       return null;
     }
@@ -164,12 +181,16 @@ export async function reserveProviderKey(
   }
 }
 
-async function reserveKeyAtomically(keys: UpstreamProviderKey[]) {
+async function reserveKeyAtomically(
+  keys: UpstreamProviderKey[],
+  stickyOccupancies: Map<string, number>,
+) {
   const redisKeys = keys.map((key) => upstreamKeyInflightKey(key.id));
   const args = [
     String(keyInflightTtlSeconds),
     ...keys.flatMap((key) => [
       key.id,
+      String(stickyOccupancies.get(key.id) ?? 0),
       String(key.priority),
       String(key.lastUsedAt?.getTime() ?? 0),
     ]),
@@ -179,33 +200,37 @@ async function reserveKeyAtomically(keys: UpstreamProviderKey[]) {
     `
 local ttl = tonumber(ARGV[1])
 local bestIndex = 1
+local bestSticky = nil
 local bestInflight = nil
 local bestPriority = nil
 local bestLastUsed = nil
 local argIndex = 2
 
 for index = 1, #KEYS do
-  local priority = tonumber(ARGV[argIndex + 1])
-  local lastUsed = tonumber(ARGV[argIndex + 2])
+  local sticky = tonumber(ARGV[argIndex + 1])
+  local priority = tonumber(ARGV[argIndex + 2])
+  local lastUsed = tonumber(ARGV[argIndex + 3])
   local inflight = tonumber(redis.call("GET", KEYS[index]) or "0")
 
-  if bestInflight == nil
-    or inflight < bestInflight
-    or (inflight == bestInflight and priority < bestPriority)
-    or (inflight == bestInflight and priority == bestPriority and lastUsed < bestLastUsed)
+  if bestSticky == nil
+    or sticky < bestSticky
+    or (sticky == bestSticky and inflight < bestInflight)
+    or (sticky == bestSticky and inflight == bestInflight and priority < bestPriority)
+    or (sticky == bestSticky and inflight == bestInflight and priority == bestPriority and lastUsed < bestLastUsed)
   then
+    bestSticky = sticky
     bestInflight = inflight
     bestPriority = priority
     bestLastUsed = lastUsed
     bestIndex = index
   end
 
-  argIndex = argIndex + 3
+  argIndex = argIndex + 4
 end
 
 redis.call("INCR", KEYS[bestIndex])
 redis.call("EXPIRE", KEYS[bestIndex], ttl)
-return ARGV[2 + ((bestIndex - 1) * 3)]
+return ARGV[2 + ((bestIndex - 1) * 4)]
 `,
     redisKeys.length,
     ...redisKeys,
@@ -213,6 +238,25 @@ return ARGV[2 + ((bestIndex - 1) * 3)]
   );
 
   return typeof result === "string" ? result : null;
+}
+
+function chooseFallbackKey(
+  keys: UpstreamProviderKey[],
+  stickyOccupancies: Map<string, number>,
+) {
+  return [...keys].sort((left, right) => {
+    const stickyDelta =
+      (stickyOccupancies.get(left.id) ?? 0) - (stickyOccupancies.get(right.id) ?? 0);
+    if (stickyDelta !== 0) {
+      return stickyDelta;
+    }
+
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+
+    return (left.lastUsedAt?.getTime() ?? 0) - (right.lastUsedAt?.getTime() ?? 0);
+  })[0] ?? null;
 }
 
 function createKeyReservation(key: UpstreamProviderKey) {

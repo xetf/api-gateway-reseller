@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "API Gateway",
-  description: "API key, wallet, usage, and billing dashboard.",
+  title: "APIshare",
+  description: "APIshare account, wallet, usage, and billing dashboard.",
 };
 
 export const viewport: Viewport = {

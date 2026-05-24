@@ -2,7 +2,7 @@ import { prisma } from "@gateway/db";
 import { env } from "../env.js";
 import {
   clearStickyModelPoolChannel,
-  getStickyModelPoolChannel,
+  getStickyModelPoolRoute,
   setStickyModelPoolChannel,
 } from "./model-pool-stickiness.js";
 import {
@@ -53,6 +53,7 @@ export async function getProviderForModel(callerIdentity: string, model: string)
   provider: RoutedProvider;
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId?: string;
+  upstreamProviderKeyId?: string;
   release?: ReleaseModelPoolReservation;
 } | null> {
   const modelPool = await prisma.modelPool.findFirst({
@@ -79,19 +80,33 @@ export async function getProviderForModel(callerIdentity: string, model: string)
     return null;
   }
 
-  const stickyChannelId = await getStickyModelPoolChannel(callerIdentity, model);
-  if (stickyChannelId) {
-    const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyChannelId);
+  const stickyRouteState = await getStickyModelPoolRoute(callerIdentity, model);
+  if (stickyRouteState) {
+    const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyRouteState.channelId);
     if (stickyChannel) {
-      const stickyRoute = await getRouteForChannelWithKey(model, stickyChannel);
+      const stickyRoute = await getRouteForChannelWithKey(
+        model,
+        stickyChannel,
+        stickyRouteState.upstreamProviderKeyId,
+      );
 
       if (stickyRoute) {
-        await setStickyModelPoolChannel(callerIdentity, model, stickyChannel.id);
+        await setStickyModelPoolChannel(
+          callerIdentity,
+          model,
+          stickyChannel.id,
+          stickyRoute.upstreamProviderKeyId,
+        );
         return stickyRoute;
       }
     }
 
-    await clearStickyModelPoolChannel(callerIdentity, model, stickyChannelId);
+    await clearStickyModelPoolChannel(
+      callerIdentity,
+      model,
+      stickyRouteState.channelId,
+      stickyRouteState.upstreamProviderKeyId,
+    );
   }
 
   const routeCandidates = await getRouteCandidates(model, modelPool.channels);
@@ -110,7 +125,12 @@ export async function getProviderForModel(callerIdentity: string, model: string)
 
     const preparedRoute = await prepareRoute(balancedRoute);
     if (preparedRoute) {
-      await setStickyModelPoolChannel(callerIdentity, model, balancedRoute.channelId);
+      await setStickyModelPoolChannel(
+        callerIdentity,
+        model,
+        balancedRoute.channelId,
+        preparedRoute.upstreamProviderKeyId,
+      );
       return preparedRoute;
     }
 
@@ -269,6 +289,7 @@ async function getRouteForChannelWithKey(
     id: string;
     upstreamProvider: string;
   },
+  preferredKeyId?: string | null,
 ) {
   const route = await getRouteForChannel(model, channel);
 
@@ -276,7 +297,7 @@ async function getRouteForChannelWithKey(
     return null;
   }
 
-  const preparedRoute = await prepareRoute(route);
+  const preparedRoute = await prepareRoute(route, preferredKeyId);
   if (!preparedRoute) {
     return null;
   }
@@ -284,13 +305,16 @@ async function getRouteForChannelWithKey(
   return preparedRoute;
 }
 
-async function prepareRoute(route: {
-  provider: Provider;
-  price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
-  channelId: string;
-  release?: ReleaseModelPoolReservation;
-}) {
-  const keyReservation = await reserveKeyForProvider(route.provider);
+async function prepareRoute(
+  route: {
+    provider: Provider;
+    price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+    channelId: string;
+    release?: ReleaseModelPoolReservation;
+  },
+  preferredKeyId?: string | null,
+) {
+  const keyReservation = await reserveKeyForProvider(route.provider, preferredKeyId);
 
   if (!keyReservation) {
     return null;
@@ -306,11 +330,15 @@ async function prepareRoute(route: {
     },
     price: route.price,
     channelId: route.channelId,
+    upstreamProviderKeyId: keyReservation.key.id,
     release: composeReleases(route.release, keyReservation.release),
   };
 }
 
-async function reserveKeyForProvider(provider: Provider): Promise<UpstreamKeyReservation | null> {
+async function reserveKeyForProvider(
+  provider: Provider,
+  preferredKeyId?: string | null,
+): Promise<UpstreamKeyReservation | null> {
   if (provider.id === "env") {
     return {
       key: {
@@ -332,7 +360,7 @@ async function reserveKeyForProvider(provider: Provider): Promise<UpstreamKeyRes
     };
   }
 
-  return reserveProviderKey(provider);
+  return reserveProviderKey(provider, preferredKeyId);
 }
 
 function composeReleases(

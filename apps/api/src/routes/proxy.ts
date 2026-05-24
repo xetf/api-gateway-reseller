@@ -80,6 +80,7 @@ const missingUsageNotice = [
   "这次上游没有返回可计费用量，网关无法安全完成扣费。",
   "请新建对话或清空当前会话上下文后重试；如果仍失败，请换一个上游渠道或联系管理员查看后台失败记录。",
 ].join("\n");
+const recoveryNoticeUsageSource = "gateway_recovery_notice";
 
 export async function proxyRoutes(app: FastifyInstance) {
   for (const pattern of proxyRoutePatterns) {
@@ -232,6 +233,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           Math.round(performance.now() - start),
         );
         if (recoveryNotice) {
+          await markRecoveryNoticeReturned(apiRequest.id, recoveryNotice, "upstream_non_ok");
           return sendApiKeyNotice(
             reply,
             endpoint,
@@ -246,6 +248,7 @@ export async function proxyRoutes(app: FastifyInstance) {
             callerIdentity: callerIpIdentity,
             model,
             channelId,
+            upstreamProviderKeyId,
             failed: true,
             latencyMs: Math.round(performance.now() - start),
           });
@@ -282,6 +285,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           priceId: price.id,
           model: billableModel ?? price.model,
           channelId,
+          upstreamProviderKeyId,
           startedAt: start,
           logger: app.log,
         });
@@ -328,6 +332,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         callerIdentity: callerIpIdentity,
         model: billableModel ?? price.model,
         channelId,
+        upstreamProviderKeyId,
         latencyMs: Math.round(performance.now() - start),
       });
       await recordModelPoolUserCallResult({
@@ -355,6 +360,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         Math.round(performance.now() - start),
       );
       if (recoveryNotice) {
+        await markRecoveryNoticeReturned(apiRequest.id, recoveryNotice, "proxy_catch");
         return sendApiKeyNotice(
           reply,
           endpoint,
@@ -369,6 +375,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           callerIdentity: callerIpIdentity,
           model,
           channelId,
+          upstreamProviderKeyId,
           failed: true,
           latencyMs: Math.round(performance.now() - start),
         });
@@ -544,6 +551,24 @@ function getGatewayRecoveryNotice(error: unknown) {
   }
 
   return null;
+}
+
+async function markRecoveryNoticeReturned(
+  requestId: string,
+  noticeText: string,
+  reason: string,
+) {
+  await prisma.apiRequest.update({
+    where: { id: requestId },
+    data: {
+      responseUsage: {
+        source: recoveryNoticeUsageSource,
+        returnedToUser: true,
+        reason,
+        noticeText,
+      },
+    },
+  });
 }
 
 function buildNoticeStream(endpoint: string, model: string, notice: string) {
@@ -1047,6 +1072,8 @@ function isShareApiProvider(provider: { name: string; baseUrl: string }) {
 function buildShareApiResponsesBody(body: ProxyBody): ProxyBody {
   const normalized: ProxyBody = { ...body };
 
+  delete normalized.max_output_tokens;
+
   if (!Object.prototype.hasOwnProperty.call(normalized, "instructions")) {
     normalized.instructions = "";
   }
@@ -1069,6 +1096,7 @@ async function proxyStream(params: {
   apiKeyId: string;
   model: string;
   channelId?: string;
+  upstreamProviderKeyId?: string | null;
   priceId: string;
   startedAt: number;
   logger?: {
@@ -1076,7 +1104,7 @@ async function proxyStream(params: {
     info?: (value: unknown, message?: string) => void;
   };
 }) {
-  const { reply, upstreamResponse, apiRequestId, endpoint, requestBody, userId, callerIdentity, apiKeyId, model, channelId, priceId, startedAt, logger } = params;
+  const { reply, upstreamResponse, apiRequestId, endpoint, requestBody, userId, callerIdentity, apiKeyId, model, channelId, upstreamProviderKeyId, priceId, startedAt, logger } = params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
   });
@@ -1099,6 +1127,7 @@ async function proxyStream(params: {
           callerIdentity,
           model,
           channelId,
+          upstreamProviderKeyId,
           failed: true,
           latencyMs: Math.round(performance.now() - startedAt),
         });
@@ -1216,6 +1245,7 @@ async function proxyStream(params: {
           callerIdentity,
           model,
           channelId,
+          upstreamProviderKeyId,
           firstTokenLatencyMs,
           latencyMs: Math.round(performance.now() - startedAt),
         });
@@ -1240,6 +1270,7 @@ async function proxyStream(params: {
           Math.round(performance.now() - startedAt),
         );
         if (recoveryNotice) {
+          await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "stream_recovery_notice");
           controller.enqueue(encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)));
           return;
         }
@@ -1247,6 +1278,7 @@ async function proxyStream(params: {
           callerIdentity,
           model,
           channelId,
+          upstreamProviderKeyId,
           failed: true,
           latencyMs: Math.round(performance.now() - startedAt),
         });
