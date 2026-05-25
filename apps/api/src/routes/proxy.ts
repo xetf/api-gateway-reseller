@@ -774,6 +774,121 @@ async function applyCompactFallback(params: {
   }
 }
 
+async function recoverInvalidEncryptedContentWithCompact(params: {
+  app: FastifyInstance;
+  body: ProxyBody;
+  route: UpstreamAttemptRoute;
+  apiRequestId: string;
+  userId: string;
+  apiKeyId: string;
+  model?: string;
+  compactFallbackContext: CompactFallbackContext;
+}): Promise<ProxyBody | null> {
+  const {
+    app,
+    body,
+    route,
+    apiRequestId,
+    userId,
+    apiKeyId,
+    model,
+    compactFallbackContext,
+  } = params;
+
+  let cachedCompact: Awaited<ReturnType<typeof findCachedCompactForBody>>;
+  try {
+    cachedCompact = await findCachedCompactForBody(body);
+  } catch (error) {
+    app.log.warn(
+      { error },
+      "Responses compact cache lookup failed during invalid encrypted content recovery",
+    );
+    return null;
+  }
+
+  if (!cachedCompact) {
+    return null;
+  }
+
+  if (
+    cachedCompact.cache.userId !== userId ||
+    cachedCompact.cache.apiKeyId !== apiKeyId ||
+    cachedCompact.cache.model !== model
+  ) {
+    app.log.warn(
+      {
+        compactCacheId: cachedCompact.compactCacheId,
+        encryptedContentHash: cachedCompact.encryptedContentHash,
+      },
+      "Responses compact cache ownership mismatch during invalid encrypted content recovery",
+    );
+    return null;
+  }
+
+  const targetFingerprint = getCompactRouteFingerprint(route);
+  compactFallbackContext.attempted = true;
+  const trace: CompactFallbackTrace = {
+    gatewayCompactFallback: true,
+    fallbackAttempted: true,
+    fallbackSucceeded: false,
+    compactCacheId: cachedCompact.compactCacheId,
+    encryptedContentHash: cachedCompact.encryptedContentHash,
+    sourceFingerprint: cachedCompact.cache.sourceFingerprint,
+    targetFingerprint,
+  };
+  compactFallbackContext.trace = trace;
+  await prisma.apiRequest.updateMany({
+    where: {
+      id: apiRequestId,
+      status: "PENDING",
+    },
+    data: {
+      responseUsage: createCompactFallbackResponseUsage(
+        trace,
+        "invalid_encrypted_content_recovery_in_progress",
+      ) as Prisma.InputJsonValue,
+    },
+  });
+
+  try {
+    const targetCompactItems = await requestTargetCompact({
+      route,
+      requestBody: cachedCompact.cache.requestBody,
+    });
+    await saveTargetCompactItems({
+      compactCacheId: cachedCompact.compactCacheId,
+      targetFingerprint,
+      targetItems: targetCompactItems,
+    });
+    const replacementsByHash = buildCompactFallbackReplacements(
+      cachedCompact.cache.encryptedContentHashes,
+      targetCompactItems,
+    );
+    const replaced = replaceCompactionItemsByEncryptedContentHashes(
+      body,
+      replacementsByHash,
+    );
+    trace.replacements = replaced.replacements;
+    trace.fallbackSucceeded = replaced.replacements > 0;
+
+    return replaced.replacements > 0 ? replaced.value : null;
+  } catch (error) {
+    trace.error =
+      error instanceof Error
+        ? error.message
+        : "invalid encrypted content recovery compact failed";
+    app.log.warn(
+      {
+        error,
+        compactCacheId: cachedCompact.compactCacheId,
+        targetFingerprint,
+      },
+      "Responses compact recovery failed; continuing original invalid encrypted content handling",
+    );
+    return null;
+  }
+}
+
 function buildCompactFallbackReplacements(
   sourceEncryptedContentHashes: string[],
   targetItems: Array<{ encryptedContent: string; item: unknown }>,
@@ -929,6 +1044,7 @@ async function runUpstreamAttempt(params: {
   startedAt: number;
   attempt: number;
   compactFallbackContext: CompactFallbackContext;
+  invalidCompactRetryAttempted?: boolean;
 }): Promise<UpstreamAttemptResult> {
   const {
     app,
@@ -947,6 +1063,7 @@ async function runUpstreamAttempt(params: {
     billableModel,
     startedAt,
     compactFallbackContext,
+    invalidCompactRetryAttempted,
   } = params;
   const { provider, price, channelId } = route;
   const upstreamProviderKeyId = getLoggedUpstreamProviderKeyId(route);
@@ -1025,6 +1142,32 @@ async function runUpstreamAttempt(params: {
       const text = await upstreamResponse.text();
       const statusCode = upstreamResponse.status;
       const retryableFailure = isRetryableUpstreamStatus(statusCode);
+
+      if (
+        endpoint === "/v1/responses" &&
+        request.method === "POST" &&
+        !invalidCompactRetryAttempted &&
+        isInvalidEncryptedContentError(text)
+      ) {
+        const recoveredBody = await recoverInvalidEncryptedContentWithCompact({
+          app,
+          body: fallbackBody,
+          route,
+          apiRequestId,
+          userId,
+          apiKeyId,
+          model,
+          compactFallbackContext,
+        });
+
+        if (recoveredBody) {
+          return runUpstreamAttempt({
+            ...params,
+            body: recoveredBody,
+            invalidCompactRetryAttempted: true,
+          });
+        }
+      }
 
       if (
         retryableFailure &&
@@ -1787,10 +1930,7 @@ function getGatewayRecoveryNotice(error: unknown) {
     return staleResponsesContextNotice;
   }
 
-  if (
-    normalized.includes("invalid_encrypted_content") ||
-    normalized.includes("encrypted content could not be decrypted or parsed")
-  ) {
+  if (isInvalidEncryptedContentError(normalized)) {
     return invalidEncryptedContentNotice;
   }
 
@@ -1799,6 +1939,15 @@ function getGatewayRecoveryNotice(error: unknown) {
   }
 
   return null;
+}
+
+function isInvalidEncryptedContentError(value: unknown) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("invalid_encrypted_content") ||
+    normalized.includes("encrypted content could not be decrypted or parsed")
+  );
 }
 
 async function markRecoveryNoticeReturned(
