@@ -1159,8 +1159,11 @@ async function runUpstreamAttempt(params: {
       ? await upstreamResponse.json()
       : await upstreamResponse.text();
 
+    let normalCompactUsageMetadata:
+      | ReturnType<typeof createNormalCompactResponseUsage>
+      | undefined;
     if (endpoint === "/v1/responses/compact") {
-      await cacheCompactResponse({
+      const compactCacheResult = await cacheCompactResponse({
         logger: app.log,
         requestBody: body,
         responseBody,
@@ -1169,6 +1172,16 @@ async function runUpstreamAttempt(params: {
         model,
         route,
       });
+      if (compactCacheResult?.saved) {
+        normalCompactUsageMetadata = createNormalCompactResponseUsage(
+          "compact_request_completed",
+          {
+            compactCacheId: compactCacheResult.compactCacheId,
+            encryptedContentHashes: compactCacheResult.encryptedContentHashes,
+            sourceFingerprint: getCompactRouteFingerprint(route),
+          },
+        );
+      }
     }
 
     if (!billable || !price) {
@@ -1200,6 +1213,11 @@ async function runUpstreamAttempt(params: {
           "Upstream response did not include usage; using estimated billable usage",
         );
       }
+    }
+    if (normalCompactUsageMetadata) {
+      usage.raw = isPlainObject(usage.raw)
+        ? { ...usage.raw, ...normalCompactUsageMetadata }
+        : normalCompactUsageMetadata;
     }
     usage = withCompactFallbackUsage(usage, compactFallbackContext.trace);
     assertBillableUsage(usage);
@@ -1836,11 +1854,25 @@ function createCompactFallbackResponseUsage(
   };
 }
 
-function createNormalCompactResponseUsage(reason: string) {
+function createNormalCompactResponseUsage(
+  reason: string,
+  compact?: {
+    compactCacheId: string;
+    encryptedContentHashes: string[];
+    sourceFingerprint: string;
+  },
+) {
   return {
     source: "gateway_compact",
     reason,
     gatewayCompactKind: "normal",
+    ...(compact
+      ? {
+          compactCacheId: compact.compactCacheId,
+          encryptedContentHashes: compact.encryptedContentHashes,
+          sourceFingerprint: compact.sourceFingerprint,
+        }
+      : {}),
   };
 }
 
@@ -2259,8 +2291,11 @@ async function cacheCompactResponse(params: {
         "Responses compact result was not cached",
       );
     }
+
+    return result;
   } catch (error) {
     params.logger?.warn({ error }, "Responses compact cache save failed");
+    return { saved: false as const, reason: "cache_save_failed" };
   }
 }
 
@@ -2793,7 +2828,7 @@ async function proxyStream(params: {
           compactCacheRequestBody &&
           compactCacheSourceFingerprint
         ) {
-          await cacheCompactResponse({
+          const compactCacheResult = await cacheCompactResponse({
             logger,
             requestBody: compactCacheRequestBody,
             responseBody: parseSseJsonPayloads(rawStreamText),
@@ -2802,6 +2837,20 @@ async function proxyStream(params: {
             model,
             sourceFingerprint: compactCacheSourceFingerprint,
           });
+          if (compactCacheResult?.saved) {
+            const compactUsage = createNormalCompactResponseUsage(
+              "compact_request_completed",
+              {
+                compactCacheId: compactCacheResult.compactCacheId,
+                encryptedContentHashes:
+                  compactCacheResult.encryptedContentHashes,
+                sourceFingerprint: compactCacheSourceFingerprint,
+              },
+            );
+            streamUsage.raw = isPlainObject(streamUsage.raw)
+              ? { ...streamUsage.raw, ...compactUsage }
+              : compactUsage;
+          }
         }
 
         await chargeForRequest({

@@ -116,6 +116,20 @@ type ApiRequest = {
     name: string;
     keyPrefix: string;
   } | null;
+  compactFallbacks?: CompactFallbackSummary[];
+};
+
+type CompactFallbackSummary = {
+  id: string;
+  traceCode?: string | null;
+  createdAt: string;
+  status: string;
+  upstreamProvider?: string | null;
+  upstreamProviderKey?: ApiRequest["upstreamProviderKey"];
+  sourceFingerprint?: string | null;
+  targetFingerprint?: string | null;
+  replacements?: number | null;
+  fallbackSucceeded?: boolean | null;
 };
 
 type ApiRequestDetail = ApiRequest & {
@@ -2640,145 +2654,14 @@ function Requests({
                 </thead>
                 <tbody>
                   {requests.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        <strong className="request-trace-code">
-                          {formatRequestTraceCode(item)}
-                        </strong>
-                      </td>
-                      <td>
-                        <div className="audit-stack">
-                          <strong>{item.user?.email ?? "-"}</strong>
-                          <span>
-                            API Key：{formatRequestApiKey(item.apiKey)}
-                          </span>
-                          <IpCell
-                            ip={item.clientIp}
-                            banned={Boolean(
-                              item.clientIp &&
-                              bannedIpSet.has(
-                                normalizeIpForCompare(item.clientIp),
-                              ),
-                            )}
-                          />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="audit-stack">
-                          <strong>{item.model}</strong>
-                          <span>上游：{item.upstreamProvider ?? "-"}</span>
-                          <span>
-                            上游 Key：
-                            {formatRequestUpstreamKey(item.upstreamProviderKey)}
-                          </span>
-                          <span>
-                            推理：
-                            {formatReasoningEffortCell(
-                              item.reasoningEffort,
-                              item.reasoningEffortActual,
-                            )}
-                          </span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="request-status-cell">
-                          <StatusPill
-                            status={getRequestStatusPillStatus(item)}
-                          />
-                          {getCompactRequestLabel(item) ? (
-                            <span className="request-compact-fallback-pill">
-                              {getCompactRequestLabel(item)}
-                            </span>
-                          ) : null}
-                          {getReturnedNoticeText(item) ? (
-                            <span className="request-notice-pill">已提示</span>
-                          ) : null}
-                          {hasRequestError(item) ? (
-                            <button
-                              className="request-detail-button"
-                              onClick={() => void openRequestDetail(item)}
-                              title="查看详细报错原因和过程"
-                              type="button"
-                            >
-                              <FileSearch size={13} />
-                              详情
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="audit-metric-grid">
-                          <AuditMetric
-                            label="输入"
-                            value={formatNumber(item.inputTokens)}
-                          />
-                          <AuditMetric
-                            label="缓存"
-                            value={formatNumber(item.cachedInputTokens)}
-                          />
-                          <AuditMetric
-                            label="输出"
-                            value={formatNumber(item.outputTokens)}
-                          />
-                          <AuditMetric
-                            label="总计"
-                            value={formatNumber(item.totalTokens)}
-                            strong
-                          />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="audit-metric-grid">
-                          <AuditMetric
-                            label="扣费"
-                            value={`$${money(item.chargedAmountUsd)}`}
-                            strong
-                          />
-                          <AuditMetric
-                            label="成本"
-                            value={`$${money(item.upstreamCostUsd ?? "0")}`}
-                          />
-                          <AuditMetric
-                            label="毛利"
-                            value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
-                          />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="audit-stack">
-                          <span>总：{seconds(item.latencyMs)}</span>
-                          <span>
-                            首 token：{seconds(item.firstTokenLatencyMs)}
-                          </span>
-                          <span>{dateTime(item.createdAt)}</span>
-                        </div>
-                      </td>
-                      <td>
-                        {item.status === "PENDING" ? (
-                          <button
-                            className="request-terminate-button"
-                            disabled={
-                              terminatingRequestId === item.id ||
-                              isProtectedCompactRequest(item)
-                            }
-                            onClick={() => void terminateRequest(item)}
-                            title={
-                              isProtectedCompactRequest(item)
-                                ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
-                                : "终止这条仍在处理中的调用"
-                            }
-                            type="button"
-                          >
-                            <CircleStop size={13} />
-                            {isProtectedCompactRequest(item)
-                              ? "保护中"
-                              : "终止"}
-                          </button>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                    </tr>
+                    <AuditRequestRow
+                      bannedIpSet={bannedIpSet}
+                      item={item}
+                      key={item.id}
+                      onOpenDetail={openRequestDetail}
+                      onTerminate={terminateRequest}
+                      terminatingRequestId={terminatingRequestId}
+                    />
                   ))}
                   {requests.length === 0 ? <EmptyRow colSpan={8} /> : null}
                 </tbody>
@@ -3046,6 +2929,187 @@ function IpCell({ ip, banned }: { ip?: string | null; banned: boolean }) {
       <span>{ip}</span>
       {banned ? <span className="ip-ban-pill">已封禁</span> : null}
     </div>
+  );
+}
+
+function AuditRequestRow({
+  item,
+  bannedIpSet,
+  terminatingRequestId,
+  onOpenDetail,
+  onTerminate,
+}: {
+  item: ApiRequest;
+  bannedIpSet: Set<string>;
+  terminatingRequestId: string | null;
+  onOpenDetail: (request: ApiRequest) => Promise<void>;
+  onTerminate: (request: ApiRequest) => Promise<void>;
+}) {
+  const compactFallbacks = item.compactFallbacks ?? [];
+
+  return (
+    <>
+      <tr>
+        <td>
+          <strong className="request-trace-code">
+            {formatRequestTraceCode(item)}
+          </strong>
+        </td>
+        <td>
+          <div className="audit-stack">
+            <strong>{item.user?.email ?? "-"}</strong>
+            <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
+            <IpCell
+              ip={item.clientIp}
+              banned={Boolean(
+                item.clientIp &&
+                bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
+              )}
+            />
+          </div>
+        </td>
+        <td>
+          <div className="audit-stack">
+            <strong>{item.model}</strong>
+            <span>上游：{item.upstreamProvider ?? "-"}</span>
+            <span>
+              上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}
+            </span>
+            <span>
+              推理：
+              {formatReasoningEffortCell(
+                item.reasoningEffort,
+                item.reasoningEffortActual,
+              )}
+            </span>
+          </div>
+        </td>
+        <td>
+          <div className="request-status-cell">
+            <StatusPill status={getRequestStatusPillStatus(item)} />
+            {getCompactRequestLabel(item) ? (
+              <span className="request-compact-fallback-pill">
+                {getCompactRequestLabel(item)}
+              </span>
+            ) : null}
+            {compactFallbacks.length > 0 ? (
+              <span className="request-compact-fallback-pill secondary">
+                二次 {compactFallbacks.length}
+              </span>
+            ) : null}
+            {getReturnedNoticeText(item) ? (
+              <span className="request-notice-pill">已提示</span>
+            ) : null}
+            {hasRequestError(item) ? (
+              <button
+                className="request-detail-button"
+                onClick={() => void onOpenDetail(item)}
+                title="查看详细报错原因和过程"
+                type="button"
+              >
+                <FileSearch size={13} />
+                详情
+              </button>
+            ) : null}
+          </div>
+        </td>
+        <td>
+          <div className="audit-metric-grid">
+            <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
+            <AuditMetric
+              label="缓存"
+              value={formatNumber(item.cachedInputTokens)}
+            />
+            <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
+            <AuditMetric
+              label="总计"
+              value={formatNumber(item.totalTokens)}
+              strong
+            />
+          </div>
+        </td>
+        <td>
+          <div className="audit-metric-grid">
+            <AuditMetric
+              label="扣费"
+              value={`$${money(item.chargedAmountUsd)}`}
+              strong
+            />
+            <AuditMetric
+              label="成本"
+              value={`$${money(item.upstreamCostUsd ?? "0")}`}
+            />
+            <AuditMetric
+              label="毛利"
+              value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
+            />
+          </div>
+        </td>
+        <td>
+          <div className="audit-stack">
+            <span>总：{seconds(item.latencyMs)}</span>
+            <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
+            <span>{dateTime(item.createdAt)}</span>
+          </div>
+        </td>
+        <td>
+          {item.status === "PENDING" ? (
+            <button
+              className="request-terminate-button"
+              disabled={
+                terminatingRequestId === item.id ||
+                isProtectedCompactRequest(item)
+              }
+              onClick={() => void onTerminate(item)}
+              title={
+                isProtectedCompactRequest(item)
+                  ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
+                  : "终止这条仍在处理中的调用"
+              }
+              type="button"
+            >
+              <CircleStop size={13} />
+              {isProtectedCompactRequest(item) ? "保护中" : "终止"}
+            </button>
+          ) : (
+            "-"
+          )}
+        </td>
+      </tr>
+      {compactFallbacks.length > 0 ? (
+        <tr className="compact-fallback-linked-row">
+          <td colSpan={8}>
+            <div className="compact-fallback-linked-list">
+              {compactFallbacks.map((fallback) => (
+                <div className="compact-fallback-linked-item" key={fallback.id}>
+                  <span className="request-compact-fallback-pill">
+                    二次 compact
+                  </span>
+                  <strong>
+                    {formatTraceLike(fallback.traceCode, fallback.id)}
+                  </strong>
+                  <span>
+                    {formatFingerprintRoute(fallback.sourceFingerprint)} →{" "}
+                    {formatFingerprintRoute(fallback.targetFingerprint)}
+                  </span>
+                  <span>
+                    目标：{fallback.upstreamProvider ?? "-"} ·{" "}
+                    {formatRequestUpstreamKey(
+                      fallback.upstreamProviderKey ?? null,
+                    )}
+                  </span>
+                  <span>
+                    替换 {formatNumber(Number(fallback.replacements ?? 0))} 处 ·{" "}
+                    {fallback.fallbackSucceeded === false ? "未完成" : "成功"}
+                  </span>
+                  <span>{dateTime(fallback.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }
 
@@ -10331,6 +10395,10 @@ function formatRequestTraceCode(request: Pick<ApiRequest, "id" | "traceCode">) {
   );
 }
 
+function formatTraceLike(traceCode: string | null | undefined, id: string) {
+  return traceCode?.trim() || `REQ-${id.slice(-8).toUpperCase()}`;
+}
+
 function formatRequestUpstreamKey(
   upstreamKey: ApiRequest["upstreamProviderKey"],
 ) {
@@ -10339,6 +10407,31 @@ function formatRequestUpstreamKey(
   }
 
   return `${displayUpstreamProviderKeyName(upstreamKey.name)} (${upstreamKey.keyPrefix})`;
+}
+
+function formatFingerprintRoute(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const channel = value.match(/channel:([^:]+)/)?.[1];
+  const key = value.match(/key:([^:]+)/)?.[1];
+  if (channel && key) {
+    return `${shortId(channel)} / ${shortId(key)}`;
+  }
+  if (channel) {
+    return shortId(channel);
+  }
+  if (key) {
+    return shortId(key);
+  }
+  return shortId(value);
+}
+
+function shortId(value: string) {
+  return value.length > 12
+    ? `${value.slice(0, 8)}...${value.slice(-4)}`
+    : value;
 }
 
 function displayUpstreamProviderKeyName(name: string) {

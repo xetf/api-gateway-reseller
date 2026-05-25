@@ -1574,12 +1574,31 @@ export async function adminRoutes(app: FastifyInstance) {
       listIpBanRules(),
     ]);
     const hasMore = rows.length > query.take;
-    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(
+    const visibleRows = hasMore ? rows.slice(0, query.take) : rows;
+    const fallbackRowsByCompactCacheId = new Map<string, typeof visibleRows>();
+    for (const row of visibleRows) {
+      const compactCacheId = getFallbackCompactCacheId(row.responseUsage);
+      if (!compactCacheId) {
+        continue;
+      }
+      const entries = fallbackRowsByCompactCacheId.get(compactCacheId) ?? [];
+      entries.push(row);
+      fallbackRowsByCompactCacheId.set(compactCacheId, entries);
+    }
+
+    const requests = visibleRows.map(
       ({ requestBody, reasoningEffort, ...row }) => {
+        const compactCacheId = getNormalCompactCacheId(row.responseUsage);
+        const compactFallbacks = compactCacheId
+          ? (fallbackRowsByCompactCacheId.get(compactCacheId) ?? []).map(
+              toCompactFallbackSummary,
+            )
+          : [];
         return {
           ...row,
           reasoningEffort:
             reasoningEffort ?? getRequestReasoningEffortFromBody(requestBody),
+          ...(compactFallbacks.length > 0 ? { compactFallbacks } : {}),
         };
       },
     );
@@ -2044,12 +2063,10 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     if (priceCount === 0) {
-      return reply
-        .status(400)
-        .send({
-          message:
-            "Model must have upstream pricing before it can be added to the pool",
-        });
+      return reply.status(400).send({
+        message:
+          "Model must have upstream pricing before it can be added to the pool",
+      });
     }
 
     const pool = await prisma.modelPool.upsert({
@@ -2117,11 +2134,9 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     if (body.upstreamProvider.trim().toLowerCase() === "default") {
-      return reply
-        .status(400)
-        .send({
-          message: "Default upstream cannot be added to the model pool",
-        });
+      return reply.status(400).send({
+        message: "Default upstream cannot be added to the model pool",
+      });
     }
 
     const [provider, price] = await Promise.all([
@@ -2139,21 +2154,16 @@ export async function adminRoutes(app: FastifyInstance) {
     ]);
 
     if (!provider) {
-      return reply
-        .status(400)
-        .send({
-          message:
-            "Upstream provider must exist before it can be added to the model pool",
-        });
+      return reply.status(400).send({
+        message:
+          "Upstream provider must exist before it can be added to the model pool",
+      });
     }
 
     if (!price) {
-      return reply
-        .status(400)
-        .send({
-          message:
-            "Only priced upstream channels can be added to the model pool",
-        });
+      return reply.status(400).send({
+        message: "Only priced upstream channels can be added to the model pool",
+      });
     }
 
     const channel = await prisma.modelPoolChannel.upsert({
@@ -2566,11 +2576,9 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        return reply
-          .status(409)
-          .send({
-            message: "Upstream key name already exists for this provider",
-          });
+        return reply.status(409).send({
+          message: "Upstream key name already exists for this provider",
+        });
       }
       throw error;
     }
@@ -2612,11 +2620,9 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        return reply
-          .status(409)
-          .send({
-            message: "Upstream key name already exists for this provider",
-          });
+        return reply.status(409).send({
+          message: "Upstream key name already exists for this provider",
+        });
       }
       throw error;
     }
@@ -3080,6 +3086,85 @@ function isProtectedCompactRequest(endpoint: string, responseUsage: unknown) {
     record.gatewayCompactKind === "normal" ||
     record.gatewayCompactKind === "fallback"
   );
+}
+
+function getNormalCompactCacheId(responseUsage: unknown) {
+  const record = asRecord(responseUsage);
+  if (!record || record.gatewayCompactKind !== "normal") {
+    return null;
+  }
+
+  return typeof record.compactCacheId === "string"
+    ? record.compactCacheId
+    : null;
+}
+
+function getFallbackCompactCacheId(responseUsage: unknown) {
+  const record = asRecord(responseUsage);
+  if (!record) {
+    return null;
+  }
+
+  const fallback = asRecord(record.compactFallback);
+  const compactCacheId =
+    typeof fallback?.compactCacheId === "string"
+      ? fallback.compactCacheId
+      : typeof record.compactCacheId === "string"
+        ? record.compactCacheId
+        : null;
+  if (!compactCacheId) {
+    return null;
+  }
+
+  return record.gatewayCompactFallback === true ||
+    record.gatewayCompactKind === "fallback"
+    ? compactCacheId
+    : null;
+}
+
+function toCompactFallbackSummary(row: {
+  id: string;
+  traceCode: string | null;
+  createdAt: Date;
+  status: string;
+  upstreamProvider: string | null;
+  responseUsage: unknown;
+  upstreamProviderKey: {
+    id: string;
+    name: string;
+    keyPrefix: string;
+  } | null;
+}) {
+  const usage = asRecord(row.responseUsage);
+  const fallback = asRecord(usage?.compactFallback) ?? usage;
+  return {
+    id: row.id,
+    traceCode: row.traceCode,
+    createdAt: row.createdAt,
+    status: row.status,
+    upstreamProvider: row.upstreamProvider,
+    upstreamProviderKey: row.upstreamProviderKey,
+    sourceFingerprint:
+      typeof fallback?.sourceFingerprint === "string"
+        ? fallback.sourceFingerprint
+        : null,
+    targetFingerprint:
+      typeof fallback?.targetFingerprint === "string"
+        ? fallback.targetFingerprint
+        : null,
+    replacements:
+      typeof fallback?.replacements === "number" ? fallback.replacements : null,
+    fallbackSucceeded:
+      typeof fallback?.fallbackSucceeded === "boolean"
+        ? fallback.fallbackSucceeded
+        : null,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function normalizeNullableText(value: string | null | undefined) {
