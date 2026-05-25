@@ -1074,6 +1074,9 @@ async function runUpstreamAttempt(params: {
           recoveryNotice,
           "upstream_non_ok",
           compactFallbackContext.trace,
+          endpoint === "/v1/responses/compact"
+            ? createNormalCompactResponseUsage("compact_request_failed")
+            : undefined,
         );
         sendApiKeyNotice(
           reply,
@@ -1321,6 +1324,9 @@ async function runUpstreamAttempt(params: {
         recoveryNotice,
         "proxy_catch",
         compactFallbackContext.trace,
+        endpoint === "/v1/responses/compact"
+          ? createNormalCompactResponseUsage("compact_request_failed")
+          : undefined,
       );
       sendApiKeyNotice(
         reply,
@@ -1800,6 +1806,7 @@ async function markRecoveryNoticeReturned(
   noticeText: string,
   reason: string,
   compactFallbackTrace?: CompactFallbackTrace,
+  extraUsage?: Record<string, unknown>,
 ) {
   await prisma.apiRequest.update({
     where: { id: requestId },
@@ -1809,6 +1816,7 @@ async function markRecoveryNoticeReturned(
         returnedToUser: true,
         reason,
         noticeText,
+        ...extraUsage,
         ...compactFallbackUsageFields(compactFallbackTrace),
       },
     },
@@ -2945,6 +2953,9 @@ async function proxyStream(params: {
             recoveryNotice,
             "stream_recovery_notice",
             compactFallbackTrace,
+            endpoint === "/v1/responses/compact"
+              ? createNormalCompactResponseUsage("compact_request_failed")
+              : undefined,
           );
           safeController.enqueue(
             encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)),
@@ -3379,7 +3390,8 @@ function canEstimateUsageFromCompactResponse(
 ) {
   return (
     endpoint === "/v1/responses/compact" &&
-    (isCompletedResponsePayload(responseBody) ||
+    (hasEncryptedContent(responseBody) ||
+      isCompletedResponsePayload(responseBody) ||
       (isPlainObject(responseBody) && responseBody.status === "completed"))
   );
 }
@@ -3387,12 +3399,31 @@ function canEstimateUsageFromCompactResponse(
 function canEstimateUsageFromCompactStream(endpoint: string, buffer: string) {
   return (
     endpoint === "/v1/responses/compact" &&
-    sseBufferHasCompletedResponse(buffer)
+    parseSseJsonPayloads(buffer).some(
+      (payload) =>
+        hasEncryptedContent(payload) || isCompletedResponsePayload(payload),
+    )
   );
 }
 
 function sseBufferHasCompletedResponse(buffer: string) {
   return parseSseJsonPayloads(buffer).some(isCompletedResponsePayload);
+}
+
+function hasEncryptedContent(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(hasEncryptedContent);
+  }
+
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  if (typeof value.encrypted_content === "string" && value.encrypted_content) {
+    return true;
+  }
+
+  return Object.values(value).some(hasEncryptedContent);
 }
 
 function isCompletedResponsePayload(payload: unknown) {
