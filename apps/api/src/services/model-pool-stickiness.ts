@@ -274,14 +274,21 @@ export async function recordStickyModelPoolResult(params: {
   failed?: boolean;
   firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
+  ignoreSlowPenalty?: boolean;
 }) {
-  const { callerIdentity, model, channelId, upstreamProviderKeyId } = params;
+  const {
+    callerIdentity,
+    model,
+    channelId,
+    upstreamProviderKeyId,
+    ignoreSlowPenalty,
+  } = params;
 
   if (!channelId) {
     return;
   }
 
-  const slow = isStickyCallSlow(params);
+  const slow = ignoreSlowPenalty ? false : isStickyCallSlow(params);
 
   try {
     const key = slowKey(

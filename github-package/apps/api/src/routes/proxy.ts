@@ -1236,6 +1236,9 @@ async function runUpstreamAttempt(params: {
       upstreamProviderKeyId,
       firstTokenLatencyMs: null,
       latencyMs,
+      ignoreSlowPenalty:
+        endpoint === "/v1/responses/compact" ||
+        compactFallbackContext.trace?.gatewayCompactFallback === true,
     });
     await recordModelPoolUserCallResult({
       userId,
@@ -1287,6 +1290,9 @@ async function runUpstreamAttempt(params: {
         upstreamProviderKeyId,
         retryableFailure,
         startedAt,
+        ignoreSlowPenalty:
+          endpoint === "/v1/responses/compact" ||
+          compactFallbackContext.trace?.gatewayCompactFallback === true,
         logger: app.log,
       });
       return {
@@ -1336,6 +1342,9 @@ async function runUpstreamAttempt(params: {
         upstreamProviderKeyId,
         retryableFailure,
         startedAt,
+        ignoreSlowPenalty:
+          endpoint === "/v1/responses/compact" ||
+          compactFallbackContext.trace?.gatewayCompactFallback === true,
         logger: app.log,
       });
     }
@@ -1361,6 +1370,7 @@ async function recordFailedChannelAttempt(params: {
   upstreamProviderKeyId?: string | null;
   retryableFailure: boolean;
   startedAt: number;
+  ignoreSlowPenalty?: boolean;
   logger?: {
     warn: (value: unknown, message?: string) => void;
     info?: (value: unknown, message?: string) => void;
@@ -1378,6 +1388,7 @@ async function recordFailedChannelAttempt(params: {
     upstreamProviderKeyId: params.upstreamProviderKeyId,
     failed: params.retryableFailure,
     latencyMs,
+    ignoreSlowPenalty: params.ignoreSlowPenalty,
   });
   await recordModelPoolUserCallResult({
     userId: params.userId,
@@ -2695,6 +2706,7 @@ async function proxyStream(params: {
           upstreamProviderKeyId,
           failed: true,
           latencyMs: Math.round(performance.now() - startedAt),
+          ignoreSlowPenalty: endpoint === "/v1/responses/compact",
         });
         await recordModelPoolUserCallResult({
           userId,
@@ -2872,6 +2884,9 @@ async function proxyStream(params: {
           upstreamProviderKeyId,
           firstTokenLatencyMs,
           latencyMs: Math.round(performance.now() - startedAt),
+          ignoreSlowPenalty:
+            endpoint === "/v1/responses/compact" ||
+            compactFallbackTrace?.gatewayCompactFallback === true,
         });
         await recordModelPoolUserCallResult({
           userId,
@@ -2944,6 +2959,9 @@ async function proxyStream(params: {
             upstreamProviderKeyId,
             failed: true,
             latencyMs: Math.round(performance.now() - startedAt),
+            ignoreSlowPenalty:
+              endpoint === "/v1/responses/compact" ||
+              compactFallbackTrace?.gatewayCompactFallback === true,
           });
           await recordModelPoolUserCallResult({
             userId,
