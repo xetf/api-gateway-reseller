@@ -1380,6 +1380,7 @@ async function runUpstreamAttempt(params: {
       model: billableModel ?? price.model,
       channelId,
       upstreamProviderKeyId,
+      streamed: false,
       firstTokenLatencyMs: null,
       latencyMs,
       ignoreSlowPenalty:
@@ -1536,6 +1537,7 @@ async function recordFailedChannelAttempt(params: {
     channelId: params.channelId,
     upstreamProviderKeyId: params.upstreamProviderKeyId,
     failed: params.retryableFailure,
+    streamed: false,
     latencyMs,
     ignoreSlowPenalty: params.ignoreSlowPenalty,
   });
@@ -2862,6 +2864,7 @@ async function proxyStream(params: {
           channelId,
           upstreamProviderKeyId,
           failed: true,
+          streamed: true,
           latencyMs: Math.round(performance.now() - startedAt),
           ignoreSlowPenalty: endpoint === "/v1/responses/compact",
         });
@@ -3039,6 +3042,7 @@ async function proxyStream(params: {
           model,
           channelId,
           upstreamProviderKeyId,
+          streamed: true,
           firstTokenLatencyMs,
           latencyMs: Math.round(performance.now() - startedAt),
           ignoreSlowPenalty:
@@ -3069,6 +3073,11 @@ async function proxyStream(params: {
             clientStreamClosedMessage,
             clientStreamClosedStatusCode,
             Math.round(performance.now() - startedAt),
+            createFailureResponseUsage({
+              manualTerminated: false,
+              compactFallbackTrace,
+              reason: "client_stream_closed",
+            }),
           );
           logger?.info?.(
             { apiRequestId, model, channelId },
@@ -3118,6 +3127,7 @@ async function proxyStream(params: {
             channelId,
             upstreamProviderKeyId,
             failed: true,
+            streamed: true,
             latencyMs: Math.round(performance.now() - startedAt),
             ignoreSlowPenalty:
               endpoint === "/v1/responses/compact" ||

@@ -1,8 +1,8 @@
 import { redis } from "../lib/redis.js";
 
-export const modelPoolStickinessTtlSeconds = 120;
-const slowFirstTokenThresholdMs = 10_000;
-const slowTotalLatencyThresholdMs = 15_000;
+export const modelPoolStickinessTtlSeconds = 600;
+const slowFirstTokenThresholdMs = 30_000;
+const slowTotalLatencyThresholdMs = 100_000;
 const maxConsecutiveSlowCalls = 3;
 const stickyOccupancyTtlSeconds = modelPoolStickinessTtlSeconds + 30;
 
@@ -245,6 +245,7 @@ function parseStickyRoute(value: string | null): StickyModelPoolRoute | null {
 
 export function isStickyCallSlow(params: {
   failed?: boolean;
+  streamed?: boolean;
   firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
 }) {
@@ -253,6 +254,7 @@ export function isStickyCallSlow(params: {
   }
 
   if (
+    params.streamed &&
     params.firstTokenLatencyMs !== undefined &&
     params.firstTokenLatencyMs !== null
   ) {
@@ -272,6 +274,7 @@ export async function recordStickyModelPoolResult(params: {
   channelId?: string;
   upstreamProviderKeyId?: string | null;
   failed?: boolean;
+  streamed?: boolean;
   firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
   ignoreSlowPenalty?: boolean;
