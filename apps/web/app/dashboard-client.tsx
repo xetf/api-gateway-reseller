@@ -2661,7 +2661,7 @@ function RequestDetailModal({ request, loading, detailError, onClose }: { reques
             <RequestDetailField label="模型">{request.model}</RequestDetailField>
             {reasoningEffort ? (
               <RequestDetailField label="推理强度">
-                {formatReasoningEffort(reasoningEffort)} · {reasoningEffort}
+                {formatReasoningEffortCell(reasoningEffort, request.reasoningEffortActual)}
               </RequestDetailField>
             ) : null}
             <RequestDetailField label="上游">{request.upstreamProvider ?? "-"}</RequestDetailField>
@@ -2760,7 +2760,11 @@ function getRequestStatusPillStatus(item: ApiRequest) {
   return isManualTerminatedRequest(item) ? "TERMINATED" : item.status;
 }
 
-function getRequestReasoningEffort(item: Pick<ApiRequestDetail, "requestBody">) {
+function getRequestReasoningEffort(item: Pick<ApiRequestDetail, "requestBody" | "reasoningEffort">) {
+  if (item.reasoningEffort?.trim()) {
+    return item.reasoningEffort.trim();
+  }
+
   const body = item.requestBody;
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return null;

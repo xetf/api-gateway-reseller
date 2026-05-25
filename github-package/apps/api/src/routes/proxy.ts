@@ -27,7 +27,10 @@ import {
   ipBanNoticeUsageSource,
   type IpBanRule,
 } from "../services/ip-ban-rules.js";
-import { applyReasoningEffortTransform } from "../services/reasoning-effort-transform-settings.js";
+import {
+  applyReasoningEffortTransform,
+  getReasoningEffortFromBody,
+} from "../services/reasoning-effort-transform-settings.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
 type ModelRoute = NonNullable<Awaited<ReturnType<typeof getProviderForModel>>>;
@@ -284,6 +287,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         upstreamProviderKeyId: getLoggedUpstreamProviderKeyId(initialRoute),
         upstreamProvider: initialRoute.provider.name,
         model: model ?? inferModelFromEndpoint(endpoint),
+        reasoningEffort: getReasoningEffortFromBody(body),
         endpoint,
         method: request.method,
         status: "PENDING",
@@ -520,6 +524,13 @@ async function runUpstreamAttempt(params: {
   const { provider, price, channelId } = route;
   const upstreamProviderKeyId = getLoggedUpstreamProviderKeyId(route);
   const upstreamBody = await applyReasoningEffortTransform(buildUpstreamBody(endpoint, body, provider));
+  const actualReasoningEffort = getReasoningEffortFromBody(upstreamBody);
+  if (actualReasoningEffort) {
+    await prisma.apiRequest.update({
+      where: { id: apiRequestId },
+      data: { reasoningEffortActual: actualReasoningEffort },
+    });
+  }
   const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
   let streamFirstTokenFetchTimedOut = false;
   let activeController: AbortController | undefined;
@@ -1284,6 +1295,8 @@ async function sendIpBanResponse(params: {
       model: typeof body.model === "string" && body.model.trim()
         ? body.model
         : inferModelFromEndpoint(endpoint),
+      reasoningEffort: getReasoningEffortFromBody(body),
+      reasoningEffortActual: getReasoningEffortFromBody(body),
       endpoint,
       method,
       status: "FAILED",

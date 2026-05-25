@@ -145,6 +145,8 @@ const publicRequestSelect = {
     },
   },
   model: true,
+  reasoningEffort: true,
+  reasoningEffortActual: true,
   endpoint: true,
   method: true,
   status: true,

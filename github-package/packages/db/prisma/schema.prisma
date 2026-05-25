@@ -133,6 +133,8 @@ model ApiRequest {
   upstreamProviderKeyId String?
   upstreamProvider  String
   model             String
+  reasoningEffort   String?
+  reasoningEffortActual String?
   endpoint          String
   method            String
   status            ApiRequestStatus @default(PENDING)

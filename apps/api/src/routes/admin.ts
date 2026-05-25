@@ -402,24 +402,6 @@ function getRequestReasoningEffortFromBody(body: unknown) {
   return null;
 }
 
-function getTransformedReasoningEffort(
-  reasoningEffort: string | null,
-  settings: Awaited<ReturnType<typeof readReasoningEffortTransformSettings>>,
-) {
-  const normalized = reasoningEffort?.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  for (const rule of settings.rules) {
-    if (rule.enabled && rule.from !== rule.to && normalized === rule.from) {
-      return rule.to;
-    }
-  }
-
-  return null;
-}
-
 async function findGrossProfitRequestIds(range: FiniteRange) {
   const minClause = range.min !== undefined
     ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") >= ${new Decimal(range.min).toFixed(8)}::numeric`
@@ -1379,7 +1361,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const query = adminRequestsQuerySchema.parse(request.query);
     const where = await buildAdminRequestsWhere(query);
 
-    const [rows, summary, ipBanRules, reasoningTransformSettings] = await Promise.all([
+    const [rows, summary, ipBanRules] = await Promise.all([
       prisma.apiRequest.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1405,6 +1387,8 @@ export async function adminRoutes(app: FastifyInstance) {
             },
           },
           model: true,
+          reasoningEffort: true,
+          reasoningEffortActual: true,
           endpoint: true,
           method: true,
           status: true,
@@ -1430,15 +1414,12 @@ export async function adminRoutes(app: FastifyInstance) {
       }),
       getAdminRequestsSummary(where),
       listIpBanRules(),
-      readReasoningEffortTransformSettings(),
     ]);
     const hasMore = rows.length > query.take;
-    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(({ requestBody, ...row }) => {
-      const reasoningEffort = getRequestReasoningEffortFromBody(requestBody);
+    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(({ requestBody, reasoningEffort, ...row }) => {
       return {
         ...row,
-        reasoningEffort,
-        reasoningEffortActual: getTransformedReasoningEffort(reasoningEffort, reasoningTransformSettings),
+        reasoningEffort: reasoningEffort ?? getRequestReasoningEffortFromBody(requestBody),
       };
     });
 
@@ -1477,6 +1458,8 @@ export async function adminRoutes(app: FastifyInstance) {
           },
         },
         model: true,
+        reasoningEffort: true,
+        reasoningEffortActual: true,
         endpoint: true,
         method: true,
         status: true,
