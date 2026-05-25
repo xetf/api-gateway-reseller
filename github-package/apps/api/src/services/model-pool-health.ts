@@ -662,6 +662,7 @@ async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
         model: input.model,
         instructions: "Reply with ok.",
         input: [{ role: "user", content: "ok" }],
+        reasoning: { effort: "low" },
         store: false,
         stream: true,
       },
@@ -675,6 +676,7 @@ async function probeUpstream(input: ProbeInput): Promise<ProbeResult> {
     body: {
       model: input.model,
       messages: [{ role: "user", content: "ok" }],
+      reasoning_effort: "low",
       max_tokens: 1,
       stream: true,
     },
