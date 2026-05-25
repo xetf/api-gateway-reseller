@@ -1,6 +1,6 @@
 import { prisma } from "@gateway/db";
 
-export const reasoningEffortValues = ["minimal", "low", "medium", "high", "xhigh"] as const;
+export const reasoningEffortValues = ["low", "medium", "high", "xhigh"] as const;
 export type ReasoningEffortValue = (typeof reasoningEffortValues)[number];
 
 export type ReasoningEffortTransformRule = {

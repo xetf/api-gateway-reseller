@@ -3135,7 +3135,7 @@ function AdminRequests({
   const activeAdvancedCount = countAdvancedRequestFilters(filters);
   const minAutoTerminateSeconds = pendingAutoTerminateSettings?.minTimeoutSeconds ?? 5;
   const maxAutoTerminateSeconds = pendingAutoTerminateSettings?.maxTimeoutSeconds ?? 3600;
-  const reasoningEffortOptions = ["minimal", "low", "medium", "high", "xhigh"];
+  const reasoningEffortOptions = ["low", "medium", "high", "xhigh"];
   const reasoningTransformConflict = detectReasoningRuleConflicts();
 
   useEffect(() => {
