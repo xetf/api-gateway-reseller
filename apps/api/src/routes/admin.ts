@@ -491,6 +491,12 @@ async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
     andFilters.push({
       OR: [
         {
+          traceCode: {
+            contains: q,
+            mode: "insensitive",
+          },
+        },
+        {
           model: {
             contains: q,
             mode: "insensitive",
@@ -1381,6 +1387,7 @@ export async function adminRoutes(app: FastifyInstance) {
         ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
         select: {
           id: true,
+          traceCode: true,
           upstreamProvider: true,
           upstreamProviderKey: {
             select: {
@@ -1450,6 +1457,7 @@ export async function adminRoutes(app: FastifyInstance) {
       where: { id: params.id },
       select: {
         id: true,
+        traceCode: true,
         upstreamProvider: true,
         upstreamRequestId: true,
         upstreamProviderKey: {

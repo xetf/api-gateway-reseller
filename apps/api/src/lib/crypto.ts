@@ -26,3 +26,9 @@ export function createRedeemCode() {
     hash: hashSecret(code),
   };
 }
+
+export function createRequestTraceCode(now = new Date()) {
+  const day = now.toISOString().slice(0, 10).replaceAll("-", "");
+  const body = randomBytes(8).toString("hex").toUpperCase();
+  return `REQ-${day}-${body}`;
+}

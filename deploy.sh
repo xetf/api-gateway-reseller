@@ -284,14 +284,16 @@ build_and_migrate() {
   log "Generating Prisma client"
   npm run db:generate
 
-  log "Applying database migrations"
-  npm run db:migrate:deploy
-
-  log "Seeding blank deployment data"
-  npm run db:seed
-
   log "Building API and web"
   npm run build
+
+  log "Applying database migrations"
+  npm run db:migrate:deploy
+}
+
+seed_data() {
+  log "Seeding blank deployment data"
+  npm run db:seed
 }
 
 start_pm2() {
@@ -346,6 +348,7 @@ main() {
   install_dependencies
   build_and_migrate
   start_pm2
+  seed_data
   print_summary
 }
 

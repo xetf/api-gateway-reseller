@@ -17,6 +17,7 @@ import {
   Settings,
   Shield,
   SlidersHorizontal,
+  CircleStop,
   Ticket,
   Trash2,
   Users,
@@ -65,6 +66,7 @@ type ApiKey = {
 
 type ApiRequest = {
   id: string;
+  traceCode?: string | null;
   upstreamProvider?: string | null;
   upstreamProviderKey?: {
     id: string;
@@ -73,6 +75,8 @@ type ApiRequest = {
   } | null;
   clientIp?: string | null;
   model: string;
+  reasoningEffort?: string | null;
+  reasoningEffortActual?: string | null;
   endpoint: string;
   method?: string;
   status: string;
@@ -445,6 +449,28 @@ type AuthSettings = {
   smtpConfigured: boolean;
 };
 
+type PendingAutoTerminateSettings = {
+  enabled: boolean;
+  timeoutSeconds: number;
+  minTimeoutSeconds?: number;
+  maxTimeoutSeconds?: number;
+};
+
+type ReasoningEffortTransformSettings = {
+  rules: ReasoningEffortTransformRule[];
+};
+
+type ReasoningEffortTransformRule = {
+  enabled: boolean;
+  from: string;
+  to: string;
+};
+
+type PublicAuthSettings = Pick<
+  AuthSettings,
+  "emailCodeLoginEnabled" | "emailCodeAutoRegisterEnabled" | "newUserBonusUsd" | "smtpConfigured"
+>;
+
 type RedeemCode = {
   id: string;
   code?: string;
@@ -702,6 +728,10 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
+  const [pendingAutoTerminateSettings, setPendingAutoTerminateSettings] =
+    useState<PendingAutoTerminateSettings | null>(null);
+  const [reasoningEffortTransformSettings, setReasoningEffortTransformSettings] =
+    useState<ReasoningEffortTransformSettings | null>(null);
   const [requestFilters, setRequestFilters] = useState<RequestFilters>(emptyRequestFilters);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -765,6 +795,8 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setModelPoolHealthCheck(null);
       setRedeemCodes([]);
       setAuthSettings(null);
+      setPendingAutoTerminateSettings(null);
+      setReasoningEffortTransformSettings(null);
       setAdminRequests([]);
       setAdminRequestsSummary(emptyAdminRequestsSummary);
       setAdminRequestsNextCursor(null);
@@ -852,6 +884,20 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           token: authToken,
         });
         setAuthSettings(result.settings);
+      }),
+      loadData("自动终止设置", async () => {
+        const result = await apiFetch<{ settings: PendingAutoTerminateSettings }>(
+          "/admin/pending-auto-terminate-settings",
+          { token: authToken },
+        );
+        setPendingAutoTerminateSettings(result.settings);
+      }),
+      loadData("推理强度转换", async () => {
+        const result = await apiFetch<{ settings: ReasoningEffortTransformSettings }>(
+          "/admin/reasoning-effort-transform-settings",
+          { token: authToken },
+        );
+        setReasoningEffortTransformSettings(result.settings);
       }),
       loadData("调用记录", async () => {
         await refreshAdminRequests({ authToken, filters: requestFilters });
@@ -1131,12 +1177,17 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               ipBanRules={ipBanRules}
               users={adminUsers}
               filters={requestFilters}
+              pendingAutoTerminateSettings={pendingAutoTerminateSettings}
+              reasoningEffortTransformSettings={reasoningEffortTransformSettings}
               onFiltersChange={setRequestFilters}
               hasMore={adminRequestsHasMore}
               loadingMore={adminRequestsLoadingMore}
               onLoadMore={loadMoreAdminRequests}
               onSearch={(nextFilters) => refreshAdminRequests({ filters: nextFilters })}
               onRulesChanged={setIpBanRules}
+              onRequestTerminated={() => refreshAdminRequests({ filters: requestFilters })}
+              onPendingAutoTerminateSettingsChanged={setPendingAutoTerminateSettings}
+              onReasoningEffortTransformSettingsChanged={setReasoningEffortTransformSettings}
             />
           ) : null}
         </div>
@@ -1211,11 +1262,51 @@ function Login({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [publicAuthSettings, setPublicAuthSettings] = useState<PublicAuthSettings | null>(null);
+  const [loadingAuthSettings, setLoadingAuthSettings] = useState(mode === "user");
   const isUserMode = mode === "user";
+
+  useEffect(() => {
+    if (!isUserMode) {
+      setPublicAuthSettings(null);
+      setLoadingAuthSettings(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingAuthSettings(true);
+
+    void apiFetch<{ settings: PublicAuthSettings }>("/auth/settings", {
+      token: null,
+    })
+      .then((result) => {
+        if (!cancelled) {
+          setPublicAuthSettings(result.settings);
+        }
+      })
+      .catch((fetchError) => {
+        if (!cancelled) {
+          setError(errorToText(fetchError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingAuthSettings(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isUserMode]);
 
   async function sendCode() {
     setError(null);
     setMessage(null);
+    if (publicAuthSettings?.emailCodeLoginEnabled === false) {
+      setError("邮箱验证码登录已关闭。");
+      return;
+    }
     if (!identifier.trim()) {
       setError("请先填写邮箱。");
       return;
@@ -1242,6 +1333,11 @@ function Login({
     setError(null);
     try {
       if (isUserMode) {
+        if (publicAuthSettings?.emailCodeLoginEnabled === false) {
+          setError("邮箱验证码登录已关闭。");
+          return;
+        }
+
         if (!emailCode.trim()) {
           setError("请填写邮箱验证码。");
           return;
@@ -1289,7 +1385,13 @@ function Login({
             <p>
               {mode === "admin"
                 ? "使用管理员账号进入后台。"
-                : "新邮箱会自动创建账户"}
+                : loadingAuthSettings
+                  ? "登录配置加载中..."
+                  : publicAuthSettings?.emailCodeLoginEnabled === false
+                    ? "邮箱验证码登录已关闭"
+                    : publicAuthSettings?.emailCodeAutoRegisterEnabled === false
+                      ? "仅限已存在账户使用邮箱验证码登录"
+                      : "新邮箱会自动创建账户"}
             </p>
           </div>
 
@@ -1322,7 +1424,12 @@ function Login({
                     type="text"
                     value={emailCode}
                   />
-                  <button className="button secondary" disabled={sendingCode} onClick={sendCode} type="button">
+                  <button
+                    className="button secondary"
+                    disabled={sendingCode || loadingAuthSettings || publicAuthSettings?.emailCodeLoginEnabled === false}
+                    onClick={sendCode}
+                    type="button"
+                  >
                     <span>{sendingCode ? "发送中" : "获取验证码"}</span>
                   </button>
                 </div>
@@ -1340,7 +1447,11 @@ function Login({
                 />
               </label>
             )}
-            <button className="button login-submit" disabled={loading} type="submit">
+            <button
+              className="button login-submit"
+              disabled={loading || (isUserMode && (loadingAuthSettings || publicAuthSettings?.emailCodeLoginEnabled === false))}
+              type="submit"
+            >
               {isUserMode ? null : <LogIn size={17} />}
               <span>
                 {loading ? "登录中..." : "登录"}
@@ -2090,6 +2201,7 @@ function Requests({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  onRequestTerminated,
 }: {
   requests: ApiRequest[];
   compact?: boolean;
@@ -2098,10 +2210,12 @@ function Requests({
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  onRequestTerminated?: (request: ApiRequest) => void;
 }) {
   const [selectedRequest, setSelectedRequest] = useState<ApiRequestDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [terminatingRequestId, setTerminatingRequestId] = useState<string | null>(null);
   const bannedIpSet = new Set(ipBanRules.map((rule) => rule.ip));
 
   function handleScroll(event: UIEvent<HTMLDivElement>) {
@@ -2142,6 +2256,34 @@ function Requests({
     }
   }
 
+  async function terminateRequest(item: ApiRequest) {
+    const confirmed = window.confirm(`确定终止这条 PENDING 调用吗？\n${item.model} · ${dateTime(item.createdAt)}`);
+    if (!confirmed) {
+      return;
+    }
+
+    const authToken = getToken();
+    if (!authToken) {
+      setDetailError("登录已失效，请重新登录后台。");
+      return;
+    }
+
+    setTerminatingRequestId(item.id);
+    setDetailError(null);
+    try {
+      const result = await apiFetch<{ request: ApiRequest }>(`/admin/requests/${item.id}/terminate`, {
+        method: "POST",
+        token: authToken,
+      });
+      onRequestTerminated?.(result.request);
+      setSelectedRequest((current) => (current?.id === result.request.id ? { ...current, ...result.request } : current));
+    } catch (error) {
+      setDetailError(errorToText(error));
+    } finally {
+      setTerminatingRequestId(null);
+    }
+  }
+
   return (
     <>
     <section className={showCost ? "card requests-card audit-card" : "card requests-card"}>
@@ -2155,71 +2297,163 @@ function Requests({
       </div>
       <div className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"} onScroll={handleScroll}>
         <table className={showCost ? "audit-table" : undefined}>
-          <thead>
-	            <tr>
-	              {showCost ? <th>用户</th> : null}
-	              <th>API Key</th>
-	              <th>IP</th>
-	              {showCost ? <th>上游</th> : null}
-              {showCost ? <th>上游 Key</th> : null}
-              <th>模型</th>
-              <th>状态</th>
-              <th>输入</th>
-              <th>缓存</th>
-              <th>输出</th>
-              <th>总 token</th>
-              <th>扣费</th>
-              {showCost ? <th>上游成本</th> : null}
-              {showCost ? <th>毛利</th> : null}
-              <th>总时间</th>
-              <th>首 token</th>
-              <th>时间</th>
-            </tr>
-          </thead>
-          <tbody>
-	            {requests.map((item) => (
-	              <tr key={item.id}>
-	                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
-	                <td>{formatRequestApiKey(item.apiKey)}</td>
-		                <td>
-                  <IpCell
-                    ip={item.clientIp}
-                    banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
-                  />
-                </td>
-	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
-                {showCost ? <td>{formatRequestUpstreamKey(item.upstreamProviderKey)}</td> : null}
-                <td>{item.model}</td>
-                <td>
-                  <div className="request-status-cell">
-                    <StatusPill status={item.status} />
-                    {getReturnedNoticeText(item) ? (
-                      <span className="request-notice-pill">已提示</span>
-                    ) : null}
-                    {hasRequestError(item) ? (
-                      <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
-                        <FileSearch size={13} />
-                        详情
-                      </button>
-                    ) : null}
-                  </div>
-                </td>
-                <td>{formatNumber(item.inputTokens)}</td>
-                <td>{formatNumber(item.cachedInputTokens)}</td>
-                <td>{formatNumber(item.outputTokens)}</td>
-                <td>{formatNumber(item.totalTokens)}</td>
-                <td>${money(item.chargedAmountUsd)}</td>
-                {showCost ? <td>${money(item.upstreamCostUsd ?? "0")}</td> : null}
-                {showCost ? (
-                  <td>${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}</td>
-                ) : null}
-                <td>{seconds(item.latencyMs)}</td>
-                <td>{seconds(item.firstTokenLatencyMs)}</td>
-                <td>{dateTime(item.createdAt)}</td>
-              </tr>
-            ))}
-	            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 17 : 12} /> : null}
-          </tbody>
+          {showCost ? (
+            <>
+              <thead>
+                <tr>
+                  <th>追踪编码</th>
+                  <th>标识</th>
+                  <th>调用</th>
+                  <th>状态</th>
+                  <th>Token</th>
+                  <th>费用</th>
+                  <th>耗时</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong className="request-trace-code">{formatRequestTraceCode(item)}</strong>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <strong>{item.user?.email ?? "-"}</strong>
+                        <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
+                        <IpCell
+                          ip={item.clientIp}
+                          banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <strong>{item.model}</strong>
+                        <span>上游：{item.upstreamProvider ?? "-"}</span>
+                        <span>上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}</span>
+                        <span>推理：{formatReasoningEffortCell(item.reasoningEffort, item.reasoningEffortActual)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="request-status-cell">
+                        <StatusPill status={getRequestStatusPillStatus(item)} />
+                        {getReturnedNoticeText(item) ? (
+                          <span className="request-notice-pill">已提示</span>
+                        ) : null}
+                        {hasRequestError(item) ? (
+                          <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
+                            <FileSearch size={13} />
+                            详情
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-metric-grid">
+                        <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
+                        <AuditMetric label="缓存" value={formatNumber(item.cachedInputTokens)} />
+                        <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
+                        <AuditMetric label="总计" value={formatNumber(item.totalTokens)} strong />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-metric-grid">
+                        <AuditMetric label="扣费" value={`$${money(item.chargedAmountUsd)}`} strong />
+                        <AuditMetric label="成本" value={`$${money(item.upstreamCostUsd ?? "0")}`} />
+                        <AuditMetric
+                          label="毛利"
+                          value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <span>总：{seconds(item.latencyMs)}</span>
+                        <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
+                        <span>{dateTime(item.createdAt)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      {item.status === "PENDING" ? (
+                        <button
+                          className="request-terminate-button"
+                          disabled={terminatingRequestId === item.id}
+                          onClick={() => void terminateRequest(item)}
+                          title="终止这条仍在处理中的调用"
+                          type="button"
+                        >
+                          <CircleStop size={13} />
+                          终止
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {requests.length === 0 ? <EmptyRow colSpan={8} /> : null}
+              </tbody>
+            </>
+          ) : (
+            <>
+              <thead>
+                <tr>
+                  <th>编码</th>
+                  <th>API Key</th>
+                  <th>IP</th>
+                  <th>模型</th>
+                  <th>状态</th>
+                  <th>输入</th>
+                  <th>缓存</th>
+                  <th>输出</th>
+                  <th>总 token</th>
+                  <th>扣费</th>
+                  <th>总时间</th>
+                  <th>首 token</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((item) => (
+                  <tr key={item.id}>
+                    <td><strong className="request-trace-code">{formatRequestTraceCode(item)}</strong></td>
+                    <td>{formatRequestApiKey(item.apiKey)}</td>
+                    <td>
+                      <IpCell
+                        ip={item.clientIp}
+                        banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+                      />
+                    </td>
+                    <td>{item.model}</td>
+                    <td>
+                      <div className="request-status-cell">
+                        <StatusPill status={getRequestStatusPillStatus(item)} />
+                        {getReturnedNoticeText(item) ? (
+                          <span className="request-notice-pill">已提示</span>
+                        ) : null}
+                        {hasRequestError(item) ? (
+                          <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
+                            <FileSearch size={13} />
+                            详情
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{formatNumber(item.inputTokens)}</td>
+                    <td>{formatNumber(item.cachedInputTokens)}</td>
+                    <td>{formatNumber(item.outputTokens)}</td>
+                    <td>{formatNumber(item.totalTokens)}</td>
+                    <td>${money(item.chargedAmountUsd)}</td>
+                    <td>{seconds(item.latencyMs)}</td>
+                    <td>{seconds(item.firstTokenLatencyMs)}</td>
+                    <td>{dateTime(item.createdAt)}</td>
+                  </tr>
+                ))}
+                {requests.length === 0 ? <EmptyRow colSpan={13} /> : null}
+              </tbody>
+            </>
+          )}
         </table>
       </div>
       <div className={showCost ? "mobile-record-list audit-mobile-list" : "mobile-record-list"} onScroll={handleScroll}>
@@ -2228,8 +2462,11 @@ function Requests({
             key={item.id}
             title={item.model}
             meta={dateTime(item.createdAt)}
-            badges={<StatusPill status={item.status} />}
+            badges={<StatusPill status={getRequestStatusPillStatus(item)} />}
           >
+            <MobileField label="追踪编码" wide>
+              <strong className="request-trace-code">{formatRequestTraceCode(item)}</strong>
+            </MobileField>
 	            {showCost ? (
 	              <>
 	                <MobileField label="用户" wide>
@@ -2240,6 +2477,9 @@ function Requests({
                 </MobileField>
                 <MobileField label="上游 Key" wide>
                   {formatRequestUpstreamKey(item.upstreamProviderKey)}
+                </MobileField>
+                <MobileField label="推理强度">
+                  {formatReasoningEffortCell(item.reasoningEffort, item.reasoningEffortActual)}
                 </MobileField>
 	              </>
 	            ) : null}
@@ -2272,11 +2512,29 @@ function Requests({
                 已返回公告式提示
               </MobileField>
             ) : null}
+            {isManualTerminatedRequest(item) ? (
+              <MobileField label="终止说明" wide>
+                管理员手动终止
+              </MobileField>
+            ) : null}
             {hasRequestError(item) ? (
               <div className="mobile-actions">
                 <button className="button secondary" onClick={() => void openRequestDetail(item)} type="button">
                   <FileSearch size={16} />
                   查看报错详情
+                </button>
+              </div>
+            ) : null}
+            {showCost && item.status === "PENDING" ? (
+              <div className="mobile-actions">
+                <button
+                  className="button danger"
+                  disabled={terminatingRequestId === item.id}
+                  onClick={() => void terminateRequest(item)}
+                  type="button"
+                >
+                  <CircleStop size={16} />
+                  终止
                 </button>
               </div>
             ) : null}
@@ -2324,10 +2582,21 @@ function IpCell({
   );
 }
 
+function AuditMetric({ label, value, strong = false }: { label: string; value: ReactNode; strong?: boolean }) {
+  return (
+    <div className={strong ? "audit-metric strong" : "audit-metric"}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function RequestDetailModal({ request, loading, detailError, onClose }: { request: ApiRequestDetail; loading: boolean; detailError: string | null; onClose: () => void }) {
   const failureSummary = describeRequestFailure(request);
   const processSteps = buildRequestProcess(request, failureSummary);
   const returnedNoticeText = getReturnedNoticeText(request);
+  const reasoningEffort = getRequestReasoningEffort(request);
+  const manualTerminated = isManualTerminatedRequest(request);
 
   return (
     <ModalShell title="调用详情" description={`${request.model} · ${dateTime(request.createdAt)}`} onClose={onClose} wide>
@@ -2337,8 +2606,9 @@ function RequestDetailModal({ request, loading, detailError, onClose }: { reques
         <section className="request-detail-section">
           <div className="request-detail-section-head">
             <h3>失败原因</h3>
-            <StatusPill status={request.status} />
+            <StatusPill status={getRequestStatusPillStatus(request)} />
           </div>
+          {manualTerminated ? <div className="request-returned-notice">这是手动终止记录。</div> : null}
           <div className={hasRequestError(request) ? "request-reason-box failed" : "request-reason-box"}>
             {failureSummary}
           </div>
@@ -2382,12 +2652,18 @@ function RequestDetailModal({ request, loading, detailError, onClose }: { reques
             <h3>基础信息</h3>
           </div>
           <div className="request-detail-grid">
+            <RequestDetailField label="追踪编码">{formatRequestTraceCode(request)}</RequestDetailField>
             <RequestDetailField label="用户">{request.user?.email ?? "-"}</RequestDetailField>
             <RequestDetailField label="API Key">{formatRequestApiKey(request.apiKey)}</RequestDetailField>
             <RequestDetailField label="客户端 IP">{request.clientIp ?? "-"}</RequestDetailField>
             <RequestDetailField label="User-Agent" wide>{request.userAgent ?? "-"}</RequestDetailField>
             <RequestDetailField label="接口">{request.method ?? "POST"} {request.endpoint}</RequestDetailField>
             <RequestDetailField label="模型">{request.model}</RequestDetailField>
+            {reasoningEffort ? (
+              <RequestDetailField label="推理强度">
+                {formatReasoningEffort(reasoningEffort)} · {reasoningEffort}
+              </RequestDetailField>
+            ) : null}
             <RequestDetailField label="上游">{request.upstreamProvider ?? "-"}</RequestDetailField>
             <RequestDetailField label="上游 Key">{formatRequestUpstreamKey(request.upstreamProviderKey)}</RequestDetailField>
             <RequestDetailField label="HTTP 状态">{request.httpStatus ?? "-"}</RequestDetailField>
@@ -2468,6 +2744,94 @@ function getReturnedNoticeText(item: Pick<ApiRequest, "responseUsage">) {
       : "网关已把这次失败转换成公告式提示返回给用户。";
 }
 
+function isManualTerminatedRequest(item: Pick<ApiRequest, "responseUsage" | "errorMessage" | "httpStatus">) {
+  const usage = item.responseUsage;
+  if (usage && typeof usage === "object" && !Array.isArray(usage)) {
+    const record = usage as Record<string, unknown>;
+    if (record.source === "gateway_manual_termination") {
+      return true;
+    }
+  }
+
+  return item.httpStatus === 499 || item.errorMessage === "手动终止";
+}
+
+function getRequestStatusPillStatus(item: ApiRequest) {
+  return isManualTerminatedRequest(item) ? "TERMINATED" : item.status;
+}
+
+function getRequestReasoningEffort(item: Pick<ApiRequestDetail, "requestBody">) {
+  const body = item.requestBody;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  const direct = typeof record.reasoning_effort === "string" ? record.reasoning_effort.trim() : "";
+  if (direct) {
+    return direct;
+  }
+
+  const modelDirect =
+    typeof record.model_reasoning_effort === "string" ? record.model_reasoning_effort.trim() : "";
+  if (modelDirect) {
+    return modelDirect;
+  }
+
+  const reasoning = record.reasoning;
+  if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
+    const nested = reasoning as Record<string, unknown>;
+    const nestedEffort = typeof nested.effort === "string" ? nested.effort.trim() : "";
+    if (nestedEffort) {
+      return nestedEffort;
+    }
+  }
+
+  return null;
+}
+
+function formatReasoningEffort(value: string) {
+  const normalized = value.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    minimal: "最低",
+    low: "低",
+    medium: "中",
+    high: "高",
+    xhigh: "超高",
+  };
+
+  return labels[normalized] ?? value.trim();
+}
+
+function getEnabledReasoningRulesSummary(settings: ReasoningEffortTransformSettings | null) {
+  const enabledRules = settings?.rules.filter((rule) => rule.enabled) ?? [];
+  if (enabledRules.length === 0) {
+    return "关";
+  }
+
+  if (enabledRules.length === 1) {
+    const rule = enabledRules[0];
+    return rule ? `${formatReasoningEffort(rule.from)}→${formatReasoningEffort(rule.to)}` : "关";
+  }
+
+  return `${enabledRules.length} 条`;
+}
+
+function formatReasoningEffortCell(value?: string | null, actualValue?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return "-";
+  }
+
+  const actual = actualValue?.trim();
+  const originalLabel = `${formatReasoningEffort(trimmed)} · ${trimmed}`;
+  if (actual && actual.toLowerCase() !== trimmed.toLowerCase()) {
+    return `${originalLabel} → ${formatReasoningEffort(actual)} · ${actual}`;
+  }
+
+  return originalLabel;
+}
+
 function isIpBanRequest(item: Pick<ApiRequest, "responseUsage" | "errorMessage">) {
   const usage = item.responseUsage;
   if (usage && typeof usage === "object" && !Array.isArray(usage)) {
@@ -2483,6 +2847,7 @@ function isIpBanRequest(item: Pick<ApiRequest, "responseUsage" | "errorMessage">
 function buildRequestProcess(request: ApiRequestDetail, failureSummary: string) {
   const failed = hasRequestError(request);
   const returnedNoticeText = getReturnedNoticeText(request);
+  const manualTerminated = isManualTerminatedRequest(request);
   return [
     {
       title: "1. 网关接收请求",
@@ -2499,23 +2864,27 @@ function buildRequestProcess(request: ApiRequestDetail, failureSummary: string) 
     {
       title: "3. 上游响应",
       state: request.httpStatus ? (failed ? "异常" : "完成") : "未返回",
-      tone: failed ? "error" : request.httpStatus ? "ok" : "warn",
-      detail: `HTTP ${request.httpStatus ?? "-"} · 上游请求 ID ${request.upstreamRequestId ?? "-"} · 总时间 ${seconds(request.latencyMs)} · 首 token ${seconds(request.firstTokenLatencyMs)}`,
+      tone: manualTerminated ? "warn" : failed ? "error" : request.httpStatus ? "ok" : "warn",
+      detail: manualTerminated
+        ? `HTTP ${request.httpStatus ?? "-"} · 上游请求 ID ${request.upstreamRequestId ?? "-"} · 已被管理员终止 · 总时间 ${seconds(request.latencyMs)}`
+        : `HTTP ${request.httpStatus ?? "-"} · 上游请求 ID ${request.upstreamRequestId ?? "-"} · 总时间 ${seconds(request.latencyMs)} · 首 token ${seconds(request.firstTokenLatencyMs)}`,
     },
     {
       title: "4. Usage 与扣费",
-      state: failed ? "中断" : "完成",
-      tone: failed ? "warn" : "ok",
+      state: manualTerminated ? "中止" : failed ? "中断" : "完成",
+      tone: manualTerminated ? "warn" : failed ? "warn" : "ok",
       detail: `总 token ${formatNumber(request.totalTokens)} · 用户扣费 $${money(request.chargedAmountUsd)} · 上游成本 $${money(request.upstreamCostUsd ?? "0")}`,
     },
     {
       title: "5. 最终结果",
-      state: returnedNoticeText ? "已提示" : failed ? "失败" : request.status,
-      tone: returnedNoticeText ? "warn" : failed ? "error" : "ok",
+      state: returnedNoticeText ? "已提示" : manualTerminated ? "手动终止" : failed ? "失败" : request.status,
+      tone: returnedNoticeText ? "warn" : manualTerminated ? "warn" : failed ? "error" : "ok",
       detail: returnedNoticeText
         ? isIpBanRequest(request)
           ? "这次调用命中了 IP 封禁规则，并已按公告式接口格式返回给用户。"
           : "这次失败已经按公告式接口格式返回给用户，后台保留原始失败原因。"
+        : manualTerminated
+          ? "管理员已终止这条仍在处理中的调用，并尝试中断上游请求。"
         : failed
           ? failureSummary
           : "调用成功完成，后台已记录用量与费用。",
@@ -2536,6 +2905,10 @@ function describeRequestFailure(request: ApiRequestDetail) {
     return returnedNoticeText
       ? "这条调用命中了 IP 封禁规则，网关没有转发到上游，并已把封禁内容按公告式提示返回给用户。"
       : "这条调用命中了 IP 封禁规则，网关没有转发到上游，已直接返回封禁报错。";
+  }
+
+  if (isManualTerminatedRequest(request)) {
+    return "这条调用被管理员手动终止，网关已尝试中断上游请求并将记录标记为失败。";
   }
 
   if (returnedNoticeText) {
@@ -2703,24 +3076,34 @@ function AdminRequests({
   ipBanRules,
   users,
   filters,
+  pendingAutoTerminateSettings,
+  reasoningEffortTransformSettings,
   hasMore,
   loadingMore,
   onFiltersChange,
   onLoadMore,
   onSearch,
   onRulesChanged,
+  onRequestTerminated,
+  onPendingAutoTerminateSettingsChanged,
+  onReasoningEffortTransformSettingsChanged,
 }: {
   requests: ApiRequest[];
   summary: AdminRequestsSummary;
   ipBanRules: IpBanRule[];
   users: AdminUser[];
   filters: RequestFilters;
+  pendingAutoTerminateSettings: PendingAutoTerminateSettings | null;
+  reasoningEffortTransformSettings: ReasoningEffortTransformSettings | null;
   hasMore: boolean;
   loadingMore: boolean;
   onFiltersChange: (filters: RequestFilters) => void;
   onLoadMore: () => void;
   onSearch: (filters: RequestFilters) => void;
   onRulesChanged: (rules: IpBanRule[]) => void;
+  onRequestTerminated: () => void;
+  onPendingAutoTerminateSettingsChanged: (settings: PendingAutoTerminateSettings) => void;
+  onReasoningEffortTransformSettingsChanged: (settings: ReasoningEffortTransformSettings) => void;
 }) {
   const [ipInput, setIpInput] = useState("");
   const [banMode, setBanMode] = useState<IpBanMode>("error");
@@ -2729,8 +3112,46 @@ function AdminRequests({
   const [banBusyIp, setBanBusyIp] = useState<string | null>(null);
   const [banError, setBanError] = useState<string | null>(null);
   const [banModalOpen, setBanModalOpen] = useState(false);
+  const [autoTerminateModalOpen, setAutoTerminateModalOpen] = useState(false);
+  const [reasoningTransformModalOpen, setReasoningTransformModalOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [autoTerminateBusy, setAutoTerminateBusy] = useState(false);
+  const [autoTerminateError, setAutoTerminateError] = useState<string | null>(null);
+  const [autoTerminateDraftEnabled, setAutoTerminateDraftEnabled] = useState(
+    Boolean(pendingAutoTerminateSettings?.enabled),
+  );
+  const [autoTerminateDraftSeconds, setAutoTerminateDraftSeconds] = useState(
+    String(pendingAutoTerminateSettings?.timeoutSeconds ?? 30),
+  );
+  const [reasoningTransformBusy, setReasoningTransformBusy] = useState(false);
+  const [reasoningTransformError, setReasoningTransformError] = useState<string | null>(null);
+  const [reasoningTransformDraft, setReasoningTransformDraft] = useState({
+    rules: reasoningEffortTransformSettings?.rules ?? [{ enabled: true, from: "high", to: "medium" }],
+  });
   const activeAdvancedCount = countAdvancedRequestFilters(filters);
+  const minAutoTerminateSeconds = pendingAutoTerminateSettings?.minTimeoutSeconds ?? 5;
+  const maxAutoTerminateSeconds = pendingAutoTerminateSettings?.maxTimeoutSeconds ?? 3600;
+  const reasoningEffortOptions = ["minimal", "low", "medium", "high", "xhigh"];
+  const reasoningTransformConflict = detectReasoningRuleConflicts();
+
+  useEffect(() => {
+    if (pendingAutoTerminateSettings) {
+      setAutoTerminateDraftEnabled(pendingAutoTerminateSettings.enabled);
+      setAutoTerminateDraftSeconds(String(pendingAutoTerminateSettings.timeoutSeconds));
+    }
+  }, [pendingAutoTerminateSettings?.enabled, pendingAutoTerminateSettings?.timeoutSeconds]);
+
+  useEffect(() => {
+    if (reasoningEffortTransformSettings) {
+      setReasoningTransformDraft({
+        rules: reasoningEffortTransformSettings.rules.length
+          ? reasoningEffortTransformSettings.rules
+          : [{ enabled: true, from: "high", to: "medium" }],
+      });
+    }
+  }, [
+    reasoningEffortTransformSettings?.rules,
+  ]);
 
   function update<K extends keyof RequestFilters>(key: K, value: RequestFilters[K]) {
     onFiltersChange({ ...filters, [key]: value });
@@ -2815,6 +3236,117 @@ function AdminRequests({
     }
   }
 
+  async function savePendingAutoTerminateSettings(next?: Partial<PendingAutoTerminateSettings>) {
+    const timeoutSeconds = Number(
+      next?.timeoutSeconds ?? autoTerminateDraftSeconds,
+    );
+    const normalizedTimeoutSeconds = Math.min(
+      maxAutoTerminateSeconds,
+      Math.max(minAutoTerminateSeconds, Math.round(timeoutSeconds)),
+    );
+
+    if (!Number.isFinite(timeoutSeconds)) {
+      setAutoTerminateError("请填写有效秒数。");
+      return;
+    }
+
+    setAutoTerminateBusy(true);
+    setAutoTerminateError(null);
+    try {
+      const result = await apiFetch<{ settings: PendingAutoTerminateSettings }>(
+        "/admin/pending-auto-terminate-settings",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            enabled: next?.enabled ?? autoTerminateDraftEnabled,
+            timeoutSeconds: normalizedTimeoutSeconds,
+          }),
+        },
+      );
+      setAutoTerminateDraftSeconds(String(result.settings.timeoutSeconds));
+      onPendingAutoTerminateSettingsChanged(result.settings);
+      setAutoTerminateModalOpen(false);
+    } catch (error) {
+      setAutoTerminateError(errorToText(error));
+    } finally {
+      setAutoTerminateBusy(false);
+    }
+  }
+
+  function submitPendingAutoTerminateSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void savePendingAutoTerminateSettings();
+  }
+
+  async function saveReasoningEffortTransformSettings(next?: Partial<ReasoningEffortTransformSettings>) {
+    setReasoningTransformBusy(true);
+    setReasoningTransformError(null);
+    try {
+      const result = await apiFetch<{ settings: ReasoningEffortTransformSettings }>(
+        "/admin/reasoning-effort-transform-settings",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            rules: next?.rules ?? reasoningTransformDraft.rules,
+          }),
+        },
+      );
+      setReasoningTransformDraft({
+        rules: result.settings.rules.length
+          ? result.settings.rules
+          : [{ enabled: true, from: "high", to: "medium" }],
+      });
+      onReasoningEffortTransformSettingsChanged(result.settings);
+      setReasoningTransformModalOpen(false);
+      onSearch(filters);
+    } catch (error) {
+      setReasoningTransformError(errorToText(error));
+    } finally {
+      setReasoningTransformBusy(false);
+    }
+  }
+
+  function submitReasoningEffortTransformSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void saveReasoningEffortTransformSettings();
+  }
+
+  function updateReasoningRule(index: number, patch: Partial<ReasoningEffortTransformRule>) {
+    setReasoningTransformDraft((current) => ({
+      rules: current.rules.map((rule, currentIndex) => (currentIndex === index ? { ...rule, ...patch } : rule)),
+    }));
+  }
+
+  function addReasoningRule() {
+    setReasoningTransformDraft((current) => ({
+      rules: [...current.rules, { enabled: true, from: "low", to: "medium" }],
+    }));
+  }
+
+  function removeReasoningRule(index: number) {
+    setReasoningTransformDraft((current) => {
+      const nextRules = current.rules.filter((_, currentIndex) => currentIndex !== index);
+      return { rules: nextRules.length ? nextRules : [{ enabled: true, from: "high", to: "medium" }] };
+    });
+  }
+
+  function detectReasoningRuleConflicts() {
+    const enabledRules = reasoningTransformDraft.rules.filter((rule) => rule.enabled);
+    const duplicates = new Map<string, number>();
+    for (const rule of enabledRules) {
+      duplicates.set(rule.from, (duplicates.get(rule.from) ?? 0) + 1);
+    }
+    const duplicateSources = [...duplicates.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([from]) => from);
+    const selfTransforms = enabledRules.filter((rule) => rule.from === rule.to).length;
+    return {
+      duplicateSources,
+      selfTransforms,
+      hasConflict: duplicateSources.length > 0 || selfTransforms > 0,
+    };
+  }
+
   return (
     <div className="grid admin-page admin-requests-page">
       <section className="card admin-request-filter-card">
@@ -2828,6 +3360,28 @@ function AdminRequests({
               <Shield size={17} />
               IP 封禁
               <span className="button-count">{ipBanRules.length}</span>
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => setAutoTerminateModalOpen(true)}
+              type="button"
+            >
+              <CircleStop size={17} />
+              自动终止
+              <span className="button-count">
+                {pendingAutoTerminateSettings?.enabled ? `${pendingAutoTerminateSettings.timeoutSeconds}s` : "关"}
+              </span>
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => setReasoningTransformModalOpen(true)}
+              type="button"
+            >
+              <SlidersHorizontal size={17} />
+              推理转换
+              <span className="button-count">
+                {getEnabledReasoningRulesSummary(reasoningEffortTransformSettings)}
+              </span>
             </button>
             <button
               aria-expanded={advancedOpen}
@@ -3047,7 +3601,182 @@ function AdminRequests({
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        onRequestTerminated={onRequestTerminated}
       />
+      {autoTerminateModalOpen ? (
+        <ModalShell
+          title="Pending 自动终止"
+          description="超过设定秒数的 PENDING 会按手动终止处理。"
+          onClose={() => setAutoTerminateModalOpen(false)}
+        >
+          <form className="form" onSubmit={submitPendingAutoTerminateSettings}>
+            <div className="modal-body">
+              {autoTerminateError ? <div className="error compact-error">{autoTerminateError}</div> : null}
+              <div className="settings-modal-status">
+                <StatusPill status={autoTerminateDraftEnabled ? "AUTO_TERMINATE_ON" : "AUTO_TERMINATE_OFF"} />
+                <span>
+                  {autoTerminateDraftEnabled
+                    ? `超过 ${autoTerminateDraftSeconds || (pendingAutoTerminateSettings?.timeoutSeconds ?? 30)} 秒自动终止。`
+                    : "自动终止已关闭。"}
+                </span>
+              </div>
+              <label className="check-row">
+                <input
+                  checked={autoTerminateDraftEnabled}
+                  disabled={!pendingAutoTerminateSettings || autoTerminateBusy}
+                  onChange={(event) => setAutoTerminateDraftEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                启用 Pending 自动终止
+              </label>
+              <label className="field">
+                <span>超过多少秒终止</span>
+                <input
+                  className="input"
+                  disabled={!pendingAutoTerminateSettings || autoTerminateBusy}
+                  inputMode="numeric"
+                  max={maxAutoTerminateSeconds}
+                  min={minAutoTerminateSeconds}
+                  onChange={(event) => setAutoTerminateDraftSeconds(event.target.value)}
+                  type="number"
+                  value={autoTerminateDraftSeconds}
+                />
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setAutoTerminateModalOpen(false)} type="button">
+                取消
+              </button>
+              <button className="button" disabled={!pendingAutoTerminateSettings || autoTerminateBusy} type="submit">
+                <Save size={17} />
+                保存
+              </button>
+            </div>
+          </form>
+        </ModalShell>
+      ) : null}
+      {reasoningTransformModalOpen ? (
+        <ModalShell
+          title="推理强度转换"
+          description="支持多条规则，命中后用户请求保持原样记录，上游实际请求会换成设定档位。"
+          onClose={() => setReasoningTransformModalOpen(false)}
+        >
+          <form className="form" onSubmit={submitReasoningEffortTransformSettings}>
+            <div className="modal-body">
+              {reasoningTransformError ? <div className="error compact-error">{reasoningTransformError}</div> : null}
+              <div className="settings-modal-status">
+                <StatusPill
+                  status={reasoningTransformDraft.rules.some((rule) => rule.enabled) ? "REASONING_TRANSFORM_ON" : "REASONING_TRANSFORM_OFF"}
+                />
+                <span>
+                  {reasoningTransformDraft.rules.some((rule) => rule.enabled)
+                    ? `${reasoningTransformDraft.rules.filter((rule) => rule.enabled).length} 条规则启用中`
+                    : "推理强度转换已关闭。"}
+                </span>
+              </div>
+              <label className="check-row">
+                <input
+                  checked={reasoningTransformDraft.rules.some((rule) => rule.enabled)}
+                  disabled={!reasoningEffortTransformSettings || reasoningTransformBusy}
+                  onChange={(event) =>
+                    setReasoningTransformDraft((current) => ({
+                      rules: current.rules.map((rule) => ({ ...rule, enabled: event.target.checked })),
+                    }))
+                  }
+                  type="checkbox"
+                />
+                启用推理强度转换
+              </label>
+              <div className="reasoning-transform-rule-list">
+                {reasoningTransformDraft.rules.map((rule, index) => (
+                  <div className="reasoning-transform-rule" key={`${index}-${rule.from}-${rule.to}`}>
+                    <label className="check-row reasoning-transform-rule-switch">
+                      <input
+                        checked={rule.enabled}
+                        disabled={!reasoningEffortTransformSettings || reasoningTransformBusy}
+                        onChange={(event) => updateReasoningRule(index, { enabled: event.target.checked })}
+                        type="checkbox"
+                      />
+                      启用
+                    </label>
+                    <label className="field reasoning-transform-select">
+                      <span>用户请求</span>
+                      <select
+                        className="input"
+                        disabled={!reasoningEffortTransformSettings || reasoningTransformBusy}
+                        onChange={(event) => updateReasoningRule(index, { from: event.target.value })}
+                        value={rule.from}
+                      >
+                        {reasoningEffortOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {formatReasoningEffort(option)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="reasoning-transform-arrow">→</span>
+                    <label className="field reasoning-transform-select">
+                      <span>实际上游</span>
+                      <select
+                        className="input"
+                        disabled={!reasoningEffortTransformSettings || reasoningTransformBusy}
+                        onChange={(event) => updateReasoningRule(index, { to: event.target.value })}
+                        value={rule.to}
+                      >
+                        {reasoningEffortOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {formatReasoningEffort(option)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="button secondary icon-button"
+                      disabled={!reasoningEffortTransformSettings || reasoningTransformBusy}
+                      onClick={() => removeReasoningRule(index)}
+                      type="button"
+                      title="删除规则"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button className="button secondary" disabled={!reasoningEffortTransformSettings || reasoningTransformBusy} onClick={addReasoningRule} type="button">
+                <Plus size={16} />
+                添加规则
+              </button>
+              {reasoningTransformConflict.hasConflict ? (
+                <div className="notice warning">
+                  {reasoningTransformConflict.duplicateSources.length > 0
+                    ? `冲突：${reasoningTransformConflict.duplicateSources
+                        .map((item) => formatReasoningEffort(item))
+                        .join("、")} 被重复映射。`
+                    : null}
+                  {reasoningTransformConflict.selfTransforms > 0 ? " 不允许原档位和目标档位相同。" : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setReasoningTransformModalOpen(false)} type="button">
+                取消
+              </button>
+              <button
+                className="button"
+                disabled={
+                  !reasoningEffortTransformSettings ||
+                  reasoningTransformBusy ||
+                  detectReasoningRuleConflicts().hasConflict
+                }
+                type="submit"
+              >
+                <Save size={17} />
+                保存
+              </button>
+            </div>
+          </form>
+        </ModalShell>
+      ) : null}
       {banModalOpen ? (
         <ModalShell
           title="IP 封禁"
@@ -3527,6 +4256,8 @@ function AdminAuthSettings({
   onError: (error: string | null) => void;
 }) {
   const [newUserBonusUsd, setNewUserBonusUsd] = useState("0");
+  const [emailCodeLoginEnabled, setEmailCodeLoginEnabled] = useState(true);
+  const [emailCodeAutoRegisterEnabled, setEmailCodeAutoRegisterEnabled] = useState(true);
   const [emailCodeTtlSeconds, setEmailCodeTtlSeconds] = useState(600);
   const [emailCodeCooldownSeconds, setEmailCodeCooldownSeconds] = useState(60);
   const [smtpHost, setSmtpHost] = useState("");
@@ -3547,6 +4278,8 @@ function AdminAuthSettings({
     }
 
     setNewUserBonusUsd(settings.newUserBonusUsd);
+    setEmailCodeLoginEnabled(settings.emailCodeLoginEnabled);
+    setEmailCodeAutoRegisterEnabled(settings.emailCodeAutoRegisterEnabled);
     setEmailCodeTtlSeconds(settings.emailCodeTtlSeconds);
     setEmailCodeCooldownSeconds(settings.emailCodeCooldownSeconds);
     setSmtpHost(settings.smtpHost);
@@ -3570,8 +4303,8 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings", {
         method: "PUT",
         body: JSON.stringify({
-          emailCodeLoginEnabled: true,
-          emailCodeAutoRegisterEnabled: true,
+          emailCodeLoginEnabled,
+          emailCodeAutoRegisterEnabled,
           newUserBonusUsd,
           emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
           emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
@@ -3607,8 +4340,8 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings/test-email", {
         method: "POST",
         body: JSON.stringify({
-          emailCodeLoginEnabled: true,
-          emailCodeAutoRegisterEnabled: true,
+          emailCodeLoginEnabled,
+          emailCodeAutoRegisterEnabled,
           newUserBonusUsd,
           emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
           emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
@@ -3645,11 +4378,33 @@ function AdminAuthSettings({
           <div className="section-head">
             <div>
               <h2 className="section-title">邮箱验证码</h2>
-              <p className="section-subtitle">用户账号固定使用邮箱验证码。</p>
+              <p className="section-subtitle">
+                {emailCodeLoginEnabled
+                  ? "用户账号使用邮箱验证码登录，自动注册可单独控制。"
+                  : "邮箱验证码登录已关闭。"}
+              </p>
             </div>
-            <StatusPill status="ACTIVE" />
+            <StatusPill status={emailCodeLoginEnabled ? "ACTIVE" : "DISABLED"} />
           </div>
           <div className="form">
+            <div className="grid cols-2">
+              <label className="check-row">
+                <input
+                  checked={emailCodeLoginEnabled}
+                  onChange={(event) => setEmailCodeLoginEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                启用邮箱验证码登录
+              </label>
+              <label className="check-row">
+                <input
+                  checked={emailCodeAutoRegisterEnabled}
+                  onChange={(event) => setEmailCodeAutoRegisterEnabled(event.target.checked)}
+                  type="checkbox"
+                />
+                允许新邮箱自动创建账号
+              </label>
+            </div>
             <div className="grid cols-2">
               <label className="field">
                 <span>新用户赠送余额 USD</span>
@@ -3687,8 +4442,11 @@ function AdminAuthSettings({
               />
             </label>
             <div className="info-list">
-              <InfoLine label="登录方式" value="邮箱验证码" />
-              <InfoLine label="创建账号" value="首次验证自动创建" />
+              <InfoLine label="登录方式" value={emailCodeLoginEnabled ? "邮箱验证码" : "已关闭"} />
+              <InfoLine
+                label="创建账号"
+                value={emailCodeAutoRegisterEnabled ? "首次验证自动创建" : "仅限已存在账号"}
+              />
               <InfoLine label="赠送余额" value={`$${money(newUserBonusUsd)}`} />
             </div>
           </div>
@@ -7197,6 +7955,11 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
     PENALIZED: "惩罚中",
     AUTO_CHECK_ON: "自动检测开",
     AUTO_CHECK_OFF: "自动检测关",
+    AUTO_TERMINATE_ON: "自动终止开",
+    AUTO_TERMINATE_OFF: "自动终止关",
+    REASONING_TRANSFORM_ON: "强度转换开",
+    REASONING_TRANSFORM_OFF: "强度转换关",
+    TERMINATED: "已终止",
   };
   const ok =
     status === "ACTIVE" ||
@@ -7205,7 +7968,9 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
     status === "READY" ||
     status === "FORCED_ACTIVE" ||
     status === "FORCED_READY" ||
-    status === "AUTO_CHECK_ON";
+    status === "AUTO_CHECK_ON" ||
+    status === "AUTO_TERMINATE_ON" ||
+    status === "REASONING_TRANSFORM_ON";
   const danger =
     status === "FAILED" ||
     status === "UNHEALTHY" ||
@@ -7214,8 +7979,11 @@ function StatusPill({ status, strong = false }: { status: string; strong?: boole
     status === "UNAVAILABLE" ||
     status === "PENALIZED" ||
     status === "MISSING" ||
-    status === "AUTO_CHECK_OFF";
-  return <span className={`pill ${ok ? "ok" : danger ? "warn" : ""} ${strong ? "strong" : ""}`}>{labelMap[status] ?? status}</span>;
+    status === "AUTO_CHECK_OFF" ||
+    status === "AUTO_TERMINATE_OFF" ||
+    status === "REASONING_TRANSFORM_OFF";
+  const special = status === "TERMINATED";
+  return <span className={`pill ${ok ? "ok" : danger ? "warn" : ""} ${special ? "terminated" : ""} ${strong ? "strong" : ""}`}>{labelMap[status] ?? status}</span>;
 }
 
 function MobileRecord({
@@ -7570,6 +8338,10 @@ function formatRequestApiKey(apiKey: ApiRequest["apiKey"]) {
   }
 
   return `${apiKey.name} (${apiKey.keyPrefix})`;
+}
+
+function formatRequestTraceCode(request: Pick<ApiRequest, "id" | "traceCode">) {
+  return request.traceCode?.trim() || `REQ-${request.id.slice(-8).toUpperCase()}`;
 }
 
 function formatRequestUpstreamKey(upstreamKey: ApiRequest["upstreamProviderKey"]) {

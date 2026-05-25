@@ -66,6 +66,7 @@ type ApiKey = {
 
 type ApiRequest = {
   id: string;
+  traceCode?: string | null;
   upstreamProvider?: string | null;
   upstreamProviderKey?: {
     id: string;
@@ -2296,92 +2297,163 @@ function Requests({
       </div>
       <div className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"} onScroll={handleScroll}>
         <table className={showCost ? "audit-table" : undefined}>
-          <thead>
-	            <tr>
-	              {showCost ? <th>用户</th> : null}
-	              <th>API Key</th>
-	              <th>IP</th>
-	              {showCost ? <th>上游</th> : null}
-              {showCost ? <th>上游 Key</th> : null}
-              <th>模型</th>
-              {showCost ? <th>推理强度</th> : null}
-              <th>状态</th>
-              <th>输入</th>
-              <th>缓存</th>
-              <th>输出</th>
-              <th>总 token</th>
-              <th>扣费</th>
-              {showCost ? <th>上游成本</th> : null}
-              {showCost ? <th>毛利</th> : null}
-              <th>总时间</th>
-              <th>首 token</th>
-              <th>时间</th>
-              {showCost ? <th>操作</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-	            {requests.map((item) => (
-	              <tr key={item.id}>
-	                {showCost ? <td>{item.user?.email ?? "-"}</td> : null}
-	                <td>{formatRequestApiKey(item.apiKey)}</td>
-		                <td>
-                  <IpCell
-                    ip={item.clientIp}
-                    banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
-                  />
-                </td>
-	                {showCost ? <td>{item.upstreamProvider ?? "-"}</td> : null}
-                {showCost ? <td>{formatRequestUpstreamKey(item.upstreamProviderKey)}</td> : null}
-                <td>{item.model}</td>
-                {showCost ? <td>{formatReasoningEffortCell(item.reasoningEffort, item.reasoningEffortActual)}</td> : null}
-                <td>
-                  <div className="request-status-cell">
-                    <StatusPill status={getRequestStatusPillStatus(item)} />
-                    {getReturnedNoticeText(item) ? (
-                      <span className="request-notice-pill">已提示</span>
-                    ) : null}
-                    {hasRequestError(item) ? (
-                      <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
-                        <FileSearch size={13} />
-                        详情
-                      </button>
-                    ) : null}
-                  </div>
-                </td>
-                <td>{formatNumber(item.inputTokens)}</td>
-                <td>{formatNumber(item.cachedInputTokens)}</td>
-                <td>{formatNumber(item.outputTokens)}</td>
-                <td>{formatNumber(item.totalTokens)}</td>
-                <td>${money(item.chargedAmountUsd)}</td>
-                {showCost ? <td>${money(item.upstreamCostUsd ?? "0")}</td> : null}
-                {showCost ? (
-                  <td>${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}</td>
-                ) : null}
-                <td>{seconds(item.latencyMs)}</td>
-                <td>{seconds(item.firstTokenLatencyMs)}</td>
-                <td>{dateTime(item.createdAt)}</td>
-                {showCost ? (
-                  <td>
-                    {item.status === "PENDING" ? (
-                      <button
-                        className="request-terminate-button"
-                        disabled={terminatingRequestId === item.id}
-                        onClick={() => void terminateRequest(item)}
-                        title="终止这条仍在处理中的调用"
-                        type="button"
-                      >
-                        <CircleStop size={13} />
-                        终止
-                      </button>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                ) : null}
-              </tr>
-            ))}
-	            {requests.length === 0 ? <EmptyRow colSpan={showCost ? 19 : 12} /> : null}
-          </tbody>
+          {showCost ? (
+            <>
+              <thead>
+                <tr>
+                  <th>追踪编码</th>
+                  <th>标识</th>
+                  <th>调用</th>
+                  <th>状态</th>
+                  <th>Token</th>
+                  <th>费用</th>
+                  <th>耗时</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong className="request-trace-code">{formatRequestTraceCode(item)}</strong>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <strong>{item.user?.email ?? "-"}</strong>
+                        <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
+                        <IpCell
+                          ip={item.clientIp}
+                          banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <strong>{item.model}</strong>
+                        <span>上游：{item.upstreamProvider ?? "-"}</span>
+                        <span>上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}</span>
+                        <span>推理：{formatReasoningEffortCell(item.reasoningEffort, item.reasoningEffortActual)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="request-status-cell">
+                        <StatusPill status={getRequestStatusPillStatus(item)} />
+                        {getReturnedNoticeText(item) ? (
+                          <span className="request-notice-pill">已提示</span>
+                        ) : null}
+                        {hasRequestError(item) ? (
+                          <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
+                            <FileSearch size={13} />
+                            详情
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-metric-grid">
+                        <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
+                        <AuditMetric label="缓存" value={formatNumber(item.cachedInputTokens)} />
+                        <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
+                        <AuditMetric label="总计" value={formatNumber(item.totalTokens)} strong />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-metric-grid">
+                        <AuditMetric label="扣费" value={`$${money(item.chargedAmountUsd)}`} strong />
+                        <AuditMetric label="成本" value={`$${money(item.upstreamCostUsd ?? "0")}`} />
+                        <AuditMetric
+                          label="毛利"
+                          value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="audit-stack">
+                        <span>总：{seconds(item.latencyMs)}</span>
+                        <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
+                        <span>{dateTime(item.createdAt)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      {item.status === "PENDING" ? (
+                        <button
+                          className="request-terminate-button"
+                          disabled={terminatingRequestId === item.id}
+                          onClick={() => void terminateRequest(item)}
+                          title="终止这条仍在处理中的调用"
+                          type="button"
+                        >
+                          <CircleStop size={13} />
+                          终止
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {requests.length === 0 ? <EmptyRow colSpan={8} /> : null}
+              </tbody>
+            </>
+          ) : (
+            <>
+              <thead>
+                <tr>
+                  <th>编码</th>
+                  <th>API Key</th>
+                  <th>IP</th>
+                  <th>模型</th>
+                  <th>状态</th>
+                  <th>输入</th>
+                  <th>缓存</th>
+                  <th>输出</th>
+                  <th>总 token</th>
+                  <th>扣费</th>
+                  <th>总时间</th>
+                  <th>首 token</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((item) => (
+                  <tr key={item.id}>
+                    <td><strong className="request-trace-code">{formatRequestTraceCode(item)}</strong></td>
+                    <td>{formatRequestApiKey(item.apiKey)}</td>
+                    <td>
+                      <IpCell
+                        ip={item.clientIp}
+                        banned={Boolean(item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)))}
+                      />
+                    </td>
+                    <td>{item.model}</td>
+                    <td>
+                      <div className="request-status-cell">
+                        <StatusPill status={getRequestStatusPillStatus(item)} />
+                        {getReturnedNoticeText(item) ? (
+                          <span className="request-notice-pill">已提示</span>
+                        ) : null}
+                        {hasRequestError(item) ? (
+                          <button className="request-detail-button" onClick={() => void openRequestDetail(item)} title="查看详细报错原因和过程" type="button">
+                            <FileSearch size={13} />
+                            详情
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{formatNumber(item.inputTokens)}</td>
+                    <td>{formatNumber(item.cachedInputTokens)}</td>
+                    <td>{formatNumber(item.outputTokens)}</td>
+                    <td>{formatNumber(item.totalTokens)}</td>
+                    <td>${money(item.chargedAmountUsd)}</td>
+                    <td>{seconds(item.latencyMs)}</td>
+                    <td>{seconds(item.firstTokenLatencyMs)}</td>
+                    <td>{dateTime(item.createdAt)}</td>
+                  </tr>
+                ))}
+                {requests.length === 0 ? <EmptyRow colSpan={13} /> : null}
+              </tbody>
+            </>
+          )}
         </table>
       </div>
       <div className={showCost ? "mobile-record-list audit-mobile-list" : "mobile-record-list"} onScroll={handleScroll}>
@@ -2392,6 +2464,9 @@ function Requests({
             meta={dateTime(item.createdAt)}
             badges={<StatusPill status={getRequestStatusPillStatus(item)} />}
           >
+            <MobileField label="追踪编码" wide>
+              <strong className="request-trace-code">{formatRequestTraceCode(item)}</strong>
+            </MobileField>
 	            {showCost ? (
 	              <>
 	                <MobileField label="用户" wide>
@@ -2507,6 +2582,15 @@ function IpCell({
   );
 }
 
+function AuditMetric({ label, value, strong = false }: { label: string; value: ReactNode; strong?: boolean }) {
+  return (
+    <div className={strong ? "audit-metric strong" : "audit-metric"}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function RequestDetailModal({ request, loading, detailError, onClose }: { request: ApiRequestDetail; loading: boolean; detailError: string | null; onClose: () => void }) {
   const failureSummary = describeRequestFailure(request);
   const processSteps = buildRequestProcess(request, failureSummary);
@@ -2568,6 +2652,7 @@ function RequestDetailModal({ request, loading, detailError, onClose }: { reques
             <h3>基础信息</h3>
           </div>
           <div className="request-detail-grid">
+            <RequestDetailField label="追踪编码">{formatRequestTraceCode(request)}</RequestDetailField>
             <RequestDetailField label="用户">{request.user?.email ?? "-"}</RequestDetailField>
             <RequestDetailField label="API Key">{formatRequestApiKey(request.apiKey)}</RequestDetailField>
             <RequestDetailField label="客户端 IP">{request.clientIp ?? "-"}</RequestDetailField>
@@ -8253,6 +8338,10 @@ function formatRequestApiKey(apiKey: ApiRequest["apiKey"]) {
   }
 
   return `${apiKey.name} (${apiKey.keyPrefix})`;
+}
+
+function formatRequestTraceCode(request: Pick<ApiRequest, "id" | "traceCode">) {
+  return request.traceCode?.trim() || `REQ-${request.id.slice(-8).toUpperCase()}`;
 }
 
 function formatRequestUpstreamKey(upstreamKey: ApiRequest["upstreamProviderKey"]) {

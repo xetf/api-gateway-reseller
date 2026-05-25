@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { prisma } from "@gateway/db";
 import { sanitizeJsonForPostgres } from "../lib/db-sanitize.js";
 import { sendApiError } from "../lib/errors.js";
+import { createRequestTraceCode } from "../lib/crypto.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
@@ -277,6 +278,7 @@ export async function proxyRoutes(app: FastifyInstance) {
 
     const apiRequest = await prisma.apiRequest.create({
       data: {
+        traceCode: createRequestTraceCode(),
         userId: user.id,
         apiKeyId: apiKey.id,
         upstreamProviderKeyId: getLoggedUpstreamProviderKeyId(initialRoute),
@@ -1275,6 +1277,7 @@ async function sendIpBanResponse(params: {
 
   await prisma.apiRequest.create({
     data: {
+      traceCode: createRequestTraceCode(),
       userId,
       apiKeyId,
       upstreamProvider: "gateway",

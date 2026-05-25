@@ -10,6 +10,12 @@ import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { createApiKey, createRedeemCode } from "../lib/crypto.js";
 import { hashPassword, requireAdmin, requireUser } from "../services/auth.js";
+import {
+  abortActiveApiRequest,
+  createManualTerminateUsage,
+  manualTerminateMessage,
+  manualTerminateStatusCode,
+} from "../services/active-api-requests.js";
 import { getApiKeyTotalUsageUsd } from "../services/api-key-limits.js";
 import {
   readAuthSettings,
@@ -17,6 +23,19 @@ import {
   saveAuthSettings,
   toAdminAuthSettings,
 } from "../services/auth-settings.js";
+import {
+  maxPendingAutoTerminateSeconds,
+  minPendingAutoTerminateSeconds,
+  readPendingAutoTerminateSettings,
+  savePendingAutoTerminateSettings,
+} from "../services/pending-auto-terminate-settings.js";
+import {
+  reasoningEffortValues,
+  readReasoningEffortTransformSettings,
+  saveReasoningEffortTransformSettings,
+  validateReasoningEffortTransformRules,
+  normalizeReasoningEffortTransformRule,
+} from "../services/reasoning-effort-transform-settings.js";
 import { sendSmtpTestEmail } from "../services/mailer.js";
 import {
   checkModelPoolChannel,
@@ -151,6 +170,18 @@ const authSettingsSchema = z.object({
 });
 const authSettingsTestEmailSchema = authSettingsSchema.extend({
   testEmail: z.string().trim().email().transform((value) => value.toLowerCase()),
+});
+const pendingAutoTerminateSettingsSchema = z.object({
+  enabled: z.boolean(),
+  timeoutSeconds: z.number().int().min(minPendingAutoTerminateSeconds).max(maxPendingAutoTerminateSeconds),
+});
+const reasoningEffortTransformRuleSchema = z.object({
+  enabled: z.boolean(),
+  from: z.enum(reasoningEffortValues),
+  to: z.enum(reasoningEffortValues),
+});
+const reasoningEffortTransformRulesSchema = z.object({
+  rules: z.array(reasoningEffortTransformRuleSchema).min(0).max(20),
 });
 const adminCreateApiKeySchema = z.object({
   name: z.string().min(1).max(80),
@@ -342,6 +373,53 @@ function ordinaryErrorResultFilter(): Prisma.ApiRequestWhereInput {
   };
 }
 
+function getRequestReasoningEffortFromBody(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  const reasoningEffort = typeof record.reasoning_effort === "string" ? record.reasoning_effort.trim() : "";
+  if (reasoningEffort) {
+    return reasoningEffort;
+  }
+
+  const modelReasoningEffort =
+    typeof record.model_reasoning_effort === "string" ? record.model_reasoning_effort.trim() : "";
+  if (modelReasoningEffort) {
+    return modelReasoningEffort;
+  }
+
+  const reasoning = record.reasoning;
+  if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
+    const nested = reasoning as Record<string, unknown>;
+    const nestedEffort = typeof nested.effort === "string" ? nested.effort.trim() : "";
+    if (nestedEffort) {
+      return nestedEffort;
+    }
+  }
+
+  return null;
+}
+
+function getTransformedReasoningEffort(
+  reasoningEffort: string | null,
+  settings: Awaited<ReturnType<typeof readReasoningEffortTransformSettings>>,
+) {
+  const normalized = reasoningEffort?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  for (const rule of settings.rules) {
+    if (rule.enabled && rule.from !== rule.to && normalized === rule.from) {
+      return rule.to;
+    }
+  }
+
+  return null;
+}
+
 async function findGrossProfitRequestIds(range: FiniteRange) {
   const minClause = range.min !== undefined
     ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") >= ${new Decimal(range.min).toFixed(8)}::numeric`
@@ -412,6 +490,12 @@ async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
   if (q) {
     andFilters.push({
       OR: [
+        {
+          traceCode: {
+            contains: q,
+            mode: "insensitive",
+          },
+        },
         {
           model: {
             contains: q,
@@ -696,6 +780,50 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     return { ok: true };
+  });
+
+  app.get("/admin/pending-auto-terminate-settings", async () => {
+    const settings = await readPendingAutoTerminateSettings();
+    return {
+      settings: {
+        ...settings,
+        minTimeoutSeconds: minPendingAutoTerminateSeconds,
+        maxTimeoutSeconds: maxPendingAutoTerminateSeconds,
+      },
+    };
+  });
+
+  app.put("/admin/pending-auto-terminate-settings", async (request) => {
+    const body = pendingAutoTerminateSettingsSchema.parse(request.body);
+    const settings = await savePendingAutoTerminateSettings(body);
+    return {
+      settings: {
+        ...settings,
+        minTimeoutSeconds: minPendingAutoTerminateSeconds,
+        maxTimeoutSeconds: maxPendingAutoTerminateSeconds,
+      },
+    };
+  });
+
+  app.get("/admin/reasoning-effort-transform-settings", async () => {
+    const settings = await readReasoningEffortTransformSettings();
+    return { settings, options: reasoningEffortValues };
+  });
+
+  app.put("/admin/reasoning-effort-transform-settings", async (request, reply) => {
+    const body = reasoningEffortTransformRulesSchema.parse(request.body);
+    const normalizedRules = body.rules.map((rule) => normalizeReasoningEffortTransformRule(rule));
+    const validation = validateReasoningEffortTransformRules(normalizedRules);
+    if (!validation.ok) {
+      return reply.status(409).send({
+        message: "推理强度转换存在冲突",
+        conflicts: validation.conflicts,
+        selfTransforms: validation.selfTransforms,
+      });
+    }
+
+    const settings = await saveReasoningEffortTransformSettings({ rules: normalizedRules });
+    return { settings, options: reasoningEffortValues };
   });
 
   app.get("/admin/users", async () => {
@@ -1251,7 +1379,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const query = adminRequestsQuerySchema.parse(request.query);
     const where = await buildAdminRequestsWhere(query);
 
-    const [rows, summary, ipBanRules] = await Promise.all([
+    const [rows, summary, ipBanRules, reasoningTransformSettings] = await Promise.all([
       prisma.apiRequest.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1259,6 +1387,7 @@ export async function adminRoutes(app: FastifyInstance) {
         ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
         select: {
           id: true,
+          traceCode: true,
           upstreamProvider: true,
           upstreamProviderKey: {
             select: {
@@ -1290,6 +1419,7 @@ export async function adminRoutes(app: FastifyInstance) {
           firstTokenLatencyMs: true,
           errorMessage: true,
           responseUsage: true,
+          requestBody: true,
           createdAt: true,
           user: {
             select: {
@@ -1300,9 +1430,17 @@ export async function adminRoutes(app: FastifyInstance) {
       }),
       getAdminRequestsSummary(where),
       listIpBanRules(),
+      readReasoningEffortTransformSettings(),
     ]);
     const hasMore = rows.length > query.take;
-    const requests = hasMore ? rows.slice(0, query.take) : rows;
+    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(({ requestBody, ...row }) => {
+      const reasoningEffort = getRequestReasoningEffortFromBody(requestBody);
+      return {
+        ...row,
+        reasoningEffort,
+        reasoningEffortActual: getTransformedReasoningEffort(reasoningEffort, reasoningTransformSettings),
+      };
+    });
 
     return {
       requests,
@@ -1319,6 +1457,7 @@ export async function adminRoutes(app: FastifyInstance) {
       where: { id: params.id },
       select: {
         id: true,
+        traceCode: true,
         upstreamProvider: true,
         upstreamRequestId: true,
         upstreamProviderKey: {
@@ -1368,6 +1507,98 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     return { request: apiRequest };
+  });
+
+  app.post("/admin/requests/:id/terminate", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const existing = await prisma.apiRequest.findUnique({
+      where: { id: params.id },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    if (!existing) {
+      return reply.status(404).send({ message: "Request not found" });
+    }
+
+    if (existing.status !== "PENDING") {
+      return reply.status(409).send({ message: "Only PENDING requests can be terminated" });
+    }
+
+    const abortResult = abortActiveApiRequest(existing.id);
+    const latencyMs = Math.min(
+      2147483647,
+      Math.max(0, Math.round(Date.now() - existing.createdAt.getTime())),
+    );
+    const updateResult = await prisma.apiRequest.updateMany({
+      where: {
+        id: existing.id,
+        status: "PENDING",
+      },
+      data: {
+        status: "FAILED",
+        httpStatus: manualTerminateStatusCode,
+        errorMessage: manualTerminateMessage,
+        latencyMs,
+        responseUsage: createManualTerminateUsage(abortResult.aborted),
+      },
+    });
+
+    if (updateResult.count === 0) {
+      return reply.status(409).send({ message: "Request is no longer PENDING" });
+    }
+
+    const apiRequest = await prisma.apiRequest.findUniqueOrThrow({
+      where: { id: existing.id },
+      select: {
+        id: true,
+        upstreamProvider: true,
+        upstreamProviderKey: {
+          select: {
+            id: true,
+            name: true,
+            keyPrefix: true,
+          },
+        },
+        clientIp: true,
+        apiKey: {
+          select: {
+            id: true,
+            name: true,
+            keyPrefix: true,
+          },
+        },
+        model: true,
+        endpoint: true,
+        method: true,
+        status: true,
+        httpStatus: true,
+        inputTokens: true,
+        cachedInputTokens: true,
+        outputTokens: true,
+        totalTokens: true,
+        chargedAmountUsd: true,
+        upstreamCostUsd: true,
+        latencyMs: true,
+        firstTokenLatencyMs: true,
+        errorMessage: true,
+        responseUsage: true,
+        createdAt: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    return {
+      request: apiRequest,
+      abortedActiveRequest: abortResult.aborted,
+    };
   });
 
   app.get("/admin/redeem-codes", async () => {

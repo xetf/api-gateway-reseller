@@ -127,6 +127,7 @@ model WalletTransaction {
 
 model ApiRequest {
   id                String           @id @default(cuid())
+  traceCode         String           @unique @default(dbgenerated("('REQ-DB-' || upper(substr(md5(((random())::text || (clock_timestamp())::text)), 1, 16)))"))
   userId            String
   apiKeyId          String?
   upstreamProviderKeyId String?
