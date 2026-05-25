@@ -3,10 +3,19 @@ import { Prisma } from "@prisma/client";
 import { performance } from "node:perf_hooks";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { prisma } from "@gateway/db";
+import { sanitizeJsonForPostgres } from "../lib/db-sanitize.js";
 import { sendApiError } from "../lib/errors.js";
 import { usageFromOpenAIResponse, usageFromStreamChunk } from "../lib/usage.js";
 import { chargeForRequest, ensureWalletCanStart, markRequestFailed } from "../services/billing.js";
 import { requireApiKey } from "../services/auth.js";
+import {
+  createManualTerminateUsage,
+  isManualTerminateError,
+  manualTerminateMessage,
+  manualTerminateStatusCode,
+  registerActiveApiRequest,
+  unregisterActiveApiRequest,
+} from "../services/active-api-requests.js";
 import { disableApiKeyIfTotalLimitReached } from "../services/api-key-limits.js";
 import { recordModelPoolUserCallResult } from "../services/model-pool-call-failures.js";
 import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.js";
@@ -17,6 +26,7 @@ import {
   ipBanNoticeUsageSource,
   type IpBanRule,
 } from "../services/ip-ban-rules.js";
+import { applyReasoningEffortTransform } from "../services/reasoning-effort-transform-settings.js";
 import type { ApiRequestWithUser, Usage } from "../types.js";
 
 type ModelRoute = NonNullable<Awaited<ReturnType<typeof getProviderForModel>>>;
@@ -507,12 +517,16 @@ async function runUpstreamAttempt(params: {
   } = params;
   const { provider, price, channelId } = route;
   const upstreamProviderKeyId = getLoggedUpstreamProviderKeyId(route);
-  const upstreamBody = buildUpstreamBody(endpoint, body, provider);
+  const upstreamBody = await applyReasoningEffortTransform(buildUpstreamBody(endpoint, body, provider));
   const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
   let streamFirstTokenFetchTimedOut = false;
+  let activeController: AbortController | undefined;
+  let activeControllerHandedOff = false;
 
   try {
     const controller = new AbortController();
+    activeController = controller;
+    registerActiveApiRequest(apiRequestId, controller);
     const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
     const firstTokenFetchTimeout = requestedStream
       ? startFirstTokenTimeout(startedAt, () => {
@@ -623,9 +637,11 @@ async function runUpstreamAttempt(params: {
     const shouldStream = shouldStreamResponse(upstreamResponse, body, upstreamRequestUrl);
 
     if (shouldStream && billable && price) {
+      activeControllerHandedOff = true;
       await proxyStream({
         reply,
         upstreamResponse,
+        activeController: controller,
         apiRequestId,
         endpoint,
         requestBody: upstreamBody,
@@ -643,9 +659,11 @@ async function runUpstreamAttempt(params: {
     }
 
     if (shouldStream) {
+      activeControllerHandedOff = true;
       await proxyPassthroughStream({
         reply,
         upstreamResponse,
+        activeController: controller,
         apiRequestId,
         startedAt,
       });
@@ -718,11 +736,20 @@ async function runUpstreamAttempt(params: {
     return { kind: "sent" };
   } catch (error) {
     const effectiveError = streamFirstTokenFetchTimedOut ? createFirstTokenTimeoutError() : error;
-    const message = effectiveError instanceof Error ? effectiveError.message : "Upstream request failed";
-    const statusCode = isFirstTokenTimeoutError(effectiveError) ? 504 : 502;
+    const manualTerminated = isManualTerminateError(effectiveError);
+    const message = manualTerminated
+      ? manualTerminateMessage
+      : effectiveError instanceof Error
+        ? effectiveError.message
+        : "Upstream request failed";
+    const statusCode = manualTerminated
+      ? manualTerminateStatusCode
+      : isFirstTokenTimeoutError(effectiveError)
+        ? 504
+        : 502;
     const retryableFailure = isRetryableProxyError(effectiveError);
 
-    if (retryableFailure && params.attempt < 2 && billable && model && channelId) {
+    if (!manualTerminated && retryableFailure && params.attempt < 2 && billable && model && channelId) {
       await recordFailedChannelAttempt({
         userId,
         apiKeyId,
@@ -748,6 +775,7 @@ async function runUpstreamAttempt(params: {
       message,
       statusCode,
       Math.round(performance.now() - startedAt),
+      manualTerminated ? createManualTerminateUsage(true) : undefined,
     );
     if (recoveryNotice) {
       await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "proxy_catch");
@@ -761,7 +789,7 @@ async function runUpstreamAttempt(params: {
       );
       return { kind: "sent" };
     }
-    if (billable && model) {
+    if (billable && model && !manualTerminated) {
       await recordFailedChannelAttempt({
         userId,
         apiKeyId,
@@ -780,6 +808,10 @@ async function runUpstreamAttempt(params: {
       message,
       retryableFailure,
     };
+  } finally {
+    if (activeController && !activeControllerHandedOff) {
+      unregisterActiveApiRequest(apiRequestId, activeController);
+    }
   }
 }
 
@@ -1714,7 +1746,20 @@ function redactBodyForLog(body: ProxyBody) {
   if (Array.isArray(clone.messages)) {
     clone.messages = clone.messages.slice(-6);
   }
-  return clone;
+  return sanitizeJsonForPostgres(clone);
+}
+
+function buildStreamErrorEvent(message: string, statusCode: number) {
+  return [
+    sseEvent("error", {
+      error: {
+        message,
+        type: statusCode === 504 ? "timeout_error" : "upstream_error",
+        code: statusCode,
+      },
+    }),
+    "data: [DONE]\n\n",
+  ].join("");
 }
 
 function getClientIp(request: ApiRequestWithUser) {
@@ -1831,6 +1876,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 async function proxyStream(params: {
   reply: FastifyReply;
   upstreamResponse: Response;
+  activeController?: AbortController;
   apiRequestId: string;
   endpoint: string;
   requestBody: ProxyBody;
@@ -1847,7 +1893,7 @@ async function proxyStream(params: {
     info?: (value: unknown, message?: string) => void;
   };
 }) {
-  const { reply, upstreamResponse, apiRequestId, endpoint, requestBody, userId, callerIdentity, apiKeyId, model, channelId, upstreamProviderKeyId, priceId, startedAt, logger } = params;
+  const { reply, upstreamResponse, activeController, apiRequestId, endpoint, requestBody, userId, callerIdentity, apiKeyId, model, channelId, upstreamProviderKeyId, priceId, startedAt, logger } = params;
   const price = await prisma.modelPrice.findUniqueOrThrow({
     where: { id: priceId },
   });
@@ -1885,7 +1931,15 @@ async function proxyStream(params: {
           retryableFailure: true,
           logger,
         });
-        safeController.error(error);
+        safeController.enqueue(
+          encoder.encode(
+            buildStreamErrorEvent(
+              error.message,
+              isFirstTokenTimeoutError(error) ? 504 : 502,
+            ),
+          ),
+        );
+        safeController.close();
         return;
       }
       let firstTokenTimedOut = false;
@@ -2010,7 +2064,12 @@ async function proxyStream(params: {
           logger,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Stream failed";
+        const manualTerminated = isManualTerminateError(error);
+        const message = manualTerminated
+          ? manualTerminateMessage
+          : error instanceof Error
+            ? error.message
+            : "Stream failed";
         if (isClientStreamClosedError(error)) {
           await markRequestFailed(
             { id: apiRequestId },
@@ -2031,36 +2090,46 @@ async function proxyStream(params: {
         await markRequestFailed(
           { id: apiRequestId },
           message,
-          isFirstTokenTimeoutError(error) ? 504 : 502,
+          manualTerminated
+            ? manualTerminateStatusCode
+            : isFirstTokenTimeoutError(error)
+              ? 504
+              : 502,
           Math.round(performance.now() - startedAt),
+          manualTerminated ? createManualTerminateUsage(true) : undefined,
         );
         if (recoveryNotice) {
           await markRecoveryNoticeReturned(apiRequestId, recoveryNotice, "stream_recovery_notice");
           safeController.enqueue(encoder.encode(buildNoticeStream(endpoint, model, recoveryNotice)));
           return;
         }
-        await recordStickyModelPoolResult({
-          callerIdentity,
-          model,
-          channelId,
-          upstreamProviderKeyId,
-          failed: true,
-          latencyMs: Math.round(performance.now() - startedAt),
-        });
-        await recordModelPoolUserCallResult({
-          userId,
-          apiKeyId,
-          callerIdentity,
-          model,
-          channelId,
-          failed: true,
-          retryableFailure: isRetryableProxyError(error),
-          logger,
-        });
-        safeController.error(error);
+        if (!manualTerminated) {
+          await recordStickyModelPoolResult({
+            callerIdentity,
+            model,
+            channelId,
+            upstreamProviderKeyId,
+            failed: true,
+            latencyMs: Math.round(performance.now() - startedAt),
+          });
+          await recordModelPoolUserCallResult({
+            userId,
+            apiKeyId,
+            callerIdentity,
+            model,
+            channelId,
+            failed: true,
+            retryableFailure: isRetryableProxyError(error),
+            logger,
+          });
+          safeController.error(error);
+          return;
+        }
+        safeController.close();
         return;
       } finally {
         clearTimeout(firstTokenTimeout);
+        unregisterActiveApiRequest(apiRequestId, activeController);
         safeController.close();
       }
     },
@@ -2078,10 +2147,11 @@ async function proxyStream(params: {
 async function proxyPassthroughStream(params: {
   reply: FastifyReply;
   upstreamResponse: Response;
+  activeController?: AbortController;
   apiRequestId: string;
   startedAt: number;
 }) {
-  const { reply, upstreamResponse, apiRequestId, startedAt } = params;
+  const { reply, upstreamResponse, activeController, apiRequestId, startedAt } = params;
   let firstTokenLatencyMs: number | null = null;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -2090,7 +2160,10 @@ async function proxyPassthroughStream(params: {
       if (!reader) {
         const error = new Error("Stream body missing");
         await markRequestFailed({ id: apiRequestId }, error.message, 502, Math.round(performance.now() - startedAt));
-        safeController.error(error);
+        safeController.enqueue(
+          new TextEncoder().encode(buildStreamErrorEvent(error.message, 502)),
+        );
+        safeController.close();
         return;
       }
       let firstTokenTimedOut = false;
@@ -2133,20 +2206,44 @@ async function proxyPassthroughStream(params: {
           },
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Stream failed";
+        const manualTerminated = isManualTerminateError(error);
+        const message = manualTerminated
+          ? manualTerminateMessage
+          : error instanceof Error
+            ? error.message
+            : "Stream failed";
         const clientStreamClosed = isClientStreamClosedError(error);
         await markRequestFailed(
           { id: apiRequestId },
           clientStreamClosed ? clientStreamClosedMessage : message,
-          clientStreamClosed ? clientStreamClosedStatusCode : isFirstTokenTimeoutError(error) ? 504 : 502,
+          clientStreamClosed
+            ? clientStreamClosedStatusCode
+            : manualTerminated
+              ? manualTerminateStatusCode
+              : isFirstTokenTimeoutError(error)
+                ? 504
+                : 502,
           Math.round(performance.now() - startedAt),
+          manualTerminated ? createManualTerminateUsage(true) : undefined,
         );
         if (!clientStreamClosed) {
-          safeController.error(error);
+          if (manualTerminated) {
+            safeController.close();
+            return;
+          }
+          safeController.enqueue(
+            new TextEncoder().encode(
+              buildStreamErrorEvent(
+                message,
+                isFirstTokenTimeoutError(error) ? 504 : 502,
+              ),
+            ),
+          );
         }
         return;
       } finally {
         clearTimeout(firstTokenTimeout);
+        unregisterActiveApiRequest(apiRequestId, activeController);
         safeController.close();
       }
     },

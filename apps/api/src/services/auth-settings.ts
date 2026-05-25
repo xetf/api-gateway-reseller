@@ -86,8 +86,8 @@ export async function saveAuthSettings(input: AuthSettingsInput) {
 
 export function toPublicAuthSettings(settings: AuthSettings): PublicAuthSettings {
   return {
-    emailCodeLoginEnabled: true,
-    emailCodeAutoRegisterEnabled: true,
+    emailCodeLoginEnabled: settings.emailCodeLoginEnabled,
+    emailCodeAutoRegisterEnabled: settings.emailCodeAutoRegisterEnabled,
     newUserBonusUsd: settings.newUserBonusUsd,
     smtpConfigured: isSmtpConfigured(settings),
   };
@@ -116,8 +116,14 @@ export function normalizeMoney(value: string | number | null | undefined) {
 
 function normalizeAuthSettings(settings: AuthSettings): AuthSettings {
   return {
-    emailCodeLoginEnabled: true,
-    emailCodeAutoRegisterEnabled: true,
+    emailCodeLoginEnabled: normalizeBoolean(
+      settings.emailCodeLoginEnabled,
+      defaultAuthSettings.emailCodeLoginEnabled,
+    ),
+    emailCodeAutoRegisterEnabled: normalizeBoolean(
+      settings.emailCodeAutoRegisterEnabled,
+      defaultAuthSettings.emailCodeAutoRegisterEnabled,
+    ),
     newUserBonusUsd: normalizeMoney(settings.newUserBonusUsd),
     emailCodeTtlSeconds: clampInteger(settings.emailCodeTtlSeconds, 60, 3600, defaultAuthSettings.emailCodeTtlSeconds),
     emailCodeCooldownSeconds: clampInteger(settings.emailCodeCooldownSeconds, 10, 600, defaultAuthSettings.emailCodeCooldownSeconds),
@@ -137,4 +143,8 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   }
 
   return Math.min(max, Math.max(min, numeric));
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }

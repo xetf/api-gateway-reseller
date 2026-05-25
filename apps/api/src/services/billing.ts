@@ -1,6 +1,7 @@
 import { Decimal } from "decimal.js";
 import { performance } from "node:perf_hooks";
 import { prisma, type ApiRequest, type ModelPrice } from "@gateway/db";
+import { sanitizeJsonForPostgres, sanitizePostgresText } from "../lib/db-sanitize.js";
 import { calculateCharges } from "../lib/money.js";
 import { applyUnifiedCustomerPricing } from "./unified-pricing.js";
 import type { Usage } from "../types.js";
@@ -35,6 +36,45 @@ export async function chargeForRequest(params: {
   const { upstreamCostUsd, chargedAmountUsd } = calculateCharges(chargePrice, usage);
 
   return prisma.$transaction(async (tx) => {
+    const existingRequest = await tx.apiRequest.findUnique({
+      where: { id: requestId },
+      select: {
+        id: true,
+        apiKeyId: true,
+        status: true,
+      },
+    });
+
+    if (!existingRequest) {
+      throw new Error("API request not found");
+    }
+
+    if (existingRequest.status !== "PENDING") {
+      return existingRequest;
+    }
+
+    const updateResult = await tx.apiRequest.updateMany({
+      where: {
+        id: requestId,
+        status: "PENDING",
+      },
+      data: {
+        status: "SUCCESS",
+        inputTokens: usage.inputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        latencyMs: startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
+        upstreamCostUsd: upstreamCostUsd.toFixed(8),
+        chargedAmountUsd: chargedAmountUsd.toFixed(8),
+        responseUsage: usage.raw === undefined ? undefined : (sanitizeJsonForPostgres(usage.raw) as object),
+      },
+    });
+
+    if (updateResult.count === 0) {
+      return existingRequest;
+    }
+
     const wallet = await tx.wallet.findUnique({
       where: { userId },
     });
@@ -78,19 +118,8 @@ export async function chargeForRequest(params: {
       },
     });
 
-    const apiRequest = await tx.apiRequest.update({
+    const apiRequest = await tx.apiRequest.findUniqueOrThrow({
       where: { id: requestId },
-      data: {
-        status: "SUCCESS",
-        inputTokens: usage.inputTokens,
-        cachedInputTokens: usage.cachedInputTokens,
-        outputTokens: usage.outputTokens,
-        totalTokens: usage.totalTokens,
-        latencyMs: startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
-        upstreamCostUsd: upstreamCostUsd.toFixed(8),
-        chargedAmountUsd: chargedAmountUsd.toFixed(8),
-        responseUsage: usage.raw === undefined ? undefined : (usage.raw as object),
-      },
     });
 
     if (apiRequest.apiKeyId) {
@@ -135,14 +164,21 @@ export async function markRequestFailed(
   errorMessage: string,
   httpStatus?: number,
   latencyMs?: number,
+  responseUsage?: unknown,
 ) {
-  await prisma.apiRequest.update({
-    where: { id: request.id },
+  await prisma.apiRequest.updateMany({
+    where: {
+      id: request.id,
+      status: "PENDING",
+    },
     data: {
       status: "FAILED",
-      errorMessage,
+      errorMessage: sanitizePostgresText(errorMessage),
       httpStatus,
       latencyMs,
+      ...(responseUsage === undefined
+        ? {}
+        : { responseUsage: sanitizeJsonForPostgres(responseUsage) as object }),
     },
   });
 }

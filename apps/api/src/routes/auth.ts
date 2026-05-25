@@ -42,6 +42,10 @@ export async function authRoutes(app: FastifyInstance) {
     const body = emailCodeSchema.parse(request.body);
     const settings = await readAuthSettings();
 
+    if (!settings.emailCodeLoginEnabled) {
+      return reply.status(403).send({ message: "邮箱验证码登录已关闭" });
+    }
+
     if (!isSmtpConfigured(settings)) {
       return reply.status(503).send({ message: "SMTP is not configured" });
     }
@@ -82,6 +86,10 @@ export async function authRoutes(app: FastifyInstance) {
     const body = emailCodeLoginSchema.parse(request.body);
     const settings = await readAuthSettings();
 
+    if (!settings.emailCodeLoginEnabled) {
+      return reply.status(403).send({ message: "邮箱验证码登录已关闭" });
+    }
+
     const attemptsKey = emailCodeAttemptsKey(body.email);
     const attempts = await app.redis.incr(attemptsKey);
     if (attempts === 1) {
@@ -106,6 +114,10 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     if (!user) {
+      if (!settings.emailCodeAutoRegisterEnabled) {
+        return reply.status(403).send({ message: "邮箱验证码自动注册已关闭" });
+      }
+
       const passwordHash = await hashPassword(randomBytes(32).toString("base64url"));
       const newUserBonus = new Decimal(settings.newUserBonusUsd);
 
