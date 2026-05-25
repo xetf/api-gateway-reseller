@@ -36,7 +36,14 @@ function slowKey(
   return `modelpool:sticky-slow:${callerIdentity}:${model}:${channelId}:${upstreamProviderKeyId ?? "provider"}`;
 }
 
-export async function getStickyModelPoolRoute(callerIdentity: string, model: string) {
+function rotationKey(callerIdentity: string, model: string) {
+  return `modelpool:rotate:last-channel:${callerIdentity}:${model}`;
+}
+
+export async function getStickyModelPoolRoute(
+  callerIdentity: string,
+  model: string,
+) {
   try {
     return parseStickyRoute(await redis.get(stickyKey(callerIdentity, model)));
   } catch {
@@ -44,7 +51,10 @@ export async function getStickyModelPoolRoute(callerIdentity: string, model: str
   }
 }
 
-export async function getStickyModelPoolChannel(callerIdentity: string, model: string) {
+export async function getStickyModelPoolChannel(
+  callerIdentity: string,
+  model: string,
+) {
   const route = await getStickyModelPoolRoute(callerIdentity, model);
   return route?.channelId ?? null;
 }
@@ -106,7 +116,9 @@ export async function setStickyModelPoolChannel(
   }
 }
 
-export async function getStickyProviderKeyOccupancies(upstreamProviderKeyIds: string[]) {
+export async function getStickyProviderKeyOccupancies(
+  upstreamProviderKeyIds: string[],
+) {
   const uniqueIds = [...new Set(upstreamProviderKeyIds)];
   const entries = await Promise.all(
     uniqueIds.map(async (keyId) => {
@@ -149,7 +161,8 @@ export async function clearStickyModelPoolChannel(
   try {
     const key = stickyKey(callerIdentity, model);
     const currentRoute = parseStickyRoute(await redis.get(key));
-    const shouldClearSticky = !channelId || currentRoute?.channelId === channelId;
+    const shouldClearSticky =
+      !channelId || currentRoute?.channelId === channelId;
     if (shouldClearSticky) {
       const operations = redis.multi();
       operations.del(key);
@@ -168,10 +181,40 @@ export async function clearStickyModelPoolChannel(
       await operations.exec();
     }
     if (channelId) {
-      await redis.del(slowKey(callerIdentity, model, channelId, upstreamProviderKeyId));
+      await redis.del(
+        slowKey(callerIdentity, model, channelId, upstreamProviderKeyId),
+      );
     }
   } catch {
     // Best-effort cleanup only.
+  }
+}
+
+export async function getLastRotatedModelPoolChannel(
+  callerIdentity: string,
+  model: string,
+) {
+  try {
+    return (await redis.get(rotationKey(callerIdentity, model))) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setLastRotatedModelPoolChannel(
+  callerIdentity: string,
+  model: string,
+  channelId: string,
+) {
+  try {
+    await redis.set(
+      rotationKey(callerIdentity, model),
+      channelId,
+      "EX",
+      24 * 60 * 60,
+    );
+  } catch {
+    // Best-effort only.
   }
 }
 
@@ -209,7 +252,10 @@ export function isStickyCallSlow(params: {
     return true;
   }
 
-  if (params.firstTokenLatencyMs !== undefined && params.firstTokenLatencyMs !== null) {
+  if (
+    params.firstTokenLatencyMs !== undefined &&
+    params.firstTokenLatencyMs !== null
+  ) {
     return params.firstTokenLatencyMs >= slowFirstTokenThresholdMs;
   }
 
@@ -238,12 +284,22 @@ export async function recordStickyModelPoolResult(params: {
   const slow = isStickyCallSlow(params);
 
   try {
-    const key = slowKey(callerIdentity, model, channelId, upstreamProviderKeyId);
+    const key = slowKey(
+      callerIdentity,
+      model,
+      channelId,
+      upstreamProviderKeyId,
+    );
 
     if (!slow) {
       await Promise.all([
         redis.del(key),
-        setStickyModelPoolChannel(callerIdentity, model, channelId, upstreamProviderKeyId),
+        setStickyModelPoolChannel(
+          callerIdentity,
+          model,
+          channelId,
+          upstreamProviderKeyId,
+        ),
       ]);
       return;
     }
@@ -252,11 +308,21 @@ export async function recordStickyModelPoolResult(params: {
     await redis.expire(key, modelPoolStickinessTtlSeconds);
 
     if (slowCount >= maxConsecutiveSlowCalls) {
-      await clearStickyModelPoolChannel(callerIdentity, model, channelId, upstreamProviderKeyId);
+      await clearStickyModelPoolChannel(
+        callerIdentity,
+        model,
+        channelId,
+        upstreamProviderKeyId,
+      );
       return;
     }
 
-    await setStickyModelPoolChannel(callerIdentity, model, channelId, upstreamProviderKeyId);
+    await setStickyModelPoolChannel(
+      callerIdentity,
+      model,
+      channelId,
+      upstreamProviderKeyId,
+    );
   } catch {
     // Redis stickiness is best-effort; never fail user requests because of it.
   }

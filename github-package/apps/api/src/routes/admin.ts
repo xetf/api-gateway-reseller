@@ -78,8 +78,16 @@ let lastCpuSnapshot = {
 let lastSystemCpuSnapshot = getSystemCpuSnapshot();
 
 const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
-const channelStatusSchema = z.enum(["ACTIVE", "FORCED_ACTIVE", "DISABLED", "UNAVAILABLE", "PENALIZED"]);
-const modelPoolHealthCheckEndpointSchema = z.enum(modelPoolHealthCheckEndpoints);
+const channelStatusSchema = z.enum([
+  "ACTIVE",
+  "FORCED_ACTIVE",
+  "DISABLED",
+  "UNAVAILABLE",
+  "PENALIZED",
+]);
+const modelPoolHealthCheckEndpointSchema = z.enum(
+  modelPoolHealthCheckEndpoints,
+);
 const upstreamProviderKeyStatusSchema = z.enum(["ACTIVE", "DISABLED"]);
 const moneyLimitSchema = z
   .union([z.string(), z.number(), z.null()])
@@ -143,18 +151,21 @@ const noticeTextSchema = z
     return trimmed ? trimmed : null;
   });
 const userRuntimeLimitSchema = z.number().int().min(0).max(10000);
-const nonNegativeMoneySchema = z.string().or(z.number()).transform((value, context) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0) {
-    context.addIssue({
-      code: "custom",
-      message: "Amount must be a non-negative number",
-    });
-    return z.NEVER;
-  }
+const nonNegativeMoneySchema = z
+  .string()
+  .or(z.number())
+  .transform((value, context) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Amount must be a non-negative number",
+      });
+      return z.NEVER;
+    }
 
-  return numeric.toFixed(8);
-});
+    return numeric.toFixed(8);
+  });
 const authSettingsSchema = z.object({
   emailCodeLoginEnabled: z.boolean(),
   emailCodeAutoRegisterEnabled: z.boolean(),
@@ -169,11 +180,19 @@ const authSettingsSchema = z.object({
   smtpFrom: z.string().trim().max(255),
 });
 const authSettingsTestEmailSchema = authSettingsSchema.extend({
-  testEmail: z.string().trim().email().transform((value) => value.toLowerCase()),
+  testEmail: z
+    .string()
+    .trim()
+    .email()
+    .transform((value) => value.toLowerCase()),
 });
 const pendingAutoTerminateSettingsSchema = z.object({
   enabled: z.boolean(),
-  timeoutSeconds: z.number().int().min(minPendingAutoTerminateSeconds).max(maxPendingAutoTerminateSeconds),
+  timeoutSeconds: z
+    .number()
+    .int()
+    .min(minPendingAutoTerminateSeconds)
+    .max(maxPendingAutoTerminateSeconds),
 });
 const reasoningEffortTransformRuleSchema = z.object({
   enabled: z.boolean(),
@@ -296,7 +315,11 @@ function parseOptionalFiniteNumber(value: string | undefined, label: string) {
   return numeric;
 }
 
-function parseFiniteRange(min: string | undefined, max: string | undefined, label: string): FiniteRange | null {
+function parseFiniteRange(
+  min: string | undefined,
+  max: string | undefined,
+  label: string,
+): FiniteRange | null {
   const range = {
     min: parseOptionalFiniteNumber(min, `${label} min`),
     max: parseOptionalFiniteNumber(max, `${label} max`),
@@ -306,7 +329,11 @@ function parseFiniteRange(min: string | undefined, max: string | undefined, labe
     return null;
   }
 
-  if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+  if (
+    range.min !== undefined &&
+    range.max !== undefined &&
+    range.min > range.max
+  ) {
     throw badAdminRequestFilter(`${label} min cannot be greater than max`);
   }
 
@@ -320,14 +347,22 @@ function intRangeFilter(range: FiniteRange): Prisma.IntFilter<"ApiRequest"> {
   };
 }
 
-function decimalRangeFilter(range: FiniteRange): Prisma.DecimalFilter<"ApiRequest"> {
+function decimalRangeFilter(
+  range: FiniteRange,
+): Prisma.DecimalFilter<"ApiRequest"> {
   return {
-    ...(range.min !== undefined ? { gte: new Decimal(range.min).toFixed(8) } : {}),
-    ...(range.max !== undefined ? { lte: new Decimal(range.max).toFixed(8) } : {}),
+    ...(range.min !== undefined
+      ? { gte: new Decimal(range.min).toFixed(8) }
+      : {}),
+    ...(range.max !== undefined
+      ? { lte: new Decimal(range.max).toFixed(8) }
+      : {}),
   };
 }
 
-function responseSourceFilter(...sources: string[]): Prisma.ApiRequestWhereInput {
+function responseSourceFilter(
+  ...sources: string[]
+): Prisma.ApiRequestWhereInput {
   return {
     OR: sources.map((source) => ({
       responseUsage: {
@@ -379,13 +414,18 @@ function getRequestReasoningEffortFromBody(body: unknown) {
   }
 
   const record = body as Record<string, unknown>;
-  const reasoningEffort = typeof record.reasoning_effort === "string" ? record.reasoning_effort.trim() : "";
+  const reasoningEffort =
+    typeof record.reasoning_effort === "string"
+      ? record.reasoning_effort.trim()
+      : "";
   if (reasoningEffort) {
     return reasoningEffort;
   }
 
   const modelReasoningEffort =
-    typeof record.model_reasoning_effort === "string" ? record.model_reasoning_effort.trim() : "";
+    typeof record.model_reasoning_effort === "string"
+      ? record.model_reasoning_effort.trim()
+      : "";
   if (modelReasoningEffort) {
     return modelReasoningEffort;
   }
@@ -393,7 +433,8 @@ function getRequestReasoningEffortFromBody(body: unknown) {
   const reasoning = record.reasoning;
   if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
     const nested = reasoning as Record<string, unknown>;
-    const nestedEffort = typeof nested.effort === "string" ? nested.effort.trim() : "";
+    const nestedEffort =
+      typeof nested.effort === "string" ? nested.effort.trim() : "";
     if (nestedEffort) {
       return nestedEffort;
     }
@@ -403,12 +444,14 @@ function getRequestReasoningEffortFromBody(body: unknown) {
 }
 
 async function findGrossProfitRequestIds(range: FiniteRange) {
-  const minClause = range.min !== undefined
-    ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") >= ${new Decimal(range.min).toFixed(8)}::numeric`
-    : Prisma.empty;
-  const maxClause = range.max !== undefined
-    ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") <= ${new Decimal(range.max).toFixed(8)}::numeric`
-    : Prisma.empty;
+  const minClause =
+    range.min !== undefined
+      ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") >= ${new Decimal(range.min).toFixed(8)}::numeric`
+      : Prisma.empty;
+  const maxClause =
+    range.max !== undefined
+      ? Prisma.sql`AND ("chargedAmountUsd" - "upstreamCostUsd") <= ${new Decimal(range.max).toFixed(8)}::numeric`
+      : Prisma.empty;
 
   const rows = await prisma.$queryRaw<Array<{ id: string }>>(
     Prisma.sql`
@@ -432,11 +475,31 @@ async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
   const upstreamKey = cleanAdminRequestFilter(query.upstreamKey);
   const endpoint = cleanAdminRequestFilter(query.endpoint);
   const httpStatus = parseOptionalFiniteNumber(query.httpStatus, "HTTP status");
-  const tokenRange = parseFiniteRange(query.minTokens, query.maxTokens, "total token range");
-  const chargedRange = parseFiniteRange(query.minChargedUsd, query.maxChargedUsd, "charged USD range");
-  const upstreamCostRange = parseFiniteRange(query.minUpstreamCostUsd, query.maxUpstreamCostUsd, "upstream cost USD range");
-  const grossProfitRange = parseFiniteRange(query.minGrossProfitUsd, query.maxGrossProfitUsd, "gross profit USD range");
-  const latencyRange = parseFiniteRange(query.minLatencyMs, query.maxLatencyMs, "latency ms range");
+  const tokenRange = parseFiniteRange(
+    query.minTokens,
+    query.maxTokens,
+    "total token range",
+  );
+  const chargedRange = parseFiniteRange(
+    query.minChargedUsd,
+    query.maxChargedUsd,
+    "charged USD range",
+  );
+  const upstreamCostRange = parseFiniteRange(
+    query.minUpstreamCostUsd,
+    query.maxUpstreamCostUsd,
+    "upstream cost USD range",
+  );
+  const grossProfitRange = parseFiniteRange(
+    query.minGrossProfitUsd,
+    query.maxGrossProfitUsd,
+    "gross profit USD range",
+  );
+  const latencyRange = parseFiniteRange(
+    query.minLatencyMs,
+    query.maxLatencyMs,
+    "latency ms range",
+  );
   const firstTokenLatencyRange = parseFiniteRange(
     query.minFirstTokenLatencyMs,
     query.maxFirstTokenLatencyMs,
@@ -563,7 +626,9 @@ async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
 
   if (httpStatus !== undefined) {
     if (!Number.isInteger(httpStatus) || httpStatus < 100 || httpStatus > 599) {
-      throw badAdminRequestFilter("HTTP status must be an integer between 100 and 599");
+      throw badAdminRequestFilter(
+        "HTTP status must be an integer between 100 and 599",
+      );
     }
     andFilters.push({ httpStatus });
   }
@@ -593,18 +658,26 @@ async function buildAdminRequestsWhere(query: AdminRequestsQuery) {
   }
 
   if (firstTokenLatencyRange) {
-    andFilters.push({ firstTokenLatencyMs: intRangeFilter(firstTokenLatencyRange) });
+    andFilters.push({
+      firstTokenLatencyMs: intRangeFilter(firstTokenLatencyRange),
+    });
   }
 
   if (grossProfitRange) {
     const matchingIds = await findGrossProfitRequestIds(grossProfitRange);
-    andFilters.push(matchingIds.length > 0 ? { id: { in: matchingIds } } : { id: "__no_matching_request__" });
+    andFilters.push(
+      matchingIds.length > 0
+        ? { id: { in: matchingIds } }
+        : { id: "__no_matching_request__" },
+    );
   }
 
   return andFilters.length > 0 ? { AND: andFilters } : undefined;
 }
 
-async function getAdminRequestsSummary(where: Prisma.ApiRequestWhereInput | undefined) {
+async function getAdminRequestsSummary(
+  where: Prisma.ApiRequestWhereInput | undefined,
+) {
   const [aggregate, statusGroups] = await Promise.all([
     prisma.apiRequest.aggregate({
       where,
@@ -635,8 +708,12 @@ async function getAdminRequestsSummary(where: Prisma.ApiRequestWhereInput | unde
   const successCount = countByStatus.SUCCESS ?? 0;
   const failedCount = countByStatus.FAILED ?? 0;
   const pendingCount = countByStatus.PENDING ?? 0;
-  const chargedAmountUsd = new Decimal(aggregate._sum.chargedAmountUsd?.toString() ?? "0");
-  const upstreamCostUsd = new Decimal(aggregate._sum.upstreamCostUsd?.toString() ?? "0");
+  const chargedAmountUsd = new Decimal(
+    aggregate._sum.chargedAmountUsd?.toString() ?? "0",
+  );
+  const upstreamCostUsd = new Decimal(
+    aggregate._sum.upstreamCostUsd?.toString() ?? "0",
+  );
 
   return {
     totalCount,
@@ -695,13 +772,14 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/admin/server-status", async () => {
-    const [redisPing, dbPing, pm2Status, modelPool, apiKeyStats] = await Promise.all([
-      pingRedis(app),
-      pingDatabase(),
-      getPm2Status(),
-      getModelPoolStatus(app),
-      getApiKeyRuntimeStats(app),
-    ]);
+    const [redisPing, dbPing, pm2Status, modelPool, apiKeyStats] =
+      await Promise.all([
+        pingRedis(app),
+        pingDatabase(),
+        getPm2Status(),
+        getModelPoolStatus(app),
+        getApiKeyRuntimeStats(app),
+      ]);
 
     return {
       server: {
@@ -747,18 +825,28 @@ export async function adminRoutes(app: FastifyInstance) {
     };
 
     if (!isSmtpConfigured(settings)) {
-      return reply.status(400).send({ message: "请先填写完整 SMTP Host、端口和发件人。" });
+      return reply
+        .status(400)
+        .send({ message: "请先填写完整 SMTP Host、端口和发件人。" });
     }
 
     try {
       await sendSmtpTestEmail(settings, {
         to: body.testEmail,
         code: "482913",
-        ttlMinutes: Math.max(1, Math.ceil(Number(body.emailCodeTtlSeconds) / 60)),
+        ttlMinutes: Math.max(
+          1,
+          Math.ceil(Number(body.emailCodeTtlSeconds) / 60),
+        ),
       });
     } catch (error) {
-      app.log.error({ error, email: body.testEmail }, "Failed to send SMTP test email");
-      return reply.status(502).send({ message: "测试邮件发送失败，请检查 SMTP 设置。" });
+      app.log.error(
+        { error, email: body.testEmail },
+        "Failed to send SMTP test email",
+      );
+      return reply
+        .status(502)
+        .send({ message: "测试邮件发送失败，请检查 SMTP 设置。" });
     }
 
     return { ok: true };
@@ -792,21 +880,28 @@ export async function adminRoutes(app: FastifyInstance) {
     return { settings, options: reasoningEffortValues };
   });
 
-  app.put("/admin/reasoning-effort-transform-settings", async (request, reply) => {
-    const body = reasoningEffortTransformRulesSchema.parse(request.body);
-    const normalizedRules = body.rules.map((rule) => normalizeReasoningEffortTransformRule(rule));
-    const validation = validateReasoningEffortTransformRules(normalizedRules);
-    if (!validation.ok) {
-      return reply.status(409).send({
-        message: "推理强度转换存在冲突",
-        conflicts: validation.conflicts,
-        selfTransforms: validation.selfTransforms,
-      });
-    }
+  app.put(
+    "/admin/reasoning-effort-transform-settings",
+    async (request, reply) => {
+      const body = reasoningEffortTransformRulesSchema.parse(request.body);
+      const normalizedRules = body.rules.map((rule) =>
+        normalizeReasoningEffortTransformRule(rule),
+      );
+      const validation = validateReasoningEffortTransformRules(normalizedRules);
+      if (!validation.ok) {
+        return reply.status(409).send({
+          message: "推理强度转换存在冲突",
+          conflicts: validation.conflicts,
+          selfTransforms: validation.selfTransforms,
+        });
+      }
 
-    const settings = await saveReasoningEffortTransformSettings({ rules: normalizedRules });
-    return { settings, options: reasoningEffortValues };
-  });
+      const settings = await saveReasoningEffortTransformSettings({
+        rules: normalizedRules,
+      });
+      return { settings, options: reasoningEffortValues };
+    },
+  );
 
   app.get("/admin/users", async () => {
     const users = await prisma.user.findMany({
@@ -820,6 +915,8 @@ export async function adminRoutes(app: FastifyInstance) {
         allowedModels: true,
         rateLimitPerMinute: true,
         concurrencyLimit: true,
+        charityEnabled: true,
+        charityDisplayName: true,
         tokenVersion: true,
         createdAt: true,
         wallet: true,
@@ -869,6 +966,8 @@ export async function adminRoutes(app: FastifyInstance) {
         allowedModels: z.array(z.string()).optional(),
         rateLimitPerMinute: userRuntimeLimitSchema.optional(),
         concurrencyLimit: userRuntimeLimitSchema.optional(),
+        charityEnabled: z.boolean().optional(),
+        charityDisplayName: z.string().max(80).nullable().optional(),
       })
       .parse(request.body);
 
@@ -876,12 +975,20 @@ export async function adminRoutes(app: FastifyInstance) {
       ...(body.email ? { email: body.email } : {}),
       ...(body.role ? { role: body.role } : {}),
       ...(body.status ? { status: body.status } : {}),
-      ...(body.allowedModels !== undefined ? { allowedModels: body.allowedModels } : {}),
+      ...(body.allowedModels !== undefined
+        ? { allowedModels: body.allowedModels }
+        : {}),
       ...(body.rateLimitPerMinute !== undefined
         ? { rateLimitPerMinute: body.rateLimitPerMinute }
         : {}),
       ...(body.concurrencyLimit !== undefined
         ? { concurrencyLimit: body.concurrencyLimit }
+        : {}),
+      ...(body.charityEnabled !== undefined
+        ? { charityEnabled: body.charityEnabled }
+        : {}),
+      ...(body.charityDisplayName !== undefined
+        ? { charityDisplayName: normalizeNullableText(body.charityDisplayName) }
         : {}),
     };
 
@@ -896,6 +1003,8 @@ export async function adminRoutes(app: FastifyInstance) {
         allowedModels: true,
         rateLimitPerMinute: true,
         concurrencyLimit: true,
+        charityEnabled: true,
+        charityDisplayName: true,
         tokenVersion: true,
         createdAt: true,
         wallet: true,
@@ -919,6 +1028,8 @@ export async function adminRoutes(app: FastifyInstance) {
         allowedModels: z.array(z.string()).default([]),
         rateLimitPerMinute: userRuntimeLimitSchema.default(0),
         concurrencyLimit: userRuntimeLimitSchema.default(0),
+        charityEnabled: z.boolean().default(false),
+        charityDisplayName: z.string().max(80).nullable().optional(),
         initialBalance: z.string().or(z.number()).optional(),
       })
       .parse(request.body);
@@ -932,10 +1043,16 @@ export async function adminRoutes(app: FastifyInstance) {
             allowedModels: body.allowedModels,
             rateLimitPerMinute: body.rateLimitPerMinute,
             concurrencyLimit: body.concurrencyLimit,
-            passwordHash: await hashPassword(randomBytes(32).toString("base64url")),
+            charityEnabled: body.charityEnabled,
+            charityDisplayName: normalizeNullableText(body.charityDisplayName),
+            passwordHash: await hashPassword(
+              randomBytes(32).toString("base64url"),
+            ),
             wallet: {
               create: {
-                balance: body.initialBalance ? String(body.initialBalance) : "0",
+                balance: body.initialBalance
+                  ? String(body.initialBalance)
+                  : "0",
               },
             },
           },
@@ -974,7 +1091,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const currentUser = request.user as { sub: string };
 
     if (params.id === currentUser.sub) {
-      return reply.status(400).send({ message: "Cannot logout your own admin session" });
+      return reply
+        .status(400)
+        .send({ message: "Cannot logout your own admin session" });
     }
 
     const user = await prisma.user.findUnique({
@@ -1012,7 +1131,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const currentUser = request.user as { sub: string };
 
     if (params.id === currentUser.sub) {
-      return reply.status(400).send({ message: "Cannot delete your own admin account" });
+      return reply
+        .status(400)
+        .send({ message: "Cannot delete your own admin account" });
     }
 
     const user = await prisma.user.findUnique({
@@ -1132,7 +1253,9 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     if (body.noticeEnabled && !body.noticeText) {
-      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+      return reply
+        .status(400)
+        .send({ message: "Notice text is required when notice is enabled" });
     }
 
     const generated = createApiKey();
@@ -1165,7 +1288,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = adminBatchUpdateApiKeysSchema.parse(request.body);
     const data = {
       ...(body.status !== undefined ? { status: body.status } : {}),
-      ...(body.noticeEnabled !== undefined ? { noticeEnabled: body.noticeEnabled } : {}),
+      ...(body.noticeEnabled !== undefined
+        ? { noticeEnabled: body.noticeEnabled }
+        : {}),
       ...(body.noticeText !== undefined ? { noticeText: body.noticeText } : {}),
     };
 
@@ -1174,7 +1299,9 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     if (body.noticeEnabled && !body.noticeText) {
-      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+      return reply
+        .status(400)
+        .send({ message: "Notice text is required when notice is enabled" });
     }
 
     const uniqueKeyIds = Array.from(new Set(body.keyIds));
@@ -1191,14 +1318,20 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     if (existingKeys.length !== uniqueKeyIds.length) {
-      return reply.status(404).send({ message: "Some API keys were not found for this user" });
+      return reply
+        .status(404)
+        .send({ message: "Some API keys were not found for this user" });
     }
 
     if (body.status === "ACTIVE") {
       const now = new Date();
-      const expiredKey = existingKeys.find((apiKey) => apiKey.expiresAt && apiKey.expiresAt <= now);
+      const expiredKey = existingKeys.find(
+        (apiKey) => apiKey.expiresAt && apiKey.expiresAt <= now,
+      );
       if (expiredKey) {
-        return reply.status(400).send({ message: "Cannot enable expired API keys" });
+        return reply
+          .status(400)
+          .send({ message: "Cannot enable expired API keys" });
       }
 
       for (const apiKey of existingKeys) {
@@ -1208,7 +1341,9 @@ export async function adminRoutes(app: FastifyInstance) {
 
         const usedUsd = await getApiKeyTotalUsageUsd(apiKey.id);
         if (usedUsd.gte(apiKey.totalLimitUsd.toString())) {
-          return reply.status(400).send({ message: "Cannot enable API keys over their total quota" });
+          return reply
+            .status(400)
+            .send({ message: "Cannot enable API keys over their total quota" });
         }
       }
     }
@@ -1249,29 +1384,42 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     const totalLimitUsd =
-      body.totalLimitUsd === undefined ? body.dailyLimitUsd : body.totalLimitUsd;
+      body.totalLimitUsd === undefined
+        ? body.dailyLimitUsd
+        : body.totalLimitUsd;
     const shouldActivate = body.status === "ACTIVE";
     const nextNoticeEnabled =
-      body.noticeEnabled === undefined ? existing.noticeEnabled : body.noticeEnabled;
+      body.noticeEnabled === undefined
+        ? existing.noticeEnabled
+        : body.noticeEnabled;
     const nextNoticeText =
       body.noticeText === undefined ? existing.noticeText : body.noticeText;
 
     if (nextNoticeEnabled && !nextNoticeText) {
-      return reply.status(400).send({ message: "Notice text is required when notice is enabled" });
+      return reply
+        .status(400)
+        .send({ message: "Notice text is required when notice is enabled" });
     }
 
     if (shouldActivate) {
-      const nextExpiresAt = body.expiresAt !== undefined ? body.expiresAt : existing.expiresAt;
+      const nextExpiresAt =
+        body.expiresAt !== undefined ? body.expiresAt : existing.expiresAt;
       if (nextExpiresAt && nextExpiresAt <= new Date()) {
-        return reply.status(400).send({ message: "Cannot enable an expired API key" });
+        return reply
+          .status(400)
+          .send({ message: "Cannot enable an expired API key" });
       }
 
       const nextTotalLimitUsd =
-        totalLimitUsd === undefined ? existing.totalLimitUsd?.toString() : totalLimitUsd;
+        totalLimitUsd === undefined
+          ? existing.totalLimitUsd?.toString()
+          : totalLimitUsd;
       if (nextTotalLimitUsd) {
         const usedUsd = await getApiKeyTotalUsageUsd(existing.id);
         if (usedUsd.gte(nextTotalLimitUsd)) {
-          return reply.status(400).send({ message: "Cannot enable an API key over its total quota" });
+          return reply
+            .status(400)
+            .send({ message: "Cannot enable an API key over its total quota" });
         }
       }
     }
@@ -1289,9 +1437,15 @@ export async function adminRoutes(app: FastifyInstance) {
         ...(body.concurrencyLimit !== undefined
           ? { concurrencyLimit: body.concurrencyLimit }
           : {}),
-        ...(body.allowedModels !== undefined ? { allowedModels: body.allowedModels } : {}),
-        ...(body.noticeEnabled !== undefined ? { noticeEnabled: body.noticeEnabled } : {}),
-        ...(body.noticeText !== undefined ? { noticeText: body.noticeText } : {}),
+        ...(body.allowedModels !== undefined
+          ? { allowedModels: body.allowedModels }
+          : {}),
+        ...(body.noticeEnabled !== undefined
+          ? { noticeEnabled: body.noticeEnabled }
+          : {}),
+        ...(body.noticeText !== undefined
+          ? { noticeText: body.noticeText }
+          : {}),
       },
       select: adminApiKeySelect,
     });
@@ -1322,7 +1476,9 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.put("/admin/ip-ban-rules/:ip", async (request) => {
-    const params = z.object({ ip: z.string().min(1).max(128) }).parse(request.params);
+    const params = z
+      .object({ ip: z.string().min(1).max(128) })
+      .parse(request.params);
     const body = ipBanRuleSchema.omit({ ip: true }).parse(request.body);
     const rule = await saveIpBanRule({
       ip: params.ip,
@@ -1348,7 +1504,9 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.delete("/admin/ip-ban-rules/:ip", async (request) => {
-    const params = z.object({ ip: z.string().min(1).max(128) }).parse(request.params);
+    const params = z
+      .object({ ip: z.string().min(1).max(128) })
+      .parse(request.params);
     const result = await deleteIpBanRule(params.ip);
 
     return {
@@ -1416,19 +1574,22 @@ export async function adminRoutes(app: FastifyInstance) {
       listIpBanRules(),
     ]);
     const hasMore = rows.length > query.take;
-    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(({ requestBody, reasoningEffort, ...row }) => {
-      return {
-        ...row,
-        reasoningEffort: reasoningEffort ?? getRequestReasoningEffortFromBody(requestBody),
-      };
-    });
+    const requests = (hasMore ? rows.slice(0, query.take) : rows).map(
+      ({ requestBody, reasoningEffort, ...row }) => {
+        return {
+          ...row,
+          reasoningEffort:
+            reasoningEffort ?? getRequestReasoningEffortFromBody(requestBody),
+        };
+      },
+    );
 
     return {
       requests,
       hasMore,
       summary,
       ipBanRules,
-      nextCursor: hasMore ? requests.at(-1)?.id ?? null : null,
+      nextCursor: hasMore ? (requests.at(-1)?.id ?? null) : null,
     };
   });
 
@@ -1500,6 +1661,8 @@ export async function adminRoutes(app: FastifyInstance) {
         id: true,
         status: true,
         createdAt: true,
+        endpoint: true,
+        responseUsage: true,
       },
     });
 
@@ -1508,7 +1671,15 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     if (existing.status !== "PENDING") {
-      return reply.status(409).send({ message: "Only PENDING requests can be terminated" });
+      return reply
+        .status(409)
+        .send({ message: "Only PENDING requests can be terminated" });
+    }
+
+    if (isProtectedCompactRequest(existing.endpoint, existing.responseUsage)) {
+      return reply
+        .status(409)
+        .send({ message: "Compact requests cannot be manually terminated" });
     }
 
     const abortResult = abortActiveApiRequest(existing.id);
@@ -1531,7 +1702,9 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     if (updateResult.count === 0) {
-      return reply.status(409).send({ message: "Request is no longer PENDING" });
+      return reply
+        .status(409)
+        .send({ message: "Request is no longer PENDING" });
     }
 
     const apiRequest = await prisma.apiRequest.findUniqueOrThrow({
@@ -1623,7 +1796,9 @@ export async function adminRoutes(app: FastifyInstance) {
       return reply.status(400).send({ message: "Amount must be positive" });
     }
 
-    const generated = Array.from({ length: body.count }, () => createRedeemCode());
+    const generated = Array.from({ length: body.count }, () =>
+      createRedeemCode(),
+    );
     const codes = await prisma.$transaction(
       generated.map((item) =>
         prisma.redeemCode.create({
@@ -1676,7 +1851,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const modelPrices = await prisma.modelPrice.findMany({
       orderBy: [{ upstreamProvider: "asc" }, { model: "asc" }],
     });
-    const unifiedPriceSettings = await listUnifiedPriceSettings(modelPrices.map((price) => price.model));
+    const unifiedPriceSettings = await listUnifiedPriceSettings(
+      modelPrices.map((price) => price.model),
+    );
 
     return { modelPrices, unifiedPriceSettings };
   });
@@ -1712,8 +1889,15 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       }),
     ]);
-    const priceMap = new Map(prices.map((price) => [`${price.upstreamProvider}:${price.model}`, price]));
-    const providerMap = new Map(providers.map((provider) => [provider.name, provider]));
+    const priceMap = new Map(
+      prices.map((price) => [
+        `${price.upstreamProvider}:${price.model}`,
+        price,
+      ]),
+    );
+    const providerMap = new Map(
+      providers.map((provider) => [provider.name, provider]),
+    );
     const availablePrices = prices.filter(
       (price) =>
         providerMap.has(price.upstreamProvider) &&
@@ -1722,45 +1906,60 @@ export async function adminRoutes(app: FastifyInstance) {
 
     return {
       modelPools: pools.map((pool) => {
-        const channels = pool.channels.map((channel) => {
-          const price = priceMap.get(`${channel.upstreamProvider}:${pool.model}`);
-          const provider = providerMap.get(channel.upstreamProvider);
-          const baseHealthTiming = getModelPoolChannelHealthTiming(channel, healthCheckIntervalSeconds, serverNow);
-          const healthTiming = pool.autoHealthCheckEnabled || channel.status === "PENALIZED"
-            ? baseHealthTiming
-            : {
-                ...baseHealthTiming,
-                nextCheckAt: null,
-                nextCheckRemainingSeconds: null,
-              };
-          const activeKeyCount = provider?.keys.length ?? 0;
-          return {
-            ...channel,
-            hasPrice: Boolean(price),
-            priceEnabled: price?.enabled ?? false,
-            providerStatus: provider?.status ?? "MISSING",
-            providerPriority: provider?.priority ?? null,
-            activeKeyCount,
-            ...healthTiming,
-            effectiveStatus:
-              pool.status === "ACTIVE" &&
-              callableChannelStatuses.has(channel.status) &&
-              provider?.status === "ACTIVE" &&
-              activeKeyCount > 0 &&
-              price?.enabled
-                ? channel.status === "FORCED_ACTIVE"
-                  ? "FORCED_READY"
-                  : "READY"
-                : "UNAVAILABLE",
-          };
-        }).sort(compareModelPoolChannelsForAdmin);
+        const channels = pool.channels
+          .map((channel) => {
+            const price = priceMap.get(
+              `${channel.upstreamProvider}:${pool.model}`,
+            );
+            const provider = providerMap.get(channel.upstreamProvider);
+            const baseHealthTiming = getModelPoolChannelHealthTiming(
+              channel,
+              healthCheckIntervalSeconds,
+              serverNow,
+            );
+            const healthTiming =
+              pool.autoHealthCheckEnabled || channel.status === "PENALIZED"
+                ? baseHealthTiming
+                : {
+                    ...baseHealthTiming,
+                    nextCheckAt: null,
+                    nextCheckRemainingSeconds: null,
+                  };
+            const activeKeyCount = provider?.keys.length ?? 0;
+            return {
+              ...channel,
+              hasPrice: Boolean(price),
+              priceEnabled: price?.enabled ?? false,
+              providerStatus: provider?.status ?? "MISSING",
+              providerPriority: provider?.priority ?? null,
+              activeKeyCount,
+              ...healthTiming,
+              effectiveStatus:
+                pool.status === "ACTIVE" &&
+                callableChannelStatuses.has(channel.status) &&
+                provider?.status === "ACTIVE" &&
+                activeKeyCount > 0 &&
+                price?.enabled
+                  ? channel.status === "FORCED_ACTIVE"
+                    ? "FORCED_READY"
+                    : "READY"
+                  : "UNAVAILABLE",
+            };
+          })
+          .sort(compareModelPoolChannelsForAdmin);
 
         return {
           ...pool,
-          healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(pool.healthCheckEndpoint),
+          healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(
+            pool.healthCheckEndpoint,
+          ),
           channels,
-          readyChannelCount: channels.filter((channel) => channel.effectiveStatus !== "UNAVAILABLE").length,
-          pricedChannelCount: availablePrices.filter((price) => price.model === pool.model).length,
+          readyChannelCount: channels.filter(
+            (channel) => channel.effectiveStatus !== "UNAVAILABLE",
+          ).length,
+          pricedChannelCount: availablePrices.filter(
+            (price) => price.model === pool.model,
+          ).length,
         };
       }),
       availableChannels: availablePrices.map((price) => ({
@@ -1768,8 +1967,10 @@ export async function adminRoutes(app: FastifyInstance) {
         model: price.model,
         upstreamProvider: price.upstreamProvider,
         priceEnabled: price.enabled,
-        providerStatus: providerMap.get(price.upstreamProvider)?.status ?? "MISSING",
-        activeKeyCount: providerMap.get(price.upstreamProvider)?.keys.length ?? 0,
+        providerStatus:
+          providerMap.get(price.upstreamProvider)?.status ?? "MISSING",
+        activeKeyCount:
+          providerMap.get(price.upstreamProvider)?.keys.length ?? 0,
       })),
       healthCheck: {
         intervalSeconds: healthCheckIntervalSeconds,
@@ -1828,7 +2029,8 @@ export async function adminRoutes(app: FastifyInstance) {
         model: z.string().min(1).max(120),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
         autoHealthCheckEnabled: z.boolean().default(true),
-        healthCheckEndpoint: modelPoolHealthCheckEndpointSchema.default("responses"),
+        healthCheckEndpoint:
+          modelPoolHealthCheckEndpointSchema.default("responses"),
       })
       .parse(request.body);
     const providers = await prisma.upstreamProvider.findMany({
@@ -1842,7 +2044,12 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     if (priceCount === 0) {
-      return reply.status(400).send({ message: "Model must have upstream pricing before it can be added to the pool" });
+      return reply
+        .status(400)
+        .send({
+          message:
+            "Model must have upstream pricing before it can be added to the pool",
+        });
     }
 
     const pool = await prisma.modelPool.upsert({
@@ -1910,7 +2117,11 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     if (body.upstreamProvider.trim().toLowerCase() === "default") {
-      return reply.status(400).send({ message: "Default upstream cannot be added to the model pool" });
+      return reply
+        .status(400)
+        .send({
+          message: "Default upstream cannot be added to the model pool",
+        });
     }
 
     const [provider, price] = await Promise.all([
@@ -1928,11 +2139,21 @@ export async function adminRoutes(app: FastifyInstance) {
     ]);
 
     if (!provider) {
-      return reply.status(400).send({ message: "Upstream provider must exist before it can be added to the model pool" });
+      return reply
+        .status(400)
+        .send({
+          message:
+            "Upstream provider must exist before it can be added to the model pool",
+        });
     }
 
     if (!price) {
-      return reply.status(400).send({ message: "Only priced upstream channels can be added to the model pool" });
+      return reply
+        .status(400)
+        .send({
+          message:
+            "Only priced upstream channels can be added to the model pool",
+        });
     }
 
     const channel = await prisma.modelPoolChannel.upsert({
@@ -1989,7 +2210,9 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     if (!channel) {
-      return reply.status(404).send({ message: "Model pool channel not found" });
+      return reply
+        .status(404)
+        .send({ message: "Model pool channel not found" });
     }
 
     await prisma.modelPoolChannel.delete({
@@ -2004,7 +2227,9 @@ export async function adminRoutes(app: FastifyInstance) {
     const result = await checkModelPoolChannel(params.id);
 
     if (!result) {
-      return reply.status(404).send({ message: "Model pool channel not found" });
+      return reply
+        .status(404)
+        .send({ message: "Model pool channel not found" });
     }
 
     return { result };
@@ -2079,7 +2304,10 @@ export async function adminRoutes(app: FastifyInstance) {
               model: z.string().min(1).max(120),
               enabled: z.boolean(),
               customerInputPer1MTok: z.string().or(z.number()),
-              customerCachedInputPer1MTok: z.string().or(z.number()).default("0"),
+              customerCachedInputPer1MTok: z
+                .string()
+                .or(z.number())
+                .default("0"),
               customerOutputPer1MTok: z.string().or(z.number()),
               customerPriceMultiplier: z.string().or(z.number()).default("1"),
             }),
@@ -2095,7 +2323,9 @@ export async function adminRoutes(app: FastifyInstance) {
           model: update.model,
           enabled: update.enabled,
           customerInputPer1MTok: String(update.customerInputPer1MTok),
-          customerCachedInputPer1MTok: String(update.customerCachedInputPer1MTok),
+          customerCachedInputPer1MTok: String(
+            update.customerCachedInputPer1MTok,
+          ),
           customerOutputPer1MTok: String(update.customerOutputPer1MTok),
           customerPriceMultiplier: String(update.customerPriceMultiplier),
         },
@@ -2107,8 +2337,13 @@ export async function adminRoutes(app: FastifyInstance) {
       select: { model: true },
     });
     const pricedModelSet = new Set(pricedModels.map((price) => price.model));
-    const validUpdates = Array.from(updatesByModel.values()).filter((update) => pricedModelSet.has(update.model));
-    const unifiedPriceSettings = validUpdates.length > 0 ? await saveUnifiedPriceSettings(validUpdates) : [];
+    const validUpdates = Array.from(updatesByModel.values()).filter((update) =>
+      pricedModelSet.has(update.model),
+    );
+    const unifiedPriceSettings =
+      validUpdates.length > 0
+        ? await saveUnifiedPriceSettings(validUpdates)
+        : [];
 
     return {
       updated: validUpdates.length,
@@ -2189,10 +2424,7 @@ export async function adminRoutes(app: FastifyInstance) {
       orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
       include: {
         keys: {
-          orderBy: [
-            { priority: "asc" },
-            { createdAt: "asc" },
-          ],
+          orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
         },
       },
     });
@@ -2334,7 +2566,11 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        return reply.status(409).send({ message: "Upstream key name already exists for this provider" });
+        return reply
+          .status(409)
+          .send({
+            message: "Upstream key name already exists for this provider",
+          });
       }
       throw error;
     }
@@ -2367,14 +2603,20 @@ export async function adminRoutes(app: FastifyInstance) {
         where: { id: params.id },
         data: {
           ...(body.name !== undefined ? { name: body.name } : {}),
-          ...(trimmedKey ? { key: trimmedKey, keyPrefix: upstreamKeyPrefix(trimmedKey) } : {}),
+          ...(trimmedKey
+            ? { key: trimmedKey, keyPrefix: upstreamKeyPrefix(trimmedKey) }
+            : {}),
           ...(body.status !== undefined ? { status: body.status } : {}),
           ...(body.priority !== undefined ? { priority: body.priority } : {}),
         },
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        return reply.status(409).send({ message: "Upstream key name already exists for this provider" });
+        return reply
+          .status(409)
+          .send({
+            message: "Upstream key name already exists for this provider",
+          });
       }
       throw error;
     }
@@ -2427,9 +2669,10 @@ export async function adminRoutes(app: FastifyInstance) {
 }
 
 function maskProviderKey<T extends { apiKey: string }>(provider: T) {
-  const keys = "keys" in provider && Array.isArray(provider.keys)
-    ? { keys: provider.keys.map(maskProviderPoolKey) }
-    : {};
+  const keys =
+    "keys" in provider && Array.isArray(provider.keys)
+      ? { keys: provider.keys.map(maskProviderPoolKey) }
+      : {};
 
   return {
     ...provider,
@@ -2445,7 +2688,9 @@ function maskProviderPoolKey<T extends { key: string }>(key: T) {
   };
 }
 
-async function withAdminApiKeyUsage<T extends { id: string; totalLimitUsd?: unknown }>(apiKey: T) {
+async function withAdminApiKeyUsage<
+  T extends { id: string; totalLimitUsd?: unknown },
+>(apiKey: T) {
   const usedUsd = await getApiKeyTotalUsageUsd(apiKey.id);
   const totalLimitUsd = apiKey.totalLimitUsd?.toString();
   const remainingUsd =
@@ -2481,7 +2726,8 @@ function compareModelPoolChannelsForAdmin(
       modelPoolChannelAvailabilityRank(right.effectiveStatus) ||
     nullableNumberRank(left.lastFirstTokenLatencyMs) -
       nullableNumberRank(right.lastFirstTokenLatencyMs) ||
-    nullableNumberRank(left.lastLatencyMs) - nullableNumberRank(right.lastLatencyMs) ||
+    nullableNumberRank(left.lastLatencyMs) -
+      nullableNumberRank(right.lastLatencyMs) ||
     left.priority - right.priority ||
     left.upstreamProvider.localeCompare(right.upstreamProvider)
   );
@@ -2537,9 +2783,10 @@ function getSystemStatus() {
   const cpuSnapshot = getSystemCpuSnapshot();
   const totalDelta = cpuSnapshot.total - lastSystemCpuSnapshot.total;
   const idleDelta = cpuSnapshot.idle - lastSystemCpuSnapshot.idle;
-  const usagePercent = totalDelta > 0
-    ? Number((Math.max(0, 1 - idleDelta / totalDelta) * 100).toFixed(2))
-    : 0;
+  const usagePercent =
+    totalDelta > 0
+      ? Number((Math.max(0, 1 - idleDelta / totalDelta) * 100).toFixed(2))
+      : 0;
   lastSystemCpuSnapshot = cpuSnapshot;
 
   return {
@@ -2549,16 +2796,20 @@ function getSystemStatus() {
     totalMemoryBytes,
     freeMemoryBytes,
     usedMemoryBytes,
-    memoryUsagePercent: totalMemoryBytes > 0
-      ? Number(((usedMemoryBytes / totalMemoryBytes) * 100).toFixed(2))
-      : 0,
+    memoryUsagePercent:
+      totalMemoryBytes > 0
+        ? Number(((usedMemoryBytes / totalMemoryBytes) * 100).toFixed(2))
+        : 0,
   };
 }
 
 function getSystemCpuSnapshot() {
   return cpus().reduce(
     (total, cpu) => {
-      const cpuTotal = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
+      const cpuTotal = Object.values(cpu.times).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
       return {
         idle: total.idle + cpu.times.idle,
         total: total.total + cpuTotal,
@@ -2575,7 +2826,7 @@ function getProcessCpuStatus() {
   const userDiffMs = (usage.user - lastCpuSnapshot.usage.user) / 1000;
   const systemDiffMs = (usage.system - lastCpuSnapshot.usage.system) / 1000;
   const cpuCount = cpus().length || 1;
-  const percent = ((userDiffMs + systemDiffMs) / elapsedMs) * 100 / cpuCount;
+  const percent = (((userDiffMs + systemDiffMs) / elapsedMs) * 100) / cpuCount;
 
   lastCpuSnapshot = {
     measuredAtMs,
@@ -2605,9 +2856,13 @@ async function getPm2Status() {
       ok: true,
       processes: processes
         .map((process) => ({
-          name: process.pm2_env?.name ?? process.name ?? `pm2-${process.pm_id ?? "unknown"}`,
+          name:
+            process.pm2_env?.name ??
+            process.name ??
+            `pm2-${process.pm_id ?? "unknown"}`,
           pid: process.pid ?? null,
-          status: process.pm2_env?.status ?? process.pm2_env_status ?? "unknown",
+          status:
+            process.pm2_env?.status ?? process.pm2_env_status ?? "unknown",
           cpu: process.monit?.cpu ?? null,
           memory: process.monit?.memory ?? null,
         }))
@@ -2623,43 +2878,52 @@ async function getPm2Status() {
 }
 
 async function getModelPoolStatus(app: FastifyInstance) {
-  const [channels, healthCheckIntervalSeconds, upstreamKeys] = await Promise.all([
-    prisma.modelPoolChannel.findMany({
-      where: {
-        modelPool: {
-          status: "ACTIVE",
-        },
-      },
-      select: {
-        id: true,
-        status: true,
-        priority: true,
-        consecutiveFailures: true,
-        recoverySuccesses: true,
-        penalizedUntil: true,
-        lastCheckStatus: true,
-        lastCheckedAt: true,
-        lastLatencyMs: true,
-        lastFirstTokenLatencyMs: true,
-        modelPool: {
-          select: {
-            model: true,
-            healthCheckEndpoint: true,
+  const [channels, healthCheckIntervalSeconds, upstreamKeys] =
+    await Promise.all([
+      prisma.modelPoolChannel.findMany({
+        where: {
+          modelPool: {
+            status: "ACTIVE",
           },
         },
-      },
-    }),
-    getModelPoolHealthCheckIntervalSeconds(),
-    prisma.upstreamProviderKey.findMany({
-      select: { id: true, status: true },
-    }),
-  ]);
+        select: {
+          id: true,
+          status: true,
+          priority: true,
+          consecutiveFailures: true,
+          recoverySuccesses: true,
+          penalizedUntil: true,
+          lastCheckStatus: true,
+          lastCheckedAt: true,
+          lastLatencyMs: true,
+          lastFirstTokenLatencyMs: true,
+          modelPool: {
+            select: {
+              model: true,
+              healthCheckEndpoint: true,
+            },
+          },
+        },
+      }),
+      getModelPoolHealthCheckIntervalSeconds(),
+      prisma.upstreamProviderKey.findMany({
+        select: { id: true, status: true },
+      }),
+    ]);
 
-  const activeChannels = channels.filter((channel) => channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE");
-  const unavailableChannels = channels.filter((channel) => channel.status === "UNAVAILABLE");
-  const penalizedChannels = channels.filter((channel) => channel.status === "PENALIZED");
+  const activeChannels = channels.filter(
+    (channel) =>
+      channel.status === "ACTIVE" || channel.status === "FORCED_ACTIVE",
+  );
+  const unavailableChannels = channels.filter(
+    (channel) => channel.status === "UNAVAILABLE",
+  );
+  const penalizedChannels = channels.filter(
+    (channel) => channel.status === "PENALIZED",
+  );
   const recoveringChannels = channels.filter(
-    (channel) => channel.status === "UNAVAILABLE" && channel.recoverySuccesses > 0,
+    (channel) =>
+      channel.status === "UNAVAILABLE" && channel.recoverySuccesses > 0,
   );
   const inflightCounts = await readRedisCounts(
     app,
@@ -2672,7 +2936,9 @@ async function getModelPoolStatus(app: FastifyInstance) {
   const channelSummaries = channels.map((channel, index) => ({
     id: channel.id,
     model: channel.modelPool.model,
-    healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(channel.modelPool.healthCheckEndpoint),
+    healthCheckEndpoint: normalizeModelPoolHealthCheckEndpoint(
+      channel.modelPool.healthCheckEndpoint,
+    ),
     status: channel.status,
     priority: channel.priority,
     consecutiveFailures: channel.consecutiveFailures,
@@ -2696,7 +2962,10 @@ async function getModelPoolStatus(app: FastifyInstance) {
     upstreamKeys: {
       total: upstreamKeys.length,
       active: upstreamKeys.filter((key) => key.status === "ACTIVE").length,
-      inflightRequests: keyInflightCounts.reduce((total, value) => total + value, 0),
+      inflightRequests: keyInflightCounts.reduce(
+        (total, value) => total + value,
+        0,
+      ),
     },
     autoCheckEnabledPools: await prisma.modelPool.count({
       where: { autoHealthCheckEnabled: true, status: "ACTIVE" },
@@ -2711,7 +2980,10 @@ async function getApiKeyRuntimeStats(app: FastifyInstance) {
     prisma.apiKey.findMany({
       where: {
         status: "ACTIVE",
-        OR: [{ concurrencyLimit: { gt: 0 } }, { rateLimitPerMinute: { gt: 0 } }],
+        OR: [
+          { concurrencyLimit: { gt: 0 } },
+          { rateLimitPerMinute: { gt: 0 } },
+        ],
       },
       select: {
         id: true,
@@ -2726,7 +2998,10 @@ async function getApiKeyRuntimeStats(app: FastifyInstance) {
     prisma.apiKey.count({
       where: {
         status: "ACTIVE",
-        OR: [{ concurrencyLimit: { gt: 0 } }, { rateLimitPerMinute: { gt: 0 } }],
+        OR: [
+          { concurrencyLimit: { gt: 0 } },
+          { rateLimitPerMinute: { gt: 0 } },
+        ],
       },
     }),
   ]);
@@ -2751,8 +3026,14 @@ async function getApiKeyRuntimeStats(app: FastifyInstance) {
   return {
     monitoredKeys: apiKeys.length,
     limitedKeys,
-    activeConcurrency: concurrencyCounts.reduce((total, value) => total + value, 0),
-    currentMinuteRequests: minuteCounts.reduce((total, value) => total + value, 0),
+    activeConcurrency: concurrencyCounts.reduce(
+      (total, value) => total + value,
+      0,
+    ),
+    currentMinuteRequests: minuteCounts.reduce(
+      (total, value) => total + value,
+      0,
+    ),
     sample,
   };
 }
@@ -2778,4 +3059,34 @@ function isUniqueConstraintError(error: unknown) {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
   );
+}
+
+function isProtectedCompactRequest(endpoint: string, responseUsage: unknown) {
+  if (endpoint === "/v1/responses/compact") {
+    return true;
+  }
+
+  if (
+    !responseUsage ||
+    typeof responseUsage !== "object" ||
+    Array.isArray(responseUsage)
+  ) {
+    return false;
+  }
+
+  const record = responseUsage as Record<string, unknown>;
+  return (
+    record.gatewayCompactFallback === true ||
+    record.gatewayCompactKind === "normal" ||
+    record.gatewayCompactKind === "fallback"
+  );
+}
+
+function normalizeNullableText(value: string | null | undefined) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }

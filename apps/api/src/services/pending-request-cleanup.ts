@@ -33,6 +33,7 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
     select: {
       id: true,
       createdAt: true,
+      responseUsage: true,
     },
     orderBy: {
       createdAt: "asc",
@@ -44,6 +45,10 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
   let abortedActiveCount = 0;
 
   for (const pendingRequest of pendingRequests) {
+    if (isProtectedCompactRequest(pendingRequest.responseUsage)) {
+      continue;
+    }
+
     const abortResult = abortActiveApiRequest(pendingRequest.id);
     const latencyMs = Math.min(
       2147483647,
@@ -74,12 +79,34 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
   return { count, abortedActiveCount, skipped: false as const };
 }
 
-export function startPendingRequestCleanupScheduler(logger?: PendingRequestCleanupLogger) {
+function isProtectedCompactRequest(responseUsage: unknown) {
+  if (
+    !responseUsage ||
+    typeof responseUsage !== "object" ||
+    Array.isArray(responseUsage)
+  ) {
+    return false;
+  }
+
+  const record = responseUsage as Record<string, unknown>;
+  return (
+    record.gatewayCompactFallback === true ||
+    record.gatewayCompactKind === "normal" ||
+    record.gatewayCompactKind === "fallback"
+  );
+}
+
+export function startPendingRequestCleanupScheduler(
+  logger?: PendingRequestCleanupLogger,
+) {
   const timer = setInterval(() => {
     void cleanupStalePendingRequests()
       .then((result) => {
         if (result.count > 0) {
-          logger?.info?.(result, "Stale pending API requests manually terminated by timeout");
+          logger?.info?.(
+            result,
+            "Stale pending API requests manually terminated by timeout",
+          );
         }
       })
       .catch((error) => {
