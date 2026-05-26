@@ -652,6 +652,7 @@ a {
   .charity-vue-info-grid {
     grid-template-columns: minmax(0, 1fr) minmax(128px, 0.42fr);
     gap: 14px;
+    align-items: start;
   }
 
   .model-rules-grid {
@@ -685,6 +686,19 @@ a {
     gap: 8px;
   }
 
+  .quick-start {
+    align-self: start;
+    padding: 16px 18px;
+  }
+
+  .quick-start .section-head {
+    margin-bottom: 12px;
+  }
+
+  .quick-start .usage-lines {
+    gap: 8px;
+  }
+
   .usage-lines span {
     font-size: 12px;
   }
@@ -694,6 +708,7 @@ a {
   }
 
   .usage-lines code {
+    padding-block: 9px;
     font-size: 10px;
   }
 
@@ -746,6 +761,14 @@ a {
 @media (max-width: 520px) {
   .charity-vue-info-grid {
     grid-template-columns: minmax(0, 1fr) minmax(112px, 0.34fr);
+  }
+
+  .quick-start {
+    padding: 14px 16px;
+  }
+
+  .quick-start .section-head h2 {
+    font-size: 18px;
   }
 
   .service-panel-minimal {
