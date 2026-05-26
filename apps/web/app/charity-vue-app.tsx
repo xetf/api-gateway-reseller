@@ -79,6 +79,9 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
         const yesterday = computed(() => trend.at(-2));
         const maxTokens = Math.max(1, ...trend.map((item) => item.totalTokens));
         const maxRequests = Math.max(1, ...trend.map((item) => item.requests));
+        const hasTrendData = computed(() =>
+          trend.some((item) => item.requests > 0 || item.totalTokens > 0),
+        );
         const gateway = payload?.gateway ?? "https://free.l-kx.cn";
         const charityKey = payload?.charityKey ?? "未填写公益 Key";
         const apiBaseUrl = `${gateway.replace(/\/+$/, "")}/v1`;
@@ -224,22 +227,41 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
             ]),
             h("section", { class: "charity-vue-chart" }, [
               h("div", { class: "section-head" }, [
-                h("div", null, [h("h2", "RPM / TPM 趋势"), h("p", "按天动态聚合")]),
+                h("div", null, [h("h2", "请求 / Token 趋势"), h("p", "最近 30 天按日聚合")]),
                 h("div", { class: "range-pill" }, "30D"),
               ]),
-              h("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none" }, [
-                h("polyline", {
-                  class: "line rpm",
-                  points: trend.map((item, index) => sparkPoints(item.requests, maxRequests, index)).join(" "),
-                }),
-                h("polyline", {
-                  class: "line tpm",
-                  points: trend.map((item, index) => sparkPoints(item.totalTokens, maxTokens, index)).join(" "),
-                }),
-              ]),
+              hasTrendData.value
+                ? h("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none" }, [
+                    h("polyline", {
+                      class: "line rpm",
+                      points: trend.map((item, index) => sparkPoints(item.requests, maxRequests, index)).join(" "),
+                    }),
+                    h("polyline", {
+                      class: "line tpm",
+                      points: trend.map((item, index) => sparkPoints(item.totalTokens, maxTokens, index)).join(" "),
+                    }),
+                    ...trend.flatMap((item, index) => [
+                      h("circle", {
+                        class: "chart-dot rpm",
+                        cx: index * (100 / Math.max(1, trend.length - 1)),
+                        cy: 100 - (item.requests / Math.max(1, maxRequests)) * 100,
+                        r: "0.9",
+                      }),
+                      h("circle", {
+                        class: "chart-dot tpm",
+                        cx: index * (100 / Math.max(1, trend.length - 1)),
+                        cy: 100 - (item.totalTokens / Math.max(1, maxTokens)) * 100,
+                        r: "0.9",
+                      }),
+                    ]),
+                  ])
+                : h("div", { class: "chart-empty-state" }, [
+                    h("strong", "暂无趋势数据"),
+                    h("span", "产生公益调用后，这里会展示最近 30 天的请求量和 Token 变化。"),
+                  ]),
               h("div", { class: "chart-legend" }, [
-                h("span", { class: "legend rpm" }, "RPM"),
-                h("span", { class: "legend tpm" }, "TPM"),
+                h("span", { class: "legend rpm" }, "请求"),
+                h("span", { class: "legend tpm" }, "Token"),
               ]),
             ]),
           ]);

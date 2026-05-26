@@ -1,8 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
+import { Decimal } from "decimal.js";
 import { prisma } from "@gateway/db";
 import { readCharityAnnouncementSettings } from "../services/charity-announcement-settings.js";
 import { onPublicStatusChanged } from "../services/public-status-events.js";
+import { readUnifiedPriceSettings } from "../services/unified-pricing.js";
 
 type CharityRequestRow = {
   day: Date;
@@ -35,6 +37,15 @@ type CharityModelRow = {
   success_requests: bigint;
   total_tokens: bigint | null;
   charged_amount_usd: Prisma.Decimal | null;
+};
+
+type CharityPriceUsageRow = {
+  day: Date;
+  model: string;
+  upstream_provider: string;
+  input_tokens: bigint | null;
+  cached_input_tokens: bigint | null;
+  output_tokens: bigint | null;
 };
 
 type PublicReadyChannelRow = {
@@ -116,6 +127,9 @@ export async function publicRoutes(app: FastifyInstance) {
       trendRows,
       rankingRows,
       modelRows,
+      priceUsageRows,
+      modelPrices,
+      unifiedPriceSettings,
       announcement,
     ] = await Promise.all([
       prisma.user.findMany({
@@ -191,6 +205,24 @@ export async function publicRoutes(app: FastifyInstance) {
         ORDER BY charged_amount_usd DESC NULLS LAST, total_tokens DESC NULLS LAST, requests DESC
         LIMIT 12
       `),
+      prisma.$queryRaw<CharityPriceUsageRow[]>(Prisma.sql`
+        SELECT
+          date_trunc('day', r."createdAt") AS day,
+          r.model AS model,
+          r."upstreamProvider" AS upstream_provider,
+          sum(r."inputTokens") AS input_tokens,
+          sum(r."cachedInputTokens") AS cached_input_tokens,
+          sum(r."outputTokens") AS output_tokens
+        FROM "ApiRequest" r
+        INNER JOIN "User" u ON u.id = r."userId"
+        WHERE u."charityEnabled" = true
+          AND r.status = 'SUCCESS'
+        GROUP BY day, r.model, r."upstreamProvider"
+      `),
+      prisma.modelPrice.findMany({
+        where: { enabled: true },
+      }),
+      readUnifiedPriceSettings(),
       readCharityAnnouncementSettings(),
     ]);
 
@@ -211,6 +243,11 @@ export async function publicRoutes(app: FastifyInstance) {
         status: "FAILED",
       },
     });
+    const displayCharges = calculateCharityDisplayCharges(
+      priceUsageRows,
+      modelPrices,
+      unifiedPriceSettings,
+    );
 
     return {
       generatedAt: now.toISOString(),
@@ -227,10 +264,10 @@ export async function publicRoutes(app: FastifyInstance) {
         cachedInputTokens: numberFromUnknown(totals._sum.cachedInputTokens),
         outputTokens: numberFromUnknown(totals._sum.outputTokens),
         totalTokens: numberFromUnknown(totals._sum.totalTokens),
-        chargedAmountUsd: moneyFromUnknown(totals._sum.chargedAmountUsd),
+        chargedAmountUsd: displayCharges.total.toFixed(8),
         upstreamCostUsd: moneyFromUnknown(totals._sum.upstreamCostUsd),
       },
-      trend30d: buildTrend(trendRows, since30, now),
+      trend30d: buildTrend(trendRows, since30, now, displayCharges.byDay),
       ranking: rankingRows.map((row, index) => ({
         name: row.display_name?.trim() || `公益项目 #${index + 1}`,
         requests: Number(row.requests),
@@ -304,7 +341,12 @@ function charityRequestWhere(): Prisma.ApiRequestWhereInput {
   };
 }
 
-function buildTrend(rows: CharityRequestRow[], since: Date, now: Date) {
+function buildTrend(
+  rows: CharityRequestRow[],
+  since: Date,
+  now: Date,
+  displayChargesByDay: Map<string, Decimal>,
+) {
   const byDay = new Map(rows.map((row) => [formatDay(row.day), row]));
   const days: Array<{
     date: string;
@@ -325,12 +367,80 @@ function buildTrend(rows: CharityRequestRow[], since: Date, now: Date) {
       successRequests: row ? Number(row.success_requests) : 0,
       failedRequests: row ? Number(row.failed_requests) : 0,
       totalTokens: row ? numberFromUnknown(row.total_tokens) : 0,
-      chargedAmountUsd: row ? moneyFromUnknown(row.charged_amount_usd) : "0.00000000",
+      chargedAmountUsd: (displayChargesByDay.get(key) ?? new Decimal(0)).toFixed(8),
       upstreamCostUsd: row ? moneyFromUnknown(row.upstream_cost_usd) : "0.00000000",
     });
   }
 
   return days;
+}
+
+function calculateCharityDisplayCharges(
+  rows: CharityPriceUsageRow[],
+  prices: Array<{
+    model: string;
+    upstreamProvider: string;
+    customerInputPer1MTok: Decimal;
+    customerCachedInputPer1MTok: Decimal;
+    customerOutputPer1MTok: Decimal;
+  }>,
+  unifiedSettings: Record<
+    string,
+    {
+      enabled: boolean;
+      customerInputPer1MTok: string;
+      customerCachedInputPer1MTok: string;
+      customerOutputPer1MTok: string;
+    }
+  >,
+) {
+  const priceByModelProvider = new Map(
+    prices.map((price) => [`${price.model}\u0000${price.upstreamProvider}`, price]),
+  );
+  const byDay = new Map<string, Decimal>();
+  let total = new Decimal(0);
+
+  for (const row of rows) {
+    const price = priceByModelProvider.get(`${row.model}\u0000${row.upstream_provider}`);
+    if (!price) {
+      continue;
+    }
+    const unified = unifiedSettings[row.model];
+    const inputPrice =
+      unified?.enabled === true
+        ? new Decimal(unified.customerInputPer1MTok)
+        : new Decimal(price.customerInputPer1MTok.toString());
+    const cachedInputPrice =
+      unified?.enabled === true
+        ? new Decimal(unified.customerCachedInputPer1MTok)
+        : new Decimal(price.customerCachedInputPer1MTok.toString());
+    const outputPrice =
+      unified?.enabled === true
+        ? new Decimal(unified.customerOutputPer1MTok)
+        : new Decimal(price.customerOutputPer1MTok.toString());
+    const charge = new Decimal(numberFromUnknown(row.input_tokens))
+      .div(1_000_000)
+      .mul(inputPrice)
+      .plus(
+        new Decimal(numberFromUnknown(row.cached_input_tokens))
+          .div(1_000_000)
+          .mul(cachedInputPrice),
+      )
+      .plus(
+        new Decimal(numberFromUnknown(row.output_tokens))
+          .div(1_000_000)
+          .mul(outputPrice),
+      )
+      .toDecimalPlaces(8);
+    const day = formatDay(row.day);
+    byDay.set(day, (byDay.get(day) ?? new Decimal(0)).plus(charge));
+    total = total.plus(charge);
+  }
+
+  return {
+    byDay,
+    total: total.toDecimalPlaces(8),
+  };
 }
 
 function formatDay(value: Date) {

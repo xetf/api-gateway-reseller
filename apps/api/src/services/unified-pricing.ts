@@ -87,7 +87,7 @@ async function getUnifiedPriceSetting(model: string) {
     : null;
 }
 
-async function readUnifiedPriceSettings(): Promise<StoredUnifiedPriceSettings> {
+export async function readUnifiedPriceSettings(): Promise<StoredUnifiedPriceSettings> {
   const setting = await prisma.systemSetting.findUnique({
     where: { key: unifiedPriceSettingsKey },
   });
