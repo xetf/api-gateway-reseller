@@ -273,7 +273,7 @@ a {
   gap: 12px;
 }
 
-.usage-lines div {
+.usage-lines > div {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 10px;
@@ -299,17 +299,19 @@ a {
 .usage-lines code {
   min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow: visible;
+  width: max-content;
+  max-width: 100%;
   padding: 12px 0;
   color: #0f172a;
   font-family: inherit;
   font-size: 12px;
-  text-overflow: clip;
   white-space: nowrap;
 }
 
 .copy-icon-button {
   flex: 0 0 28px;
+  margin-left: auto;
   width: 28px;
   height: 28px;
   display: inline-grid;

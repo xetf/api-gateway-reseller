@@ -228,7 +228,6 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
             h("section", { class: "charity-vue-chart" }, [
               h("div", { class: "section-head" }, [
                 h("div", null, [h("h2", "请求 / Token 趋势"), h("p", "最近 30 天按日聚合")]),
-                h("div", { class: "range-pill" }, "30D"),
               ]),
               hasTrendData.value
                 ? h("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none" }, [
