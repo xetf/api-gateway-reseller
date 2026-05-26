@@ -23,11 +23,7 @@ import {
 } from "../services/active-api-requests.js";
 import { disableApiKeyIfTotalLimitReached } from "../services/api-key-limits.js";
 import { recordModelPoolUserCallResult } from "../services/model-pool-call-failures.js";
-import {
-  getLastRotatedModelPoolChannel,
-  recordStickyModelPoolResult,
-  setLastRotatedModelPoolChannel,
-} from "../services/model-pool-stickiness.js";
+import { recordStickyModelPoolResult } from "../services/model-pool-stickiness.js";
 import {
   buildUpstreamUrl,
   getDefaultProvider,
@@ -44,9 +40,11 @@ import {
   getReasoningEffortFromBody,
 } from "../services/reasoning-effort-transform-settings.js";
 import {
-  createCompactRouteFingerprint,
+  collectEncryptedContents,
+  createCompactChannelFingerprint,
   extractEncryptedItems,
   findCachedCompactForBody,
+  hashEncryptedContent,
   readTargetCompactItems,
   replaceCompactionItemsByEncryptedContentHashes,
   saveCompactCache,
@@ -132,9 +130,6 @@ const proxyRoutePatterns = [
   "/completions",
   "/images/generations",
 ];
-const streamFirstTokenTimeoutMs = 120_000;
-const streamFirstTokenTimeoutMessage =
-  "Stream first token timeout after 120 seconds";
 const clientStreamClosedStatusCode = 499;
 const clientStreamClosedMessage =
   "Client closed the stream before the gateway finished sending the response";
@@ -156,6 +151,7 @@ type CompactFallbackTrace = {
   encryptedContentHash?: string;
   sourceFingerprint?: string;
   targetFingerprint?: string;
+  targetCacheHit?: boolean;
   error?: string;
 };
 
@@ -336,31 +332,21 @@ export async function proxyRoutes(app: FastifyInstance) {
         );
       }
 
-      const callerIpIdentity = clientIp ?? apiKey.id;
-      const rotateChannelForUser = shouldRotateChannelForUser(user.id);
+      const stickyIdentity = getGatewaySessionIdentity(
+        request,
+        body,
+        apiKey.id,
+      );
       let initialRoute: UpstreamAttemptRoute;
       try {
         initialRoute = await selectUpstreamRoute({
           billable,
           model,
-          callerIdentity: callerIpIdentity,
-          excludeChannelIds:
-            billable && model && rotateChannelForUser
-              ? await getRotatedChannelExclusion(callerIpIdentity, model)
-              : [],
-          bypassSticky: rotateChannelForUser,
-          skipStickyUpdate: rotateChannelForUser,
+          callerIdentity: stickyIdentity,
         });
       } catch (error) {
         await runtimeLimitLock.release();
         throw error;
-      }
-      if (billable && model && rotateChannelForUser && initialRoute.channelId) {
-        await setLastRotatedModelPoolChannel(
-          callerIpIdentity,
-          model,
-          initialRoute.channelId,
-        );
       }
       const billableModel = billable ? model : undefined;
 
@@ -421,7 +407,7 @@ export async function proxyRoutes(app: FastifyInstance) {
           apiRequestId: apiRequest.id,
           userId: user.id,
           apiKeyId: apiKey.id,
-          callerIdentity: callerIpIdentity,
+          callerIdentity: stickyIdentity,
           route: activeRoute,
           billable,
           model,
@@ -456,7 +442,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         const nextRoute = await selectUpstreamRoute({
           billable,
           model,
-          callerIdentity: callerIpIdentity,
+          callerIdentity: stickyIdentity,
           excludeChannelIds: [...skippedChannelIds],
           bypassSticky: true,
           skipStickyUpdate: true,
@@ -585,8 +571,8 @@ function getLoggedUpstreamProviderKeyId(
   return keyId === "env" ? undefined : keyId;
 }
 
-function getCompactRouteFingerprint(route: UpstreamAttemptRoute) {
-  return createCompactRouteFingerprint({
+function getCompactChannelFingerprint(route: UpstreamAttemptRoute) {
+  return createCompactChannelFingerprint({
     channelId: route.channelId,
     upstreamProviderKeyId:
       route.upstreamProviderKeyId ?? getLoggedUpstreamProviderKeyId(route),
@@ -658,7 +644,7 @@ async function applyCompactFallback(params: {
     return body;
   }
 
-  const targetFingerprint = getCompactRouteFingerprint(route);
+  const targetFingerprint = getCompactChannelFingerprint(route);
   if (cachedCompact.cache.sourceFingerprint === targetFingerprint) {
     return body;
   }
@@ -691,13 +677,14 @@ async function applyCompactFallback(params: {
       compactFallbackContext.attempted = true;
       compactFallbackContext.trace = {
         gatewayCompactFallback: true,
-        fallbackAttempted: true,
+        fallbackAttempted: false,
         fallbackSucceeded: true,
         replacements: replaced.replacements,
         compactCacheId: cachedCompact.compactCacheId,
         encryptedContentHash: cachedCompact.encryptedContentHash,
         sourceFingerprint: cachedCompact.cache.sourceFingerprint,
         targetFingerprint,
+        targetCacheHit: true,
       };
       return replaced.value;
     }
@@ -752,6 +739,7 @@ async function applyCompactFallback(params: {
   } catch (error) {
     trace.error =
       error instanceof Error ? error.message : "compact fallback failed";
+    compactFallbackContext.trace = undefined;
     app.log.warn(
       {
         error,
@@ -825,7 +813,7 @@ async function recoverInvalidEncryptedContentWithCompact(params: {
     return null;
   }
 
-  const targetFingerprint = getCompactRouteFingerprint(route);
+  const targetFingerprint = getCompactChannelFingerprint(route);
   compactFallbackContext.attempted = true;
   const trace: CompactFallbackTrace = {
     gatewayCompactFallback: true,
@@ -1089,8 +1077,6 @@ async function runUpstreamAttempt(params: {
       data: { reasoningEffortActual: actualReasoningEffort },
     });
   }
-  const requestedStream = requestAsksForStream(body, upstreamRequestUrl);
-  let streamFirstTokenFetchTimedOut = false;
   let activeController: AbortController | undefined;
   let activeControllerHandedOff = false;
 
@@ -1099,12 +1085,6 @@ async function runUpstreamAttempt(params: {
     activeController = controller;
     registerActiveApiRequest(apiRequestId, controller);
     const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
-    const firstTokenFetchTimeout = requestedStream
-      ? startFirstTokenTimeout(startedAt, () => {
-          streamFirstTokenFetchTimedOut = true;
-          controller.abort(createFirstTokenTimeoutError());
-        })
-      : undefined;
 
     const upstreamResponse = await fetch(
       buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
@@ -1123,9 +1103,6 @@ async function runUpstreamAttempt(params: {
       },
     ).finally(() => {
       clearTimeout(timeout);
-      if (firstTokenFetchTimeout) {
-        clearTimeout(firstTokenFetchTimeout);
-      }
     });
 
     await prisma.apiRequest.update({
@@ -1141,7 +1118,7 @@ async function runUpstreamAttempt(params: {
     if (!upstreamResponse.ok) {
       const text = await upstreamResponse.text();
       const statusCode = upstreamResponse.status;
-      const retryableFailure = isRetryableUpstreamStatus(statusCode);
+      const retryableFailure = isRetryableUpstreamFailure(statusCode, text);
 
       if (
         endpoint === "/v1/responses" &&
@@ -1211,7 +1188,7 @@ async function runUpstreamAttempt(params: {
             )
           : undefined,
       );
-      if (recoveryNotice) {
+      if (recoveryNotice && endpoint !== "/v1/responses/compact") {
         await markRecoveryNoticeReturned(
           apiRequestId,
           recoveryNotice,
@@ -1257,6 +1234,7 @@ async function runUpstreamAttempt(params: {
       upstreamResponse,
       body,
       upstreamRequestUrl,
+      endpoint,
     );
 
     if (shouldStream && billable && price) {
@@ -1282,7 +1260,7 @@ async function runUpstreamAttempt(params: {
           endpoint === "/v1/responses/compact" ? body : undefined,
         compactCacheSourceFingerprint:
           endpoint === "/v1/responses/compact"
-            ? getCompactRouteFingerprint(route)
+            ? getCompactChannelFingerprint(route)
             : undefined,
       });
       return { kind: "sent" };
@@ -1301,9 +1279,24 @@ async function runUpstreamAttempt(params: {
     }
 
     const contentType = upstreamResponse.headers.get("content-type") ?? "";
+    const rawBody = await safeReadUpstreamBody(upstreamResponse, app.log);
+    if ("error" in rawBody) {
+      await markRequestFailed(
+        { id: apiRequestId },
+        rawBody.error.message,
+        rawBody.error.statusCode,
+        Math.round(performance.now() - startedAt),
+      );
+      reply.status(rawBody.error.statusCode);
+      reply.header("content-type", "application/json");
+      reply.send({ error: rawBody.error.message });
+      return { kind: "sent" };
+    }
     const responseBody = contentType.includes("application/json")
-      ? await upstreamResponse.json()
-      : await upstreamResponse.text();
+      ? rawBody.json
+      : contentType.includes("text/event-stream")
+        ? parseSseJsonPayloads(rawBody.text)
+        : rawBody.text;
 
     let normalCompactUsageMetadata:
       | ReturnType<typeof createNormalCompactResponseUsage>
@@ -1324,7 +1317,7 @@ async function runUpstreamAttempt(params: {
           {
             compactCacheId: compactCacheResult.compactCacheId,
             encryptedContentHashes: compactCacheResult.encryptedContentHashes,
-            sourceFingerprint: getCompactRouteFingerprint(route),
+            sourceFingerprint: getCompactChannelFingerprint(route),
           },
         );
       }
@@ -1404,21 +1397,14 @@ async function runUpstreamAttempt(params: {
     reply.send(responseBody);
     return { kind: "sent" };
   } catch (error) {
-    const effectiveError = streamFirstTokenFetchTimedOut
-      ? createFirstTokenTimeoutError()
-      : error;
-    const manualTerminated = isManualTerminateError(effectiveError);
+    const manualTerminated = isManualTerminateError(error);
     const message = manualTerminated
       ? manualTerminateMessage
-      : effectiveError instanceof Error
-        ? effectiveError.message
+      : error instanceof Error
+        ? error.message
         : "Upstream request failed";
-    const statusCode = manualTerminated
-      ? manualTerminateStatusCode
-      : isFirstTokenTimeoutError(effectiveError)
-        ? 504
-        : 502;
-    const retryableFailure = isRetryableProxyError(effectiveError);
+    const statusCode = manualTerminated ? manualTerminateStatusCode : 502;
+    const retryableFailure = isRetryableProxyError(error, endpoint);
 
     if (
       !manualTerminated &&
@@ -1450,7 +1436,7 @@ async function runUpstreamAttempt(params: {
       };
     }
 
-    const recoveryNotice = getGatewayRecoveryNotice(effectiveError);
+    const recoveryNotice = getGatewayRecoveryNotice(error);
     await markRequestFailed(
       { id: apiRequestId },
       message,
@@ -1462,7 +1448,7 @@ async function runUpstreamAttempt(params: {
         reason: "proxy_catch",
       }),
     );
-    if (recoveryNotice) {
+    if (recoveryNotice && endpoint !== "/v1/responses/compact") {
       await markRecoveryNoticeReturned(
         apiRequestId,
         recoveryNotice,
@@ -2440,7 +2426,7 @@ async function cacheCompactResponse(params: {
 }) {
   const sourceFingerprint =
     params.sourceFingerprint ??
-    (params.route ? getCompactRouteFingerprint(params.route) : undefined);
+    (params.route ? getCompactChannelFingerprint(params.route) : undefined);
   if (!sourceFingerprint) {
     return;
   }
@@ -2608,7 +2594,12 @@ function shouldStreamResponse(
   upstreamResponse: Response,
   body: ProxyBody,
   requestUrl: string,
+  endpoint?: string,
 ) {
+  if (endpoint === "/v1/responses/compact") {
+    return false;
+  }
+
   const contentType = upstreamResponse.headers.get("content-type") ?? "";
 
   return (
@@ -2670,6 +2661,55 @@ function getClientIp(request: ApiRequestWithUser) {
   return request.ip || request.socket.remoteAddress || null;
 }
 
+function getGatewaySessionIdentity(
+  request: ApiRequestWithUser,
+  body: ProxyBody,
+  apiKeyId: string,
+) {
+  const sessionId =
+    pickHeaderValue(request.headers["x-gateway-session-id"]) ??
+    getStringPath(body, ["prompt_cache_key"]) ??
+    getStringPath(body, ["metadata", "gateway_session_id"]) ??
+    getStringPath(body, ["metadata", "session_id"]) ??
+    getStringPath(body, ["previous_response_id"]) ??
+    getStringPath(body, ["conversation_id"]) ??
+    getStringPath(body, ["conversation"]) ??
+    getStringPath(body, ["thread_id"]) ??
+    getCompactSessionAnchor(body);
+
+  if (sessionId) {
+    return `apiKey:${apiKeyId}:session:${normalizeStickyIdentityPart(sessionId)}`;
+  }
+
+  return `apiKey:${apiKeyId}:session:missing`;
+}
+
+function getStringPath(value: unknown, path: string[]) {
+  let current = value;
+  for (const key of path) {
+    if (!isPlainObject(current)) {
+      return null;
+    }
+    current = current[key];
+  }
+
+  return typeof current === "string" && current.trim() ? current.trim() : null;
+}
+
+function getCompactSessionAnchor(body: ProxyBody) {
+  const encryptedContent = collectEncryptedContents(body)[0];
+  return encryptedContent
+    ? `compact:${hashEncryptedContent(encryptedContent)}`
+    : null;
+}
+
+function normalizeStickyIdentityPart(value: string) {
+  return value
+    .trim()
+    .slice(0, 256)
+    .replace(/[^a-zA-Z0-9._:@-]/g, "_");
+}
+
 function pickHeaderValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
     return value.map((item) => item.trim()).find(Boolean) ?? null;
@@ -2692,25 +2732,6 @@ function pickForwardedFor(value: string | string[] | undefined) {
   );
 }
 
-function shouldRotateChannelForUser(userId: string) {
-  const targetUserIds = (process.env.GATEWAY_ROTATE_CHANNEL_USER_IDS ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return targetUserIds.includes(userId);
-}
-
-async function getRotatedChannelExclusion(
-  callerIdentity: string,
-  model: string,
-) {
-  const lastChannelId = await getLastRotatedModelPoolChannel(
-    callerIdentity,
-    model,
-  );
-  return lastChannelId ? [lastChannelId] : [];
-}
-
 function buildUpstreamBody(
   endpoint: string,
   body: ProxyBody,
@@ -2720,6 +2741,12 @@ function buildUpstreamBody(
 
   if (endpoint === "/v1/responses") {
     upstreamBody = normalizeResponsesCreateBody(upstreamBody);
+  }
+
+  if (endpoint === "/v1/responses/compact" && isPlainObject(upstreamBody)) {
+    upstreamBody = { ...upstreamBody };
+    delete upstreamBody.stream;
+    delete upstreamBody.stream_options;
   }
 
   if (
@@ -2789,6 +2816,73 @@ function buildResponsesCompatibilityBody(body: ProxyBody): ProxyBody {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const UPSTREAM_RESPONSE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+
+type SafeBodyResult =
+  | { json: unknown; text: string }
+  | { error: { message: string; statusCode: number } };
+
+async function safeReadUpstreamBody(
+  response: Response,
+  logger?: { warn: (value: unknown, message?: string) => void },
+): Promise<SafeBodyResult> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const size = Number(contentLength);
+    if (Number.isFinite(size) && size > UPSTREAM_RESPONSE_MAX_BYTES) {
+      logger?.warn(
+        { contentLength: size, maxBytes: UPSTREAM_RESPONSE_MAX_BYTES },
+        "Upstream response body too large, rejecting",
+      );
+      return {
+        error: {
+          message: `Upstream response body too large (${(size / 1024 / 1024).toFixed(1)}MB)`,
+          statusCode: 502,
+        },
+      };
+    }
+  }
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (err) {
+    return {
+      error: {
+        message: `Failed to read upstream response body: ${err instanceof Error ? err.message : "unknown error"}`,
+        statusCode: 502,
+      },
+    };
+  }
+
+  if (text.length > UPSTREAM_RESPONSE_MAX_BYTES) {
+    logger?.warn(
+      { bodyBytes: text.length, maxBytes: UPSTREAM_RESPONSE_MAX_BYTES },
+      "Upstream response body exceeds limit after reading, rejecting",
+    );
+    return {
+      error: {
+        message: `Upstream response body too large (${(text.length / 1024 / 1024).toFixed(1)}MB)`,
+        statusCode: 502,
+      },
+    };
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      return { json: JSON.parse(text), text };
+    } catch (_err) {
+      logger?.warn(
+        { bodyBytes: text.length },
+        "Upstream returned invalid JSON, returning as text",
+      );
+    }
+  }
+
+  return { json: text, text };
 }
 
 async function proxyStream(params: {
@@ -2879,30 +2973,13 @@ async function proxyStream(params: {
           logger,
         });
         safeController.enqueue(
-          encoder.encode(
-            buildStreamErrorEvent(
-              error.message,
-              isFirstTokenTimeoutError(error) ? 504 : 502,
-            ),
-          ),
+          encoder.encode(buildStreamErrorEvent(error.message, 502)),
         );
         safeController.close();
         return;
       }
-      let firstTokenTimedOut = false;
-      const firstTokenTimeout = startFirstTokenTimeout(startedAt, () => {
-        if (firstTokenLatencyMs !== null) {
-          return;
-        }
-
-        firstTokenTimedOut = true;
-        void reader
-          .cancel(createFirstTokenTimeoutError())
-          .catch(() => undefined);
-      });
       const markFirstTokenSeen = () => {
         firstTokenLatencyMs = Math.round(performance.now() - startedAt);
-        clearTimeout(firstTokenTimeout);
       };
       const flushBufferedStreamChunks = () => {
         if (hasForwardedStream) {
@@ -2967,10 +3044,6 @@ async function proxyStream(params: {
           }
           streamUsage = parseUsageFromSseBuffer(pending) ?? streamUsage;
           forwardStreamText(trailing);
-        }
-
-        if (firstTokenTimedOut && firstTokenLatencyMs === null) {
-          throw createFirstTokenTimeoutError();
         }
 
         if (!streamUsage) {
@@ -3093,11 +3166,7 @@ async function proxyStream(params: {
         await markRequestFailed(
           { id: apiRequestId },
           message,
-          manualTerminated
-            ? manualTerminateStatusCode
-            : isFirstTokenTimeoutError(error)
-              ? 504
-              : 502,
+          manualTerminated ? manualTerminateStatusCode : 502,
           Math.round(performance.now() - startedAt),
           createFailureResponseUsage({
             manualTerminated,
@@ -3105,7 +3174,7 @@ async function proxyStream(params: {
             reason: "stream_recovery_notice",
           }),
         );
-        if (recoveryNotice) {
+        if (recoveryNotice && endpoint !== "/v1/responses/compact") {
           await markRecoveryNoticeReturned(
             apiRequestId,
             recoveryNotice,
@@ -3140,7 +3209,7 @@ async function proxyStream(params: {
             model,
             channelId,
             failed: true,
-            retryableFailure: isRetryableProxyError(error),
+            retryableFailure: isRetryableProxyError(error, endpoint),
             logger,
           });
           safeController.error(error);
@@ -3149,7 +3218,6 @@ async function proxyStream(params: {
         safeController.close();
         return;
       } finally {
-        clearTimeout(firstTokenTimeout);
         unregisterActiveApiRequest(apiRequestId, activeController);
         safeController.close();
       }
@@ -3197,18 +3265,6 @@ async function proxyPassthroughStream(params: {
         safeController.close();
         return;
       }
-      let firstTokenTimedOut = false;
-      const firstTokenTimeout = startFirstTokenTimeout(startedAt, () => {
-        if (firstTokenLatencyMs !== null) {
-          return;
-        }
-
-        firstTokenTimedOut = true;
-        void reader
-          .cancel(createFirstTokenTimeoutError())
-          .catch(() => undefined);
-      });
-
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -3218,16 +3274,11 @@ async function proxyPassthroughStream(params: {
           if (value) {
             if (firstTokenLatencyMs === null) {
               firstTokenLatencyMs = Math.round(performance.now() - startedAt);
-              clearTimeout(firstTokenTimeout);
             }
             if (!safeController.enqueue(value)) {
               throw createClientStreamClosedError();
             }
           }
-        }
-
-        if (firstTokenTimedOut && firstTokenLatencyMs === null) {
-          throw createFirstTokenTimeoutError();
         }
 
         await prisma.apiRequest.update({
@@ -3253,9 +3304,7 @@ async function proxyPassthroughStream(params: {
             ? clientStreamClosedStatusCode
             : manualTerminated
               ? manualTerminateStatusCode
-              : isFirstTokenTimeoutError(error)
-                ? 504
-                : 502,
+              : 502,
           Math.round(performance.now() - startedAt),
           manualTerminated ? createManualTerminateUsage(true) : undefined,
         );
@@ -3265,17 +3314,11 @@ async function proxyPassthroughStream(params: {
             return;
           }
           safeController.enqueue(
-            new TextEncoder().encode(
-              buildStreamErrorEvent(
-                message,
-                isFirstTokenTimeoutError(error) ? 504 : 502,
-              ),
-            ),
+            new TextEncoder().encode(buildStreamErrorEvent(message, 502)),
           );
         }
         return;
       } finally {
-        clearTimeout(firstTokenTimeout);
         unregisterActiveApiRequest(apiRequestId, activeController);
         safeController.close();
       }
@@ -3400,32 +3443,30 @@ function getErrorCode(error: unknown) {
   return typeof code === "string" ? code : null;
 }
 
-function startFirstTokenTimeout(startedAt: number, onTimeout: () => void) {
-  const elapsedMs = performance.now() - startedAt;
-  const remainingMs = Math.max(0, streamFirstTokenTimeoutMs - elapsedMs);
-  return setTimeout(onTimeout, remainingMs);
-}
-
-function createFirstTokenTimeoutError() {
-  const error = new Error(streamFirstTokenTimeoutMessage);
-  error.name = "FirstTokenTimeoutError";
-  return error;
-}
-
-function isFirstTokenTimeoutError(error: unknown) {
-  return error instanceof Error && error.name === "FirstTokenTimeoutError";
-}
-
-function isRetryableUpstreamStatus(statusCode: number) {
-  return statusCode === 408 || statusCode === 429 || statusCode >= 500;
-}
-
-function isRetryableProxyError(error: unknown) {
+function isRetryableUpstreamFailure(statusCode: number, responseBody?: unknown) {
   return (
-    isFirstTokenTimeoutError(error) ||
-    error instanceof TypeError ||
-    isAbortError(error)
+    statusCode === 408 ||
+    statusCode === 429 ||
+    statusCode >= 500 ||
+    isUpstreamQuotaExhaustedError(responseBody)
   );
+}
+
+function isUpstreamQuotaExhaustedError(value: unknown) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("insufficient_user_quota") ||
+    normalized.includes("预扣费额度失败")
+  );
+}
+
+function isRetryableProxyError(error: unknown, endpoint?: string) {
+  if (endpoint === "/v1/responses/compact" && isMissingUsageError(error)) {
+    return true;
+  }
+
+  return error instanceof TypeError || isAbortError(error);
 }
 
 function isAbortError(error: unknown) {

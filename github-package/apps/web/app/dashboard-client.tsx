@@ -5,6 +5,7 @@ import {
   BarChart3,
   CreditCard,
   FileSearch,
+  HeartHandshake,
   KeyRound,
   LogIn,
   LogOut,
@@ -49,6 +50,7 @@ type User = {
   concurrencyLimit: number;
   charityEnabled?: boolean;
   charityDisplayName?: string | null;
+  charityKey?: string | null;
   createdAt?: string;
   wallet?: Wallet | null;
 };
@@ -116,20 +118,6 @@ type ApiRequest = {
     name: string;
     keyPrefix: string;
   } | null;
-  compactFallbacks?: CompactFallbackSummary[];
-};
-
-type CompactFallbackSummary = {
-  id: string;
-  traceCode?: string | null;
-  createdAt: string;
-  status: string;
-  upstreamProvider?: string | null;
-  upstreamProviderKey?: ApiRequest["upstreamProviderKey"];
-  sourceFingerprint?: string | null;
-  targetFingerprint?: string | null;
-  replacements?: number | null;
-  fallbackSucceeded?: boolean | null;
 };
 
 type ApiRequestDetail = ApiRequest & {
@@ -405,6 +393,7 @@ type ModelPoolChannel = {
   penaltyReason?: string | null;
   lastCheckStatus?: string | null;
   lastCheckedAt?: string | null;
+  lastSuccessfulCallAt?: string | null;
   lastLatencyMs?: number | null;
   lastFirstTokenLatencyMs?: number | null;
   lastError?: string | null;
@@ -412,6 +401,7 @@ type ModelPoolChannel = {
   nextCheckAt?: string | null;
   nextCheckRemainingSeconds?: number | null;
   penaltyRemainingSeconds?: number | null;
+  successGraceRemainingSeconds?: number | null;
   healthCheckVersion?: string | null;
   hasPrice: boolean;
   priceEnabled: boolean;
@@ -452,6 +442,9 @@ type ModelPoolHealthCheck = {
   penaltySeconds: number;
   minPenaltySeconds?: number;
   maxPenaltySeconds?: number;
+  successGraceSeconds: number;
+  minSuccessGraceSeconds?: number;
+  maxSuccessGraceSeconds?: number;
   serverNow: string;
   receivedAtMs: number;
 };
@@ -466,6 +459,9 @@ type ModelPoolResponse = {
     penaltySeconds: number;
     minPenaltySeconds?: number;
     maxPenaltySeconds?: number;
+    successGraceSeconds: number;
+    minSuccessGraceSeconds?: number;
+    maxSuccessGraceSeconds?: number;
     serverNow: string;
   };
 };
@@ -648,6 +644,12 @@ const adminNav = [
     icon: Users,
   },
   {
+    id: "admin-charity",
+    label: "公益用户",
+    description: "专属账号、Key、公开页",
+    icon: HeartHandshake,
+  },
+  {
     id: "admin-settings",
     label: "登录设置",
     description: "验证码、新用户赠额",
@@ -686,6 +688,7 @@ const adminNavGroups = [
       [
         "admin-overview",
         "admin-users",
+        "admin-charity",
         "admin-settings",
         "admin-redeem",
       ].includes(item.id),
@@ -750,6 +753,11 @@ const pageMeta: Record<
     eyebrow: "运营中心",
     title: "用户管理",
     description: "集中处理账号开通、余额调整、模型白名单和用户状态。",
+  },
+  "admin-charity": {
+    eyebrow: "公益站",
+    title: "公益用户",
+    description: "维护公益专属用户和它的 API Key，底层逻辑与普通用户完全一致。",
   },
   "admin-settings": {
     eyebrow: "运营中心",
@@ -1302,6 +1310,15 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <AdminUsers
               users={adminUsers}
               modelPools={modelPools}
+              onChanged={() => refreshAll()}
+              onError={setError}
+            />
+          ) : null}
+          {mode === "admin" && activeTab === "admin-charity" ? (
+            <AdminUsers
+              users={adminUsers}
+              modelPools={modelPools}
+              charityOnly
               onChanged={() => refreshAll()}
               onError={setError}
             />
@@ -2945,171 +2962,129 @@ function AuditRequestRow({
   onOpenDetail: (request: ApiRequest) => Promise<void>;
   onTerminate: (request: ApiRequest) => Promise<void>;
 }) {
-  const compactFallbacks = item.compactFallbacks ?? [];
-
   return (
-    <>
-      <tr>
-        <td>
-          <strong className="request-trace-code">
-            {formatRequestTraceCode(item)}
-          </strong>
-        </td>
-        <td>
-          <div className="audit-stack">
-            <strong>{item.user?.email ?? "-"}</strong>
-            <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
-            <IpCell
-              ip={item.clientIp}
-              banned={Boolean(
-                item.clientIp &&
-                bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
-              )}
-            />
-          </div>
-        </td>
-        <td>
-          <div className="audit-stack">
-            <strong>{item.model}</strong>
-            <span>上游：{item.upstreamProvider ?? "-"}</span>
-            <span>
-              上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}
+    <tr>
+      <td>
+        <strong className="request-trace-code">
+          {formatRequestTraceCode(item)}
+        </strong>
+      </td>
+      <td>
+        <div className="audit-stack">
+          <strong>{item.user?.email ?? "-"}</strong>
+          <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
+          <IpCell
+            ip={item.clientIp}
+            banned={Boolean(
+              item.clientIp &&
+              bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
+            )}
+          />
+        </div>
+      </td>
+      <td>
+        <div className="audit-stack">
+          <strong>{item.model}</strong>
+          <span>上游：{item.upstreamProvider ?? "-"}</span>
+          <span>
+            上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}
+          </span>
+          <span>
+            推理：
+            {formatReasoningEffortCell(
+              item.reasoningEffort,
+              item.reasoningEffortActual,
+            )}
+          </span>
+        </div>
+      </td>
+      <td>
+        <div className="request-status-cell">
+          <StatusPill status={getRequestStatusPillStatus(item)} />
+          {getCompactRequestLabel(item) ? (
+            <span className="request-compact-fallback-pill">
+              {getCompactRequestLabel(item)}
             </span>
-            <span>
-              推理：
-              {formatReasoningEffortCell(
-                item.reasoningEffort,
-                item.reasoningEffortActual,
-              )}
-            </span>
-          </div>
-        </td>
-        <td>
-          <div className="request-status-cell">
-            <StatusPill status={getRequestStatusPillStatus(item)} />
-            {getCompactRequestLabel(item) ? (
-              <span className="request-compact-fallback-pill">
-                {getCompactRequestLabel(item)}
-              </span>
-            ) : null}
-            {compactFallbacks.length > 0 ? (
-              <span className="request-compact-fallback-pill secondary">
-                二次 {compactFallbacks.length}
-              </span>
-            ) : null}
-            {getReturnedNoticeText(item) ? (
-              <span className="request-notice-pill">已提示</span>
-            ) : null}
-            {hasRequestError(item) ? (
-              <button
-                className="request-detail-button"
-                onClick={() => void onOpenDetail(item)}
-                title="查看详细报错原因和过程"
-                type="button"
-              >
-                <FileSearch size={13} />
-                详情
-              </button>
-            ) : null}
-          </div>
-        </td>
-        <td>
-          <div className="audit-metric-grid">
-            <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
-            <AuditMetric
-              label="缓存"
-              value={formatNumber(item.cachedInputTokens)}
-            />
-            <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
-            <AuditMetric
-              label="总计"
-              value={formatNumber(item.totalTokens)}
-              strong
-            />
-          </div>
-        </td>
-        <td>
-          <div className="audit-metric-grid">
-            <AuditMetric
-              label="扣费"
-              value={`$${money(item.chargedAmountUsd)}`}
-              strong
-            />
-            <AuditMetric
-              label="成本"
-              value={`$${money(item.upstreamCostUsd ?? "0")}`}
-            />
-            <AuditMetric
-              label="毛利"
-              value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
-            />
-          </div>
-        </td>
-        <td>
-          <div className="audit-stack">
-            <span>总：{seconds(item.latencyMs)}</span>
-            <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
-            <span>{dateTime(item.createdAt)}</span>
-          </div>
-        </td>
-        <td>
-          {item.status === "PENDING" ? (
+          ) : null}
+          {getReturnedNoticeText(item) ? (
+            <span className="request-notice-pill">已提示</span>
+          ) : null}
+          {hasRequestError(item) ? (
             <button
-              className="request-terminate-button"
-              disabled={
-                terminatingRequestId === item.id ||
-                isProtectedCompactRequest(item)
-              }
-              onClick={() => void onTerminate(item)}
-              title={
-                isProtectedCompactRequest(item)
-                  ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
-                  : "终止这条仍在处理中的调用"
-              }
+              className="request-detail-button"
+              onClick={() => void onOpenDetail(item)}
+              title="查看详细报错原因和过程"
               type="button"
             >
-              <CircleStop size={13} />
-              {isProtectedCompactRequest(item) ? "保护中" : "终止"}
+              <FileSearch size={13} />
+              详情
             </button>
-          ) : (
-            "-"
-          )}
-        </td>
-      </tr>
-      {compactFallbacks.length > 0 ? (
-        <tr className="compact-fallback-linked-row">
-          <td colSpan={8}>
-            <div className="compact-fallback-linked-list">
-              {compactFallbacks.map((fallback) => (
-                <div className="compact-fallback-linked-item" key={fallback.id}>
-                  <span className="request-compact-fallback-pill">
-                    二次 compact
-                  </span>
-                  <strong>
-                    {formatTraceLike(fallback.traceCode, fallback.id)}
-                  </strong>
-                  <span>
-                    {formatFingerprintRoute(fallback.sourceFingerprint)} →{" "}
-                    {formatFingerprintRoute(fallback.targetFingerprint)}
-                  </span>
-                  <span>
-                    目标：{fallback.upstreamProvider ?? "-"} ·{" "}
-                    {formatRequestUpstreamKey(
-                      fallback.upstreamProviderKey ?? null,
-                    )}
-                  </span>
-                  <span>
-                    替换 {formatNumber(Number(fallback.replacements ?? 0))} 处 ·{" "}
-                    {fallback.fallbackSucceeded === false ? "未完成" : "成功"}
-                  </span>
-                  <span>{dateTime(fallback.createdAt)}</span>
-                </div>
-              ))}
-            </div>
-          </td>
-        </tr>
-      ) : null}
-    </>
+          ) : null}
+        </div>
+      </td>
+      <td>
+        <div className="audit-metric-grid">
+          <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
+          <AuditMetric
+            label="缓存"
+            value={formatNumber(item.cachedInputTokens)}
+          />
+          <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
+          <AuditMetric
+            label="总计"
+            value={formatNumber(item.totalTokens)}
+            strong
+          />
+        </div>
+      </td>
+      <td>
+        <div className="audit-metric-grid">
+          <AuditMetric
+            label="扣费"
+            value={`$${money(item.chargedAmountUsd)}`}
+            strong
+          />
+          <AuditMetric
+            label="成本"
+            value={`$${money(item.upstreamCostUsd ?? "0")}`}
+          />
+          <AuditMetric
+            label="毛利"
+            value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
+          />
+        </div>
+      </td>
+      <td>
+        <div className="audit-stack">
+          <span>总：{seconds(item.latencyMs)}</span>
+          <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
+          <span>{dateTime(item.createdAt)}</span>
+        </div>
+      </td>
+      <td>
+        {item.status === "PENDING" ? (
+          <button
+            className="request-terminate-button"
+            disabled={
+              terminatingRequestId === item.id ||
+              isProtectedCompactRequest(item)
+            }
+            onClick={() => void onTerminate(item)}
+            title={
+              isProtectedCompactRequest(item)
+                ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
+                : "终止这条仍在处理中的调用"
+            }
+            type="button"
+          >
+            <CircleStop size={13} />
+            {isProtectedCompactRequest(item) ? "保护中" : "终止"}
+          </button>
+        ) : (
+          "-"
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -3382,13 +3357,13 @@ function isCompactFallbackRequest(item: Pick<ApiRequest, "responseUsage">) {
 }
 
 function isProtectedCompactRequest(
-  item: Pick<ApiRequest, "endpoint" | "responseUsage">,
+  item: Pick<ApiRequest, "endpoint" | "responseUsage" | "status">,
 ) {
   return Boolean(getCompactRequestLabel(item));
 }
 
 function getCompactRequestLabel(
-  item: Pick<ApiRequest, "endpoint" | "responseUsage">,
+  item: Pick<ApiRequest, "endpoint" | "responseUsage" | "status">,
 ) {
   if (item.endpoint === "/v1/responses/compact") {
     return "compact";
@@ -3400,11 +3375,29 @@ function getCompactRequestLabel(
   }
 
   const record = usage as Record<string, unknown>;
+  const fallback = isPlainRecord(record.compactFallback)
+    ? record.compactFallback
+    : record;
+  const fallbackSucceeded =
+    typeof fallback.fallbackSucceeded === "boolean"
+      ? fallback.fallbackSucceeded
+      : typeof record.fallbackSucceeded === "boolean"
+        ? record.fallbackSucceeded
+        : null;
+  const showFallback =
+    fallbackSucceeded === true ||
+    (item.status === "PENDING" &&
+      (record.gatewayCompactFallback === true ||
+        record.gatewayCompactKind === "fallback"));
+
   if (
-    record.gatewayCompactFallback === true ||
-    record.gatewayCompactKind === "fallback"
+    showFallback &&
+    (record.gatewayCompactFallback === true ||
+      record.gatewayCompactKind === "fallback")
   ) {
-    return "compact · 二次";
+    return fallback.targetCacheHit === true
+      ? "compact · 二次复用"
+      : "compact · 二次";
   }
 
   if (record.gatewayCompactKind === "normal") {
@@ -3426,9 +3419,17 @@ function getCompactFallbackTrace(item: Pick<ApiRequest, "responseUsage">) {
     return null;
   }
 
-  return isPlainRecord(record.compactFallback)
+  const fallback = isPlainRecord(record.compactFallback)
     ? record.compactFallback
     : record;
+  const fallbackSucceeded =
+    typeof fallback.fallbackSucceeded === "boolean"
+      ? fallback.fallbackSucceeded
+      : typeof record.fallbackSucceeded === "boolean"
+        ? record.fallbackSucceeded
+        : null;
+
+  return fallbackSucceeded === false ? null : fallback;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -3587,7 +3588,11 @@ function buildRequestProcess(
           {
             title: "3. compact 处理",
             state:
-              compactFallback.fallbackSucceeded === false ? "处理中" : "完成",
+              compactFallback.fallbackSucceeded === false
+                ? request.status === "PENDING"
+                  ? "处理中"
+                  : "异常"
+                : "完成",
             tone: compactFallback.fallbackSucceeded === false ? "warn" : "ok",
             detail: `这条调用发生过无感二次 compact，已用原始 compact 请求在当前渠道重新压缩并替换 ${formatNumber(Number(compactFallback.replacements ?? 0))} 处上下文 item。`,
           },
@@ -5647,11 +5652,13 @@ function AdminAuthSettings({
 function AdminUsers({
   users,
   modelPools,
+  charityOnly = false,
   onChanged,
   onError,
 }: {
   users: AdminUser[];
   modelPools: ModelPool[];
+  charityOnly?: boolean;
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
@@ -5660,8 +5667,11 @@ function AdminUsers({
   const [initialBalance, setInitialBalance] = useState("0");
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState(0);
   const [concurrencyLimit, setConcurrencyLimit] = useState(0);
-  const [charityEnabled, setCharityEnabled] = useState(false);
-  const [charityDisplayName, setCharityDisplayName] = useState("");
+  const [charityEnabled, setCharityEnabled] = useState(charityOnly);
+  const [charityDisplayName, setCharityDisplayName] = useState(
+    charityOnly ? "APIshare Free" : "",
+  );
+  const [charityKey, setCharityKey] = useState("");
   const [userSearch, setUserSearch] = useState("");
   const [targetUserId, setTargetUserId] = useState("");
   const [adjustAmount, setAdjustAmount] = useState("10");
@@ -5680,15 +5690,19 @@ function AdminUsers({
   const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
   const [editCharityEnabled, setEditCharityEnabled] = useState(false);
   const [editCharityDisplayName, setEditCharityDisplayName] = useState("");
+  const [editCharityKey, setEditCharityKey] = useState("");
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
   const keyModalUser = users.find((item) => item.id === keyModalUserId) ?? null;
   const modelSuggestions = modelPools.map((pool) => pool.model);
-  const filteredUsers = users.filter((item) =>
-    `${item.email} ${item.role} ${item.status}`
+  const filteredUsers = users.filter((item) => {
+    if (charityOnly && !item.charityEnabled) {
+      return false;
+    }
+    return `${item.email} ${item.role} ${item.status} ${item.charityDisplayName ?? ""}`
       .toLowerCase()
-      .includes(userSearch.trim().toLowerCase()),
-  );
+      .includes(userSearch.trim().toLowerCase());
+  });
 
   useEffect(() => {
     setAllowedModelsText((selectedUser?.allowedModels ?? []).join("\n"));
@@ -5705,6 +5719,7 @@ function AdminUsers({
     setEditConcurrencyLimit(item.concurrencyLimit ?? 0);
     setEditCharityEnabled(Boolean(item.charityEnabled));
     setEditCharityDisplayName(item.charityDisplayName ?? "");
+    setEditCharityKey(item.charityKey ?? "");
   }
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
@@ -5727,15 +5742,20 @@ function AdminUsers({
           rateLimitPerMinute: Number(rateLimitPerMinute),
           concurrencyLimit: Number(concurrencyLimit),
           charityEnabled,
-          charityDisplayName,
+          charityDisplayName:
+            charityOnly && !charityDisplayName.trim()
+              ? "APIshare Free"
+              : charityDisplayName,
+          charityKey,
         }),
       });
       setEmail("");
       setInitialBalance("0");
       setRateLimitPerMinute(0);
       setConcurrencyLimit(0);
-      setCharityEnabled(false);
-      setCharityDisplayName("");
+      setCharityEnabled(charityOnly);
+      setCharityDisplayName(charityOnly ? "APIshare Free" : "");
+      setCharityKey("");
       setUserModal(null);
       onChanged();
     } catch (createError) {
@@ -5819,6 +5839,7 @@ function AdminUsers({
           concurrencyLimit: Number(editConcurrencyLimit),
           charityEnabled: editCharityEnabled,
           charityDisplayName: editCharityDisplayName,
+          charityKey: editCharityKey,
         }),
       });
       setEditingUser(null);
@@ -5861,7 +5882,9 @@ function AdminUsers({
           <div>
             <h2>用户操作</h2>
             <p>
-              创建账号、调整余额和设置模型权限都从弹窗完成。用户通过邮箱验证码进入。
+              {charityOnly
+                ? "公益账号仍然是普通用户账号；这里单独集中创建、调余额、设模型和管理 Key。"
+                : "创建账号、调整余额和设置模型权限都从弹窗完成。用户通过邮箱验证码进入。"}
             </p>
           </div>
           <div className="button-row">
@@ -5874,7 +5897,7 @@ function AdminUsers({
               type="button"
             >
               <Plus size={17} />
-              创建用户
+              {charityOnly ? "创建公益用户" : "创建用户"}
             </button>
             <button
               className="button secondary"
@@ -5904,14 +5927,24 @@ function AdminUsers({
         <section className="card">
           <div className="section-head">
             <div>
-              <h2 className="section-title">用户列表</h2>
-              <p className="section-subtitle">搜索用户、查看余额和模型限制。</p>
+              <h2 className="section-title">
+                {charityOnly ? "公益用户列表" : "用户列表"}
+              </h2>
+              <p className="section-subtitle">
+                {charityOnly
+                  ? "只显示已纳入公益公开统计的用户，Key 管理沿用普通用户逻辑。"
+                  : "搜索用户、查看余额和模型限制。"}
+              </p>
             </div>
             <input
               className="input search-input"
               value={userSearch}
               onChange={(event) => setUserSearch(event.target.value)}
-              placeholder="搜索邮箱 / 状态 / 角色"
+              placeholder={
+                charityOnly
+                  ? "搜索邮箱 / 公益名称 / 状态"
+                  : "搜索邮箱 / 状态 / 角色"
+              }
             />
           </div>
           <div className="table-wrap">
@@ -5923,6 +5956,7 @@ function AdminUsers({
                   <th>状态</th>
                   <th>余额</th>
                   <th>公益</th>
+                  {charityOnly ? <th>公开 Key</th> : null}
                   <th>模型白名单</th>
                   <th>账号限制</th>
                   <th>Key</th>
@@ -5949,6 +5983,13 @@ function AdminUsers({
                         <span className="pill">未公开</span>
                       )}
                     </td>
+                    {charityOnly ? (
+                      <td>
+                        <code className="inline-secret">
+                          {item.charityKey || "未填写"}
+                        </code>
+                      </td>
+                    ) : null}
                     <td>
                       {item.allowedModels.length > 0
                         ? item.allowedModels.join(", ")
@@ -5970,6 +6011,15 @@ function AdminUsers({
                         >
                           编辑
                         </button>
+                        {charityOnly ? (
+                          <button
+                            className="button secondary"
+                            onClick={() => beginEditUser(item)}
+                            type="button"
+                          >
+                            设置公开 Key
+                          </button>
+                        ) : null}
                         <button
                           className="button secondary"
                           onClick={() => setKeyModalUserId(item.id)}
@@ -5995,7 +6045,9 @@ function AdminUsers({
                     </td>
                   </tr>
                 ))}
-                {filteredUsers.length === 0 ? <EmptyRow colSpan={11} /> : null}
+                {filteredUsers.length === 0 ? (
+                  <EmptyRow colSpan={charityOnly ? 12 : 11} />
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -6052,6 +6104,13 @@ function AdminUsers({
                     ? item.charityDisplayName || "已公开"
                     : "未公开"}
                 </MobileField>
+                {charityOnly ? (
+                  <MobileField label="公益 Key" wide>
+                    <code className="inline-secret">
+                      {item.charityKey || "未填写"}
+                    </code>
+                  </MobileField>
+                ) : null}
                 <MobileField label="账号限流">
                   {formatRateLimit(item.rateLimitPerMinute)}
                 </MobileField>
@@ -6084,8 +6143,12 @@ function AdminUsers({
 
       {userModal === "create" ? (
         <ModalShell
-          title="创建用户"
-          description="给客户开账号和初始余额。"
+          title={charityOnly ? "创建公益用户" : "创建用户"}
+          description={
+            charityOnly
+              ? "创建后会自动纳入公益公开页统计；Key 仍从 Key 管理里创建。"
+              : "给客户开账号和初始余额。"
+          }
           onClose={() => setUserModal(null)}
         >
           <form className="form" onSubmit={createUser}>
@@ -6150,14 +6213,18 @@ function AdminUsers({
                   />
                 </label>
               </div>
-              <label className="checkbox-row">
-                <input
-                  checked={charityEnabled}
-                  onChange={(event) => setCharityEnabled(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>纳入公益公开统计</span>
-              </label>
+              {charityOnly ? null : (
+                <label className="checkbox-row">
+                  <input
+                    checked={charityEnabled}
+                    onChange={(event) =>
+                      setCharityEnabled(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span>纳入公益公开统计</span>
+                </label>
+              )}
               <label className="field">
                 <span>公益展示名称</span>
                 <input
@@ -6169,6 +6236,17 @@ function AdminUsers({
                   placeholder="例如：公益项目名称"
                 />
               </label>
+              {charityOnly ? (
+                <label className="field">
+                  <span>公益 Key</span>
+                  <input
+                    className="input"
+                    value={charityKey}
+                    onChange={(event) => setCharityKey(event.target.value)}
+                    placeholder="先创建公益用户 Key，再把完整 Key 粘贴到这里"
+                  />
+                </label>
+              ) : null}
             </div>
             <div className="modal-footer">
               <button
@@ -6180,7 +6258,7 @@ function AdminUsers({
               </button>
               <button className="button" type="submit">
                 <Users size={17} />
-                创建用户
+                {charityOnly ? "创建公益用户" : "创建用户"}
               </button>
             </div>
           </form>
@@ -6413,6 +6491,15 @@ function AdminUsers({
                   />
                 </label>
               </div>
+              <label className="field">
+                <span>公开页 API Key</span>
+                <input
+                  className="input"
+                  value={editCharityKey}
+                  onChange={(event) => setEditCharityKey(event.target.value)}
+                  placeholder="粘贴要展示在公益页的完整 API Key"
+                />
+              </label>
               <label className="checkbox-row">
                 <input
                   checked={editCharityEnabled}
@@ -7286,6 +7373,7 @@ function AdminModelPools({
 }) {
   const [createModel, setCreateModel] = useState("");
   const [healthIntervalSeconds, setHealthIntervalSeconds] = useState("30");
+  const [successGraceSeconds, setSuccessGraceSeconds] = useState("0");
   const [penaltySeconds, setPenaltySeconds] = useState("60");
   const [channelSelections, setChannelSelections] = useState<
     Record<string, string>
@@ -7307,9 +7395,14 @@ function AdminModelPools({
   useEffect(() => {
     if (healthCheck) {
       setHealthIntervalSeconds(String(healthCheck.intervalSeconds));
+      setSuccessGraceSeconds(String(healthCheck.successGraceSeconds));
       setPenaltySeconds(String(healthCheck.penaltySeconds));
     }
-  }, [healthCheck?.intervalSeconds, healthCheck?.penaltySeconds]);
+  }, [
+    healthCheck?.intervalSeconds,
+    healthCheck?.penaltySeconds,
+    healthCheck?.successGraceSeconds,
+  ]);
 
   useEffect(() => {
     if (
@@ -7566,9 +7659,12 @@ function AdminModelPools({
     onError(null);
 
     const intervalSeconds = Number(healthIntervalSeconds);
+    const nextSuccessGraceSeconds = Number(successGraceSeconds);
     const nextPenaltySeconds = Number(penaltySeconds);
     const minIntervalSeconds = healthCheck?.minIntervalSeconds ?? 5;
     const maxIntervalSeconds = healthCheck?.maxIntervalSeconds ?? 3600;
+    const minSuccessGraceSeconds = healthCheck?.minSuccessGraceSeconds ?? 0;
+    const maxSuccessGraceSeconds = healthCheck?.maxSuccessGraceSeconds ?? 86400;
     const minPenaltySeconds = healthCheck?.minPenaltySeconds ?? 1;
     const maxPenaltySeconds = healthCheck?.maxPenaltySeconds ?? 86400;
 
@@ -7579,6 +7675,17 @@ function AdminModelPools({
     ) {
       onError(
         `自动检测间隔必须是 ${minIntervalSeconds}-${maxIntervalSeconds} 秒之间的整数。`,
+      );
+      return;
+    }
+
+    if (
+      !Number.isInteger(nextSuccessGraceSeconds) ||
+      nextSuccessGraceSeconds < minSuccessGraceSeconds ||
+      nextSuccessGraceSeconds > maxSuccessGraceSeconds
+    ) {
+      onError(
+        `成功免检必须是 ${minSuccessGraceSeconds}-${maxSuccessGraceSeconds} 秒之间的整数。`,
       );
       return;
     }
@@ -7600,6 +7707,7 @@ function AdminModelPools({
         method: "PATCH",
         body: JSON.stringify({
           intervalSeconds,
+          successGraceSeconds: nextSuccessGraceSeconds,
           penaltySeconds: nextPenaltySeconds,
         }),
       });
@@ -7632,6 +7740,19 @@ function AdminModelPools({
                 onChange={(event) =>
                   setHealthIntervalSeconds(event.target.value)
                 }
+              />
+              <span>秒</span>
+            </label>
+            <label className="inline-field">
+              <span>成功免检</span>
+              <input
+                className="input interval-input"
+                max={healthCheck?.maxSuccessGraceSeconds ?? 86400}
+                min={healthCheck?.minSuccessGraceSeconds ?? 0}
+                step={1}
+                type="number"
+                value={successGraceSeconds}
+                onChange={(event) => setSuccessGraceSeconds(event.target.value)}
               />
               <span>秒</span>
             </label>
@@ -10121,6 +10242,17 @@ function ModelPoolChannelCard({
         ? "DISABLED"
         : "MISSING";
   const errorText = formatChannelError(channel.lastError);
+  const healthCountdown = nextCheckCountdown(
+    channel,
+    healthCheck,
+    nowMs,
+    pool.autoHealthCheckEnabled,
+  );
+  const successGraceCountdown = successGraceCountdownText(
+    channel,
+    healthCheck,
+    nowMs,
+  );
   const statusItems = [
     {
       label: "通道",
@@ -10173,27 +10305,30 @@ function ModelPoolChannelCard({
           ))}
         </div>
       </div>
-      <div className="pool-channel-facts">
-        <ChannelFact label="Key/惩罚">
-          {channel.activeKeyCount} /{" "}
-          {penaltyCountdown(channel, healthCheck, nowMs)}
-        </ChannelFact>
-        <ChannelFact label="失败/恢复">
-          {channel.consecutiveFailures} / {channel.recoverySuccesses}/2
-        </ChannelFact>
-        <ChannelFact label="首字/总耗">
-          {seconds(channel.lastFirstTokenLatencyMs)} /{" "}
-          {seconds(channel.lastLatencyMs)}
-        </ChannelFact>
-        <ChannelFact label="优先/下次">
-          {channel.priority} /{" "}
-          {nextCheckCountdown(
-            channel,
-            healthCheck,
-            nowMs,
-            pool.autoHealthCheckEnabled,
-          )}
-        </ChannelFact>
+      <div className="pool-channel-facts" aria-label="渠道详情">
+        <div className="channel-fact-group timing">
+          <ChannelFact label="免检">{successGraceCountdown}</ChannelFact>
+          <ChannelFact label="下次检测">{healthCountdown}</ChannelFact>
+          <ChannelFact label="惩罚">
+            {penaltyCountdown(channel, healthCheck, nowMs)}
+          </ChannelFact>
+        </div>
+        <div className="channel-fact-group routing">
+          <ChannelFact label="ACTIVE Key">{channel.activeKeyCount}</ChannelFact>
+          <ChannelFact label="优先级">{channel.priority}</ChannelFact>
+          <ChannelFact label="连续失败">
+            {channel.consecutiveFailures}
+          </ChannelFact>
+          <ChannelFact label="恢复">{channel.recoverySuccesses}/2</ChannelFact>
+        </div>
+        <div className="channel-fact-group latency">
+          <ChannelFact label="平均首字">
+            {seconds(channel.lastFirstTokenLatencyMs)}
+          </ChannelFact>
+          <ChannelFact label="平均总耗">
+            {seconds(channel.lastLatencyMs)}
+          </ChannelFact>
+        </div>
       </div>
       {errorText ? (
         <div className="pool-channel-error">
@@ -10395,10 +10530,6 @@ function formatRequestTraceCode(request: Pick<ApiRequest, "id" | "traceCode">) {
   );
 }
 
-function formatTraceLike(traceCode: string | null | undefined, id: string) {
-  return traceCode?.trim() || `REQ-${id.slice(-8).toUpperCase()}`;
-}
-
 function formatRequestUpstreamKey(
   upstreamKey: ApiRequest["upstreamProviderKey"],
 ) {
@@ -10407,25 +10538,6 @@ function formatRequestUpstreamKey(
   }
 
   return `${displayUpstreamProviderKeyName(upstreamKey.name)} (${upstreamKey.keyPrefix})`;
-}
-
-function formatFingerprintRoute(value?: string | null) {
-  if (!value) {
-    return "-";
-  }
-
-  const channel = value.match(/channel:([^:]+)/)?.[1];
-  const key = value.match(/key:([^:]+)/)?.[1];
-  if (channel && key) {
-    return `${shortId(channel)} / ${shortId(key)}`;
-  }
-  if (channel) {
-    return shortId(channel);
-  }
-  if (key) {
-    return shortId(key);
-  }
-  return shortId(value);
 }
 
 function shortId(value: string) {
@@ -10529,6 +10641,15 @@ function nextCheckCountdown(
     return "未参与";
   }
 
+  const successGraceRemaining = successGraceRemainingSeconds(
+    channel,
+    healthCheck,
+    nowMs,
+  );
+  if (successGraceRemaining !== null && successGraceRemaining > 0) {
+    return `免检中 ${successGraceRemaining}s`;
+  }
+
   const state = nextCheckState(
     channel,
     healthCheck,
@@ -10541,6 +10662,47 @@ function nextCheckCountdown(
   }
 
   return state.isWaitingForResult ? "检测中" : `${state.secondsUntilNext}s`;
+}
+
+function successGraceCountdownText(
+  channel: ModelPoolChannel,
+  healthCheck: ModelPoolHealthCheck | null,
+  nowMs: number,
+) {
+  const remaining = successGraceRemainingSeconds(channel, healthCheck, nowMs);
+  if (remaining === null) {
+    return "-";
+  }
+
+  return remaining > 0 ? `${remaining}s` : "结束";
+}
+
+function successGraceRemainingSeconds(
+  channel: ModelPoolChannel,
+  healthCheck: ModelPoolHealthCheck | null,
+  nowMs: number,
+) {
+  const fromServer = channel.successGraceRemainingSeconds;
+  if (fromServer !== null && fromServer !== undefined) {
+    const elapsedSeconds = healthCheck
+      ? Math.max(0, Math.floor((nowMs - healthCheck.receivedAtMs) / 1000))
+      : 0;
+    return Math.max(0, fromServer - elapsedSeconds);
+  }
+
+  if (!channel.lastSuccessfulCallAt || !healthCheck) {
+    return null;
+  }
+
+  return Math.max(
+    0,
+    Math.ceil(
+      (new Date(channel.lastSuccessfulCallAt).getTime() +
+        healthCheck.successGraceSeconds * 1000 -
+        nowMs) /
+        1000,
+    ),
+  );
 }
 
 function penaltyRemainingSeconds(

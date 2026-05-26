@@ -1,0 +1,356 @@
+import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@gateway/db";
+import { onPublicStatusChanged } from "../services/public-status-events.js";
+
+type CharityRequestRow = {
+  day: Date;
+  requests: bigint;
+  success_requests: bigint;
+  failed_requests: bigint;
+  input_tokens: bigint | null;
+  cached_input_tokens: bigint | null;
+  output_tokens: bigint | null;
+  total_tokens: bigint | null;
+  charged_amount_usd: Prisma.Decimal | null;
+  upstream_cost_usd: Prisma.Decimal | null;
+};
+
+type CharityRankRow = {
+  user_id: string;
+  display_name: string | null;
+  requests: bigint;
+  success_requests: bigint;
+  input_tokens: bigint | null;
+  cached_input_tokens: bigint | null;
+  output_tokens: bigint | null;
+  total_tokens: bigint | null;
+  charged_amount_usd: Prisma.Decimal | null;
+};
+
+type CharityModelRow = {
+  model: string;
+  requests: bigint;
+  success_requests: bigint;
+  total_tokens: bigint | null;
+  charged_amount_usd: Prisma.Decimal | null;
+};
+
+type PublicReadyChannelRow = {
+  count: bigint;
+};
+
+export async function publicRoutes(app: FastifyInstance) {
+  app.get("/public/charity-status", async () => getPublicModelPoolStatus());
+
+  app.get("/public/charity-status/events", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let previousPayload = "";
+    let closed = false;
+    let keepaliveTimer: NodeJS.Timeout | undefined;
+    let fallbackTimer: NodeJS.Timeout | undefined;
+    const sendStatus = async () => {
+      if (closed || reply.raw.destroyed) {
+        return;
+      }
+
+      try {
+        const status = await getPublicModelPoolStatus();
+        const payload = JSON.stringify(status);
+        if (payload !== previousPayload) {
+          previousPayload = payload;
+          reply.raw.write(`event: status\ndata: ${payload}\n\n`);
+        } else {
+          reply.raw.write(": keepalive\n\n");
+        }
+      } catch (error) {
+        reply.raw.write(
+          `event: error\ndata: ${JSON.stringify({
+            available: false,
+            message: error instanceof Error ? error.message : "status failed",
+          })}\n\n`,
+        );
+      }
+    };
+
+    const offStatusChanged = onPublicStatusChanged(() => {
+      void sendStatus();
+    });
+
+    request.raw.on("close", () => {
+      closed = true;
+      offStatusChanged();
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+      }
+      if (fallbackTimer) {
+        clearInterval(fallbackTimer);
+      }
+    });
+
+    await sendStatus();
+    keepaliveTimer = setInterval(() => {
+      if (!closed && !reply.raw.destroyed) {
+        reply.raw.write(": keepalive\n\n");
+      }
+    }, 15000);
+    fallbackTimer = setInterval(sendStatus, 5000);
+  });
+
+  app.get("/public/charity-dashboard", async () => {
+    const now = new Date();
+    const since30 = new Date(now);
+    since30.setDate(since30.getDate() - 29);
+    since30.setHours(0, 0, 0, 0);
+
+    const [charityUserRows, totals, trendRows, rankingRows, modelRows] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          charityEnabled: true,
+          status: "ACTIVE",
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          charityKey: true,
+        },
+      }),
+      prisma.apiRequest.aggregate({
+        where: charityRequestWhere(),
+        _count: true,
+        _sum: {
+          inputTokens: true,
+          cachedInputTokens: true,
+          outputTokens: true,
+          totalTokens: true,
+          chargedAmountUsd: true,
+          upstreamCostUsd: true,
+        },
+      }),
+      prisma.$queryRaw<CharityRequestRow[]>(Prisma.sql`
+        SELECT
+          date_trunc('day', r."createdAt") AS day,
+          count(*) AS requests,
+          count(*) FILTER (WHERE r.status = 'SUCCESS') AS success_requests,
+          count(*) FILTER (WHERE r.status = 'FAILED') AS failed_requests,
+          sum(r."inputTokens") AS input_tokens,
+          sum(r."cachedInputTokens") AS cached_input_tokens,
+          sum(r."outputTokens") AS output_tokens,
+          sum(r."totalTokens") AS total_tokens,
+          sum(r."chargedAmountUsd") AS charged_amount_usd,
+          sum(r."upstreamCostUsd") AS upstream_cost_usd
+        FROM "ApiRequest" r
+        INNER JOIN "User" u ON u.id = r."userId"
+        WHERE u."charityEnabled" = true
+          AND r."createdAt" >= ${since30}
+        GROUP BY day
+        ORDER BY day ASC
+      `),
+      prisma.$queryRaw<CharityRankRow[]>(Prisma.sql`
+        SELECT
+          u.id AS user_id,
+          u."charityDisplayName" AS display_name,
+          count(*) AS requests,
+          count(*) FILTER (WHERE r.status = 'SUCCESS') AS success_requests,
+          sum(r."inputTokens") AS input_tokens,
+          sum(r."cachedInputTokens") AS cached_input_tokens,
+          sum(r."outputTokens") AS output_tokens,
+          sum(r."totalTokens") AS total_tokens,
+          sum(r."chargedAmountUsd") AS charged_amount_usd
+        FROM "ApiRequest" r
+        INNER JOIN "User" u ON u.id = r."userId"
+        WHERE u."charityEnabled" = true
+        GROUP BY u.id, u."charityDisplayName"
+        ORDER BY total_tokens DESC NULLS LAST, requests DESC
+        LIMIT 10
+      `),
+      prisma.$queryRaw<CharityModelRow[]>(Prisma.sql`
+        SELECT
+          r.model AS model,
+          count(*) AS requests,
+          count(*) FILTER (WHERE r.status = 'SUCCESS') AS success_requests,
+          sum(r."totalTokens") AS total_tokens,
+          sum(r."chargedAmountUsd") AS charged_amount_usd
+        FROM "ApiRequest" r
+        INNER JOIN "User" u ON u.id = r."userId"
+        WHERE u."charityEnabled" = true
+        GROUP BY r.model
+        ORDER BY charged_amount_usd DESC NULLS LAST, total_tokens DESC NULLS LAST, requests DESC
+        LIMIT 12
+      `),
+    ]);
+
+    const requestCount = totals._count;
+    const charityUsers = charityUserRows.length;
+    const charityKey =
+      charityUserRows.find((user) => user.charityKey?.trim())?.charityKey?.trim() ??
+      null;
+    const successCount = await prisma.apiRequest.count({
+      where: {
+        ...charityRequestWhere(),
+        status: "SUCCESS",
+      },
+    });
+    const failedCount = await prisma.apiRequest.count({
+      where: {
+        ...charityRequestWhere(),
+        status: "FAILED",
+      },
+    });
+
+    return {
+      generatedAt: now.toISOString(),
+      gateway: "https://gateway.l-kx.cn",
+      charityKey,
+      totals: {
+        charityUsers,
+        requests: requestCount,
+        successRequests: successCount,
+        failedRequests: failedCount,
+        successRate: requestCount > 0 ? successCount / requestCount : 0,
+        inputTokens: numberFromUnknown(totals._sum.inputTokens),
+        cachedInputTokens: numberFromUnknown(totals._sum.cachedInputTokens),
+        outputTokens: numberFromUnknown(totals._sum.outputTokens),
+        totalTokens: numberFromUnknown(totals._sum.totalTokens),
+        chargedAmountUsd: moneyFromUnknown(totals._sum.chargedAmountUsd),
+        upstreamCostUsd: moneyFromUnknown(totals._sum.upstreamCostUsd),
+      },
+      trend30d: buildTrend(trendRows, since30, now),
+      ranking: rankingRows.map((row, index) => ({
+        name: row.display_name?.trim() || `公益项目 #${index + 1}`,
+        requests: Number(row.requests),
+        successRequests: Number(row.success_requests),
+        successRate: Number(row.requests) > 0 ? Number(row.success_requests) / Number(row.requests) : 0,
+        inputTokens: numberFromUnknown(row.input_tokens),
+        cachedInputTokens: numberFromUnknown(row.cached_input_tokens),
+        outputTokens: numberFromUnknown(row.output_tokens),
+        totalTokens: numberFromUnknown(row.total_tokens),
+        chargedAmountUsd: moneyFromUnknown(row.charged_amount_usd),
+      })),
+      models: modelRows.map((row) => ({
+        model: row.model,
+        requests: Number(row.requests),
+        successRequests: Number(row.success_requests),
+        successRate: Number(row.requests) > 0 ? Number(row.success_requests) / Number(row.requests) : 0,
+        totalTokens: numberFromUnknown(row.total_tokens),
+        chargedAmountUsd: moneyFromUnknown(row.charged_amount_usd),
+      })),
+    };
+  });
+}
+
+async function getPublicModelPoolStatus() {
+  const now = new Date();
+  const [readyChannelRows, totalChannels] = await Promise.all([
+    prisma.$queryRaw<PublicReadyChannelRow[]>(Prisma.sql`
+      SELECT count(*) AS count
+      FROM "ModelPoolChannel" c
+      INNER JOIN "ModelPool" p ON p.id = c."modelPoolId"
+      INNER JOIN "ModelPrice" price
+        ON price.model = p.model
+       AND price."upstreamProvider" = c."upstreamProvider"
+      INNER JOIN "UpstreamProvider" provider
+        ON provider.name = c."upstreamProvider"
+      WHERE p.status = 'ACTIVE'
+        AND c.status IN ('ACTIVE', 'FORCED_ACTIVE')
+        AND (c."penalizedUntil" IS NULL OR c."penalizedUntil" <= ${now})
+        AND price.enabled = true
+        AND provider.status = 'ACTIVE'
+        AND EXISTS (
+          SELECT 1
+          FROM "UpstreamProviderKey" key
+          WHERE key."upstreamProviderId" = provider.id
+            AND key.status = 'ACTIVE'
+        )
+    `),
+    prisma.modelPoolChannel.count({
+      where: {
+        modelPool: {
+          status: "ACTIVE",
+        },
+      },
+    }),
+  ]);
+  const readyChannels = Number(readyChannelRows[0]?.count ?? 0);
+
+  return {
+    available: readyChannels > 0,
+    readyChannels,
+    totalChannels,
+    checkedAt: now.toISOString(),
+  };
+}
+
+function charityRequestWhere(): Prisma.ApiRequestWhereInput {
+  return {
+    user: {
+      charityEnabled: true,
+    },
+  };
+}
+
+function buildTrend(rows: CharityRequestRow[], since: Date, now: Date) {
+  const byDay = new Map(rows.map((row) => [formatDay(row.day), row]));
+  const days: Array<{
+    date: string;
+    requests: number;
+    successRequests: number;
+    failedRequests: number;
+    totalTokens: number;
+    chargedAmountUsd: string;
+    upstreamCostUsd: string;
+  }> = [];
+
+  for (const cursor = new Date(since); cursor <= now; cursor.setDate(cursor.getDate() + 1)) {
+    const key = formatDay(cursor);
+    const row = byDay.get(key);
+    days.push({
+      date: key,
+      requests: row ? Number(row.requests) : 0,
+      successRequests: row ? Number(row.success_requests) : 0,
+      failedRequests: row ? Number(row.failed_requests) : 0,
+      totalTokens: row ? numberFromUnknown(row.total_tokens) : 0,
+      chargedAmountUsd: row ? moneyFromUnknown(row.charged_amount_usd) : "0.00000000",
+      upstreamCostUsd: row ? moneyFromUnknown(row.upstream_cost_usd) : "0.00000000",
+    });
+  }
+
+  return days;
+}
+
+function formatDay(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function numberFromUnknown(value: unknown) {
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && "toString" in value) {
+    return Number(value.toString());
+  }
+
+  return 0;
+}
+
+function moneyFromUnknown(value: unknown) {
+  if (value && typeof value === "object" && "toString" in value) {
+    return value.toString();
+  }
+
+  if (typeof value === "number" || typeof value === "bigint") {
+    return value.toString();
+  }
+
+  return "0.00000000";
+}

@@ -42,15 +42,20 @@ import {
   getModelPoolChannelHealthTiming,
   getModelPoolHealthCheckIntervalSeconds,
   getModelPoolPenaltySeconds,
+  getModelPoolSuccessGraceSeconds,
   maxModelPoolHealthCheckIntervalSeconds,
   maxModelPoolPenaltySeconds,
+  maxModelPoolSuccessGraceSeconds,
   minModelPoolHealthCheckIntervalSeconds,
   minModelPoolPenaltySeconds,
+  minModelPoolSuccessGraceSeconds,
   modelPoolHealthCheckEndpoints,
   normalizeModelPoolHealthCheckEndpoint,
   setModelPoolHealthCheckIntervalSeconds,
   setModelPoolPenaltySeconds,
+  setModelPoolSuccessGraceSeconds,
 } from "../services/model-pool-health.js";
+import { emitPublicStatusChanged } from "../services/public-status-events.js";
 import {
   ensureDefaultProviderKey,
   maskUpstreamKeySecret,
@@ -917,6 +922,7 @@ export async function adminRoutes(app: FastifyInstance) {
         concurrencyLimit: true,
         charityEnabled: true,
         charityDisplayName: true,
+        charityKey: true,
         tokenVersion: true,
         createdAt: true,
         wallet: true,
@@ -968,6 +974,7 @@ export async function adminRoutes(app: FastifyInstance) {
         concurrencyLimit: userRuntimeLimitSchema.optional(),
         charityEnabled: z.boolean().optional(),
         charityDisplayName: z.string().max(80).nullable().optional(),
+        charityKey: z.string().max(300).nullable().optional(),
       })
       .parse(request.body);
 
@@ -990,6 +997,9 @@ export async function adminRoutes(app: FastifyInstance) {
       ...(body.charityDisplayName !== undefined
         ? { charityDisplayName: normalizeNullableText(body.charityDisplayName) }
         : {}),
+      ...(body.charityKey !== undefined
+        ? { charityKey: normalizeNullableText(body.charityKey) }
+        : {}),
     };
 
     const user = await prisma.user.update({
@@ -1005,6 +1015,7 @@ export async function adminRoutes(app: FastifyInstance) {
         concurrencyLimit: true,
         charityEnabled: true,
         charityDisplayName: true,
+        charityKey: true,
         tokenVersion: true,
         createdAt: true,
         wallet: true,
@@ -1030,6 +1041,7 @@ export async function adminRoutes(app: FastifyInstance) {
         concurrencyLimit: userRuntimeLimitSchema.default(0),
         charityEnabled: z.boolean().default(false),
         charityDisplayName: z.string().max(80).nullable().optional(),
+        charityKey: z.string().max(300).nullable().optional(),
         initialBalance: z.string().or(z.number()).optional(),
       })
       .parse(request.body);
@@ -1045,6 +1057,7 @@ export async function adminRoutes(app: FastifyInstance) {
             concurrencyLimit: body.concurrencyLimit,
             charityEnabled: body.charityEnabled,
             charityDisplayName: normalizeNullableText(body.charityDisplayName),
+            charityKey: normalizeNullableText(body.charityKey),
             passwordHash: await hashPassword(
               randomBytes(32).toString("base64url"),
             ),
@@ -1561,7 +1574,6 @@ export async function adminRoutes(app: FastifyInstance) {
           firstTokenLatencyMs: true,
           errorMessage: true,
           responseUsage: true,
-          requestBody: true,
           createdAt: true,
           user: {
             select: {
@@ -1575,33 +1587,12 @@ export async function adminRoutes(app: FastifyInstance) {
     ]);
     const hasMore = rows.length > query.take;
     const visibleRows = hasMore ? rows.slice(0, query.take) : rows;
-    const fallbackRowsByCompactCacheId = new Map<string, typeof visibleRows>();
-    for (const row of visibleRows) {
-      const compactCacheId = getFallbackCompactCacheId(row.responseUsage);
-      if (!compactCacheId) {
-        continue;
-      }
-      const entries = fallbackRowsByCompactCacheId.get(compactCacheId) ?? [];
-      entries.push(row);
-      fallbackRowsByCompactCacheId.set(compactCacheId, entries);
-    }
-
-    const requests = visibleRows.map(
-      ({ requestBody, reasoningEffort, ...row }) => {
-        const compactCacheId = getNormalCompactCacheId(row.responseUsage);
-        const compactFallbacks = compactCacheId
-          ? (fallbackRowsByCompactCacheId.get(compactCacheId) ?? []).map(
-              toCompactFallbackSummary,
-            )
-          : [];
-        return {
-          ...row,
-          reasoningEffort:
-            reasoningEffort ?? getRequestReasoningEffortFromBody(requestBody),
-          ...(compactFallbacks.length > 0 ? { compactFallbacks } : {}),
-        };
-      },
-    );
+    const requests = visibleRows.map(({ reasoningEffort, ...row }) => {
+      return {
+        ...row,
+        reasoningEffort,
+      };
+    });
 
     return {
       requests,
@@ -1879,10 +1870,12 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/admin/model-pools", async () => {
     const serverNow = new Date();
-    const [healthCheckIntervalSeconds, penaltySeconds] = await Promise.all([
-      getModelPoolHealthCheckIntervalSeconds(),
-      getModelPoolPenaltySeconds(),
-    ]);
+    const [healthCheckIntervalSeconds, penaltySeconds, successGraceSeconds] =
+      await Promise.all([
+        getModelPoolHealthCheckIntervalSeconds(),
+        getModelPoolPenaltySeconds(),
+        getModelPoolSuccessGraceSeconds(),
+      ]);
     const [pools, prices, providers] = await Promise.all([
       prisma.modelPool.findMany({
         orderBy: { model: "asc" },
@@ -1934,6 +1927,7 @@ export async function adminRoutes(app: FastifyInstance) {
             const baseHealthTiming = getModelPoolChannelHealthTiming(
               channel,
               healthCheckIntervalSeconds,
+              successGraceSeconds,
               serverNow,
             );
             const healthTiming =
@@ -1998,6 +1992,9 @@ export async function adminRoutes(app: FastifyInstance) {
         penaltySeconds,
         minPenaltySeconds: minModelPoolPenaltySeconds,
         maxPenaltySeconds: maxModelPoolPenaltySeconds,
+        successGraceSeconds,
+        minSuccessGraceSeconds: minModelPoolSuccessGraceSeconds,
+        maxSuccessGraceSeconds: maxModelPoolSuccessGraceSeconds,
         serverNow: serverNow.toISOString(),
       },
     };
@@ -2018,16 +2015,26 @@ export async function adminRoutes(app: FastifyInstance) {
           .min(minModelPoolPenaltySeconds)
           .max(maxModelPoolPenaltySeconds)
           .optional(),
+        successGraceSeconds: z
+          .number()
+          .int()
+          .min(minModelPoolSuccessGraceSeconds)
+          .max(maxModelPoolSuccessGraceSeconds)
+          .optional(),
       })
       .parse(request.body);
-    const [intervalSeconds, penaltySeconds] = await Promise.all([
-      body.intervalSeconds === undefined
-        ? getModelPoolHealthCheckIntervalSeconds()
-        : setModelPoolHealthCheckIntervalSeconds(body.intervalSeconds),
-      body.penaltySeconds === undefined
-        ? getModelPoolPenaltySeconds()
-        : setModelPoolPenaltySeconds(body.penaltySeconds),
-    ]);
+    const [intervalSeconds, penaltySeconds, successGraceSeconds] =
+      await Promise.all([
+        body.intervalSeconds === undefined
+          ? getModelPoolHealthCheckIntervalSeconds()
+          : setModelPoolHealthCheckIntervalSeconds(body.intervalSeconds),
+        body.penaltySeconds === undefined
+          ? getModelPoolPenaltySeconds()
+          : setModelPoolPenaltySeconds(body.penaltySeconds),
+        body.successGraceSeconds === undefined
+          ? getModelPoolSuccessGraceSeconds()
+          : setModelPoolSuccessGraceSeconds(body.successGraceSeconds),
+      ]);
 
     return {
       healthCheck: {
@@ -2037,6 +2044,9 @@ export async function adminRoutes(app: FastifyInstance) {
         penaltySeconds,
         minPenaltySeconds: minModelPoolPenaltySeconds,
         maxPenaltySeconds: maxModelPoolPenaltySeconds,
+        successGraceSeconds,
+        minSuccessGraceSeconds: minModelPoolSuccessGraceSeconds,
+        maxSuccessGraceSeconds: maxModelPoolSuccessGraceSeconds,
         serverNow: new Date().toISOString(),
       },
     };
@@ -2079,6 +2089,7 @@ export async function adminRoutes(app: FastifyInstance) {
       create: body,
     });
 
+    emitPublicStatusChanged();
     return { modelPool: pool };
   });
 
@@ -2096,6 +2107,7 @@ export async function adminRoutes(app: FastifyInstance) {
       data: body,
     });
 
+    emitPublicStatusChanged();
     return { modelPool };
   });
 
@@ -2114,6 +2126,7 @@ export async function adminRoutes(app: FastifyInstance) {
       where: { id: params.id },
     });
 
+    emitPublicStatusChanged();
     return { ok: true, modelPool };
   });
 
@@ -2183,6 +2196,7 @@ export async function adminRoutes(app: FastifyInstance) {
       },
     });
 
+    emitPublicStatusChanged();
     return { channel };
   });
 
@@ -2209,6 +2223,7 @@ export async function adminRoutes(app: FastifyInstance) {
       },
     });
 
+    emitPublicStatusChanged();
     return { channel };
   });
 
@@ -2229,6 +2244,7 @@ export async function adminRoutes(app: FastifyInstance) {
       where: { id: params.id },
     });
 
+    emitPublicStatusChanged();
     return { ok: true };
   });
 
@@ -2242,6 +2258,7 @@ export async function adminRoutes(app: FastifyInstance) {
         .send({ message: "Model pool channel not found" });
     }
 
+    emitPublicStatusChanged();
     return { result };
   });
 
@@ -3086,79 +3103,6 @@ function isProtectedCompactRequest(endpoint: string, responseUsage: unknown) {
     record.gatewayCompactKind === "normal" ||
     record.gatewayCompactKind === "fallback"
   );
-}
-
-function getNormalCompactCacheId(responseUsage: unknown) {
-  const record = asRecord(responseUsage);
-  if (!record || record.gatewayCompactKind !== "normal") {
-    return null;
-  }
-
-  return typeof record.compactCacheId === "string"
-    ? record.compactCacheId
-    : null;
-}
-
-function getFallbackCompactCacheId(responseUsage: unknown) {
-  const record = asRecord(responseUsage);
-  if (!record) {
-    return null;
-  }
-
-  const fallback = asRecord(record.compactFallback);
-  const compactCacheId =
-    typeof fallback?.compactCacheId === "string"
-      ? fallback.compactCacheId
-      : typeof record.compactCacheId === "string"
-        ? record.compactCacheId
-        : null;
-  if (!compactCacheId) {
-    return null;
-  }
-
-  return record.gatewayCompactFallback === true ||
-    record.gatewayCompactKind === "fallback"
-    ? compactCacheId
-    : null;
-}
-
-function toCompactFallbackSummary(row: {
-  id: string;
-  traceCode: string | null;
-  createdAt: Date;
-  status: string;
-  upstreamProvider: string | null;
-  responseUsage: unknown;
-  upstreamProviderKey: {
-    id: string;
-    name: string;
-    keyPrefix: string;
-  } | null;
-}) {
-  const usage = asRecord(row.responseUsage);
-  const fallback = asRecord(usage?.compactFallback) ?? usage;
-  return {
-    id: row.id,
-    traceCode: row.traceCode,
-    createdAt: row.createdAt,
-    status: row.status,
-    upstreamProvider: row.upstreamProvider,
-    upstreamProviderKey: row.upstreamProviderKey,
-    sourceFingerprint:
-      typeof fallback?.sourceFingerprint === "string"
-        ? fallback.sourceFingerprint
-        : null,
-    targetFingerprint:
-      typeof fallback?.targetFingerprint === "string"
-        ? fallback.targetFingerprint
-        : null,
-    replacements:
-      typeof fallback?.replacements === "number" ? fallback.replacements : null,
-    fallbackSucceeded:
-      typeof fallback?.fallbackSucceeded === "boolean"
-        ? fallback.fallbackSucceeded
-        : null,
-  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

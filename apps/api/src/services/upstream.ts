@@ -11,7 +11,10 @@ import {
   getSpeedScoreMs,
   reserveBalancedModelPoolChannel,
 } from "./model-pool-load-balancer.js";
-import { reserveProviderKey, type UpstreamKeyReservation } from "./upstream-provider-keys.js";
+import {
+  reserveProviderKey,
+  type UpstreamKeyReservation,
+} from "./upstream-provider-keys.js";
 
 type Provider = Awaited<ReturnType<typeof getDefaultProvider>>;
 type ReleaseModelPoolReservation = () => Promise<void>;
@@ -54,7 +57,11 @@ export async function getDefaultProvider() {
   };
 }
 
-export async function getProviderForModel(callerIdentity: string, model: string, options: ModelRouteOptions = {}): Promise<{
+export async function getProviderForModel(
+  callerIdentity: string,
+  model: string,
+  options: ModelRouteOptions = {},
+): Promise<{
   provider: RoutedProvider;
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId?: string;
@@ -86,9 +93,13 @@ export async function getProviderForModel(callerIdentity: string, model: string,
   }
 
   const excludedChannelIds = new Set(options.excludeChannelIds ?? []);
-  const stickyRouteState = options.bypassSticky ? null : await getStickyModelPoolRoute(callerIdentity, model);
+  const stickyRouteState = options.bypassSticky
+    ? null
+    : await getStickyModelPoolRoute(callerIdentity, model);
   if (stickyRouteState) {
-    const stickyChannel = modelPool.channels.find((channel) => channel.id === stickyRouteState.channelId);
+    const stickyChannel = modelPool.channels.find(
+      (channel) => channel.id === stickyRouteState.channelId,
+    );
     if (stickyChannel && !excludedChannelIds.has(stickyChannel.id)) {
       const stickyRoute = await getRouteForChannelWithKey(
         model,
@@ -130,7 +141,9 @@ export async function getProviderForModel(callerIdentity: string, model: string,
   const skippedChannelIds = new Set<string>();
 
   while (skippedChannelIds.size < routeCandidates.length) {
-    const selectableRoutes = routeCandidates.filter((route) => !skippedChannelIds.has(route.channelId));
+    const selectableRoutes = routeCandidates.filter(
+      (route) => !skippedChannelIds.has(route.channelId),
+    );
     const balancedRoute = await getBalancedRoute(selectableRoutes);
     if (!balancedRoute) {
       return null;
@@ -153,7 +166,11 @@ export async function getProviderForModel(callerIdentity: string, model: string,
 
     await balancedRoute.release?.();
     skippedChannelIds.add(balancedRoute.channelId);
-    await clearStickyModelPoolChannel(callerIdentity, model, balancedRoute.channelId);
+    await clearStickyModelPoolChannel(
+      callerIdentity,
+      model,
+      balancedRoute.channelId,
+    );
   }
 
   return null;
@@ -188,8 +205,9 @@ async function getRouteCandidates(
     }),
   );
 
-  const availableRoutes = routes
-    .filter((route): route is NonNullable<(typeof routes)[number]> => Boolean(route));
+  const availableRoutes = routes.filter(
+    (route): route is NonNullable<(typeof routes)[number]> => Boolean(route),
+  );
   const stickyOccupancies = await getStickyChannelOccupancies(
     availableRoutes.map((route) => route.channelId),
   );
@@ -205,7 +223,9 @@ async function getRouteCandidates(
 async function getBalancedRoute(
   routes: Array<{
     provider: Provider;
-    price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+    price: NonNullable<
+      Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>
+    >;
     channelId: string;
     speedScoreMs: number;
     stickyOccupancy: number;
@@ -226,7 +246,9 @@ async function getBalancedRoute(
   );
 
   if (reservation) {
-    const route = routes.find((candidate) => candidate.channelId === reservation.channelId);
+    const route = routes.find(
+      (candidate) => candidate.channelId === reservation.channelId,
+    );
     if (route) {
       return {
         provider: route.provider,
@@ -332,13 +354,18 @@ async function getRouteForChannelWithKey(
 async function prepareRoute(
   route: {
     provider: Provider;
-    price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+    price: NonNullable<
+      Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>
+    >;
     channelId: string;
     release?: ReleaseModelPoolReservation;
   },
   preferredKeyId?: string | null,
 ) {
-  const keyReservation = await reserveKeyForProvider(route.provider, preferredKeyId);
+  const keyReservation = await reserveKeyForProvider(
+    route.provider,
+    preferredKeyId,
+  );
 
   if (!keyReservation) {
     return null;
@@ -370,7 +397,10 @@ async function reserveKeyForProvider(
         upstreamProviderId: "env",
         name: "环境变量 Key",
         key: provider.apiKey,
-        keyPrefix: provider.apiKey.slice(0, Math.min(12, provider.apiKey.length)),
+        keyPrefix: provider.apiKey.slice(
+          0,
+          Math.min(12, provider.apiKey.length),
+        ),
         status: "ACTIVE",
         priority: provider.priority,
         lastUsedAt: null,

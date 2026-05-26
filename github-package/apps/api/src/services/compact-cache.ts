@@ -38,6 +38,14 @@ export function createCompactRouteFingerprint(
     : keyFingerprint;
 }
 
+export function createCompactChannelFingerprint(
+  input: CompactRouteFingerprintInput,
+) {
+  return input.channelId
+    ? `channel:${input.channelId}`
+    : `provider:${input.providerId}:${input.providerName}`;
+}
+
 export function hashEncryptedContent(encryptedContent: string) {
   return sha256(encryptedContent);
 }

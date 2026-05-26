@@ -12,6 +12,7 @@ import { usageRoutes } from "./routes/usage.js";
 import { redeemCodeRoutes } from "./routes/redeem-codes.js";
 import { proxyRoutes } from "./routes/proxy.js";
 import { adminRoutes } from "./routes/admin.js";
+import { publicRoutes } from "./routes/public.js";
 import { startModelPoolHealthScheduler } from "./services/model-pool-health.js";
 import {
   cleanupStalePendingRequests,
@@ -60,6 +61,7 @@ const allowedOrigins = new Set([
   "http://154.37.220.248:4101",
   "https://apishare.l-kx.cn",
   "https://gateway.l-kx.cn",
+  "https://free.l-kx.cn",
 ]);
 
 await app.register(cors, {
@@ -125,6 +127,7 @@ await app.register(usageRoutes);
 await app.register(redeemCodeRoutes);
 await app.register(proxyRoutes);
 await app.register(adminRoutes);
+await app.register(publicRoutes);
 
 app.addHook("onClose", async () => {
   stopModelPoolHealthScheduler?.();

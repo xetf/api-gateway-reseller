@@ -43,6 +43,7 @@ export async function recordModelPoolUserCallResult(params: {
     if (!failed) {
       await redis.del(key);
       await updateChannelLiveMetrics(channelId, latencyMs, firstTokenLatencyMs, logger);
+      await markChannelSuccessfulCall(channelId, logger);
       return;
     }
 
@@ -68,6 +69,17 @@ export async function recordModelPoolUserCallResult(params: {
       { error, userId, apiKeyId, callerIdentity, model, channelId },
       "Failed to record model pool caller channel failure",
     );
+  }
+}
+
+async function markChannelSuccessfulCall(channelId: string, logger?: Logger) {
+  try {
+    await prisma.modelPoolChannel.update({
+      where: { id: channelId },
+      data: { lastSuccessfulCallAt: new Date() },
+    });
+  } catch (error) {
+    logger?.warn({ error, channelId }, "Failed to update model pool channel successful call time");
   }
 }
 

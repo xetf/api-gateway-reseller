@@ -7,6 +7,7 @@ const adminPassword = process.env.ADMIN_PASSWORD ?? "change-this-admin-password"
 const currency = process.env.DEFAULT_CURRENCY ?? "USD";
 const healthCheckIntervalSeconds = process.env.MODEL_POOL_HEALTH_INTERVAL_SECONDS ?? "30";
 const penaltySeconds = process.env.MODEL_POOL_PENALTY_SECONDS ?? "60";
+const successGraceSeconds = process.env.MODEL_POOL_SUCCESS_GRACE_SECONDS ?? "0";
 
 async function main() {
   const passwordHash = await bcrypt.hash(adminPassword, 12);
@@ -60,6 +61,17 @@ async function main() {
     create: {
       key: "model_pool_penalty_seconds",
       value: penaltySeconds,
+    },
+  });
+
+  await prisma.systemSetting.upsert({
+    where: { key: "model_pool_success_grace_seconds" },
+    update: {
+      value: successGraceSeconds,
+    },
+    create: {
+      key: "model_pool_success_grace_seconds",
+      value: successGraceSeconds,
     },
   });
 

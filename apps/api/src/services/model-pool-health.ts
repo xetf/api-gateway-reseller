@@ -24,6 +24,10 @@ export const defaultModelPoolHealthCheckIntervalSeconds = 30;
 export const minModelPoolHealthCheckIntervalSeconds = 5;
 export const maxModelPoolHealthCheckIntervalSeconds = 3600;
 export const modelPoolHealthCheckIntervalSettingKey = "model_pool_health_interval_seconds";
+export const defaultModelPoolSuccessGraceSeconds = 0;
+export const minModelPoolSuccessGraceSeconds = 0;
+export const maxModelPoolSuccessGraceSeconds = 86400;
+export const modelPoolSuccessGraceSettingKey = "model_pool_success_grace_seconds";
 export const defaultModelPoolPenaltySeconds = 60;
 export const minModelPoolPenaltySeconds = 1;
 export const maxModelPoolPenaltySeconds = 86400;
@@ -43,8 +47,11 @@ let cachedHealthCheckIntervalSeconds = defaultModelPoolHealthCheckIntervalSecond
 let cachedHealthCheckIntervalLoadedAtMs = 0;
 let cachedPenaltySeconds = defaultModelPoolPenaltySeconds;
 let cachedPenaltySecondsLoadedAtMs = 0;
+let cachedSuccessGraceSeconds = defaultModelPoolSuccessGraceSeconds;
+let cachedSuccessGraceSecondsLoadedAtMs = 0;
 const healthCheckIntervalCacheTtlMs = 5_000;
 const penaltySecondsCacheTtlMs = 5_000;
+const successGraceSecondsCacheTtlMs = 5_000;
 const recoverySuccessThreshold = 2;
 
 export async function getModelPoolHealthCheckIntervalSeconds() {
@@ -92,6 +99,54 @@ export function normalizeModelPoolHealthCheckIntervalSeconds(value: unknown) {
   return Math.min(
     maxModelPoolHealthCheckIntervalSeconds,
     Math.max(minModelPoolHealthCheckIntervalSeconds, Math.round(numeric)),
+  );
+}
+
+export async function getModelPoolSuccessGraceSeconds() {
+  const nowMs = Date.now();
+  if (nowMs - cachedSuccessGraceSecondsLoadedAtMs < successGraceSecondsCacheTtlMs) {
+    return cachedSuccessGraceSeconds;
+  }
+
+  const setting = await prisma.systemSetting.findUnique({
+    where: { key: modelPoolSuccessGraceSettingKey },
+  });
+  const successGraceSeconds = normalizeModelPoolSuccessGraceSeconds(setting?.value);
+
+  cachedSuccessGraceSeconds = successGraceSeconds;
+  cachedSuccessGraceSecondsLoadedAtMs = nowMs;
+
+  return successGraceSeconds;
+}
+
+export async function setModelPoolSuccessGraceSeconds(value: number) {
+  const successGraceSeconds = normalizeModelPoolSuccessGraceSeconds(value);
+
+  await prisma.systemSetting.upsert({
+    where: { key: modelPoolSuccessGraceSettingKey },
+    update: { value: String(successGraceSeconds) },
+    create: {
+      key: modelPoolSuccessGraceSettingKey,
+      value: String(successGraceSeconds),
+    },
+  });
+
+  cachedSuccessGraceSeconds = successGraceSeconds;
+  cachedSuccessGraceSecondsLoadedAtMs = Date.now();
+
+  return successGraceSeconds;
+}
+
+export function normalizeModelPoolSuccessGraceSeconds(value: unknown) {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return defaultModelPoolSuccessGraceSeconds;
+  }
+
+  return Math.min(
+    maxModelPoolSuccessGraceSeconds,
+    Math.max(minModelPoolSuccessGraceSeconds, Math.round(numeric)),
   );
 }
 
@@ -146,13 +201,18 @@ export function normalizeModelPoolPenaltySeconds(value: unknown) {
 export function getModelPoolChannelHealthTiming(
   channel: ModelPoolChannel,
   intervalSeconds: number,
+  successGraceSeconds: number,
   now = new Date(),
 ) {
   const inFlightCheck = inFlightChannelChecks.get(channel.id);
   const isChecking = Boolean(inFlightCheck);
   const checkIntervalSeconds = normalizeModelPoolHealthCheckIntervalSeconds(intervalSeconds);
   const checkIntervalMs = checkIntervalSeconds * 1000;
+  const successGraceMs = normalizeModelPoolSuccessGraceSeconds(successGraceSeconds) * 1000;
   const penalizedUntilMs = channel.penalizedUntil?.getTime() ?? null;
+  const successGraceUntilMs = channel.lastSuccessfulCallAt
+    ? channel.lastSuccessfulCallAt.getTime() + successGraceMs
+    : null;
 
   if (channel.status === "PENALIZED") {
     const penaltyRemainingSeconds = penalizedUntilMs === null
@@ -166,6 +226,7 @@ export function getModelPoolChannelHealthTiming(
       nextCheckAt: penaltyRemainingSeconds === 0 ? now.toISOString() : null,
       nextCheckRemainingSeconds: penaltyRemainingSeconds === 0 ? 0 : null,
       penaltyRemainingSeconds,
+      successGraceRemainingSeconds: null,
       healthCheckVersion: channel.lastCheckedAt?.toISOString() ?? null,
     };
   }
@@ -178,6 +239,7 @@ export function getModelPoolChannelHealthTiming(
       nextCheckAt: null,
       nextCheckRemainingSeconds: null,
       penaltyRemainingSeconds: null,
+      successGraceRemainingSeconds: null,
       healthCheckVersion: channel.lastCheckedAt?.toISOString() ?? null,
     };
   }
@@ -190,11 +252,27 @@ export function getModelPoolChannelHealthTiming(
       nextCheckAt: null,
       nextCheckRemainingSeconds: null,
       penaltyRemainingSeconds: null,
+      successGraceRemainingSeconds: successGraceRemainingSeconds(successGraceUntilMs, now),
       healthCheckVersion: channel.lastCheckedAt?.toISOString() ?? null,
     };
   }
 
   if (!channel.lastCheckedAt) {
+    if (successGraceUntilMs !== null) {
+      const nowMs = now.getTime();
+      const nextCheckAtMs = successGraceUntilMs + checkIntervalMs;
+      return {
+        isChecking: false,
+        checkingStartedAt: null,
+        checkIntervalSeconds,
+        nextCheckAt: new Date(nextCheckAtMs).toISOString(),
+        nextCheckRemainingSeconds: Math.max(0, Math.ceil((nextCheckAtMs - nowMs) / 1000)),
+        penaltyRemainingSeconds: null,
+        successGraceRemainingSeconds: successGraceRemainingSeconds(successGraceUntilMs, now),
+        healthCheckVersion: null,
+      };
+    }
+
     return {
       isChecking: false,
       checkingStartedAt: null,
@@ -202,12 +280,18 @@ export function getModelPoolChannelHealthTiming(
       nextCheckAt: now.toISOString(),
       nextCheckRemainingSeconds: 0,
       penaltyRemainingSeconds: null,
+      successGraceRemainingSeconds: successGraceRemainingSeconds(successGraceUntilMs, now),
       healthCheckVersion: null,
     };
   }
 
   const nowMs = now.getTime();
-  const nextCheckAtMs = channel.lastCheckedAt.getTime() + checkIntervalMs;
+  const resultCheckedAtMs = channel.lastCheckedAt.getTime();
+  const effectiveLastCheckedAtMs = Math.max(
+    resultCheckedAtMs,
+    successGraceUntilMs ?? resultCheckedAtMs,
+  );
+  const nextCheckAtMs = effectiveLastCheckedAtMs + checkIntervalMs;
 
   return {
     isChecking: false,
@@ -216,6 +300,7 @@ export function getModelPoolChannelHealthTiming(
     nextCheckAt: new Date(nextCheckAtMs).toISOString(),
     nextCheckRemainingSeconds: Math.max(0, Math.ceil((nextCheckAtMs - nowMs) / 1000)),
     penaltyRemainingSeconds: null,
+    successGraceRemainingSeconds: successGraceRemainingSeconds(successGraceUntilMs, now),
     healthCheckVersion: channel.lastCheckedAt.toISOString(),
   };
 }
@@ -388,8 +473,12 @@ async function scheduleDueModelPoolChannels(logger?: HealthLogger) {
 }
 
 async function findDueModelPoolChannels() {
-  const intervalSeconds = await getModelPoolHealthCheckIntervalSeconds();
+  const [intervalSeconds, successGraceSeconds] = await Promise.all([
+    getModelPoolHealthCheckIntervalSeconds(),
+    getModelPoolSuccessGraceSeconds(),
+  ]);
   const intervalMs = intervalSeconds * 1000;
+  const successGraceMs = successGraceSeconds * 1000;
   const now = new Date();
   const candidates = await prisma.modelPoolChannel.findMany({
     where: {
@@ -420,7 +509,9 @@ async function findDueModelPoolChannels() {
   const nowMs = Date.now();
 
   return candidates
-    .filter((channel) => isModelPoolChannelDueForHealthCheck(channel, nowMs, intervalMs))
+    .filter((channel) =>
+      isModelPoolChannelDueForHealthCheck(channel, nowMs, intervalMs, successGraceMs),
+    )
     .slice(0, 20);
 }
 
@@ -481,7 +572,12 @@ async function runChannelHealthCheck(
   }
 }
 
-function isModelPoolChannelDueForHealthCheck(channel: ModelPoolChannel, nowMs: number, intervalMs: number) {
+function isModelPoolChannelDueForHealthCheck(
+  channel: ModelPoolChannel,
+  nowMs: number,
+  intervalMs: number,
+  successGraceMs = 0,
+) {
   if (channel.status === "PENALIZED") {
     return Boolean(channel.penalizedUntil && channel.penalizedUntil.getTime() <= nowMs);
   }
@@ -490,12 +586,30 @@ function isModelPoolChannelDueForHealthCheck(channel: ModelPoolChannel, nowMs: n
     return false;
   }
 
+  const successGraceUntilMs = channel.lastSuccessfulCallAt
+    ? channel.lastSuccessfulCallAt.getTime() + successGraceMs
+    : null;
+
   if (!channel.lastCheckedAt) {
-    return true;
+    return successGraceUntilMs === null
+      ? true
+      : successGraceUntilMs + intervalMs <= nowMs;
   }
 
   const resultCheckedAtMs = channel.lastCheckedAt.getTime();
-  return resultCheckedAtMs + intervalMs <= nowMs;
+  const effectiveLastCheckedAtMs = Math.max(
+    resultCheckedAtMs,
+    successGraceUntilMs ?? resultCheckedAtMs,
+  );
+  return effectiveLastCheckedAtMs + intervalMs <= nowMs;
+}
+
+function successGraceRemainingSeconds(successGraceUntilMs: number | null, now: Date) {
+  if (successGraceUntilMs === null) {
+    return null;
+  }
+
+  return Math.max(0, Math.ceil((successGraceUntilMs - now.getTime()) / 1000));
 }
 
 function averageNullableNumbers(values: Array<number | null>) {

@@ -1,0 +1,2 @@
+ALTER TABLE "User"
+ADD COLUMN "charityKey" TEXT;

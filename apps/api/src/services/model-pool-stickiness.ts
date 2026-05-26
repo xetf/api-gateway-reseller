@@ -36,10 +36,6 @@ function slowKey(
   return `modelpool:sticky-slow:${callerIdentity}:${model}:${channelId}:${upstreamProviderKeyId ?? "provider"}`;
 }
 
-function rotationKey(callerIdentity: string, model: string) {
-  return `modelpool:rotate:last-channel:${callerIdentity}:${model}`;
-}
-
 export async function getStickyModelPoolRoute(
   callerIdentity: string,
   model: string,
@@ -187,34 +183,6 @@ export async function clearStickyModelPoolChannel(
     }
   } catch {
     // Best-effort cleanup only.
-  }
-}
-
-export async function getLastRotatedModelPoolChannel(
-  callerIdentity: string,
-  model: string,
-) {
-  try {
-    return (await redis.get(rotationKey(callerIdentity, model))) || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function setLastRotatedModelPoolChannel(
-  callerIdentity: string,
-  model: string,
-  channelId: string,
-) {
-  try {
-    await redis.set(
-      rotationKey(callerIdentity, model),
-      channelId,
-      "EX",
-      24 * 60 * 60,
-    );
-  } catch {
-    // Best-effort only.
   }
 }
 
