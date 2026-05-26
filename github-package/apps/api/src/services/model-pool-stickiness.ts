@@ -1,8 +1,8 @@
 import { redis } from "../lib/redis.js";
 
 export const modelPoolStickinessTtlSeconds = 600;
-const slowFirstTokenThresholdMs = 30_000;
-const slowTotalLatencyThresholdMs = 100_000;
+const slowFirstTokenThresholdMs = 15_000;
+const slowTotalLatencyThresholdMs = 50_000;
 const maxConsecutiveSlowCalls = 3;
 const stickyOccupancyTtlSeconds = modelPoolStickinessTtlSeconds + 30;
 
@@ -230,7 +230,7 @@ export function isStickyCallSlow(params: {
   }
 
   if (params.latencyMs !== undefined && params.latencyMs !== null) {
-    return params.latencyMs >= slowTotalLatencyThresholdMs;
+    return params.latencyMs > slowTotalLatencyThresholdMs;
   }
 
   return false;
