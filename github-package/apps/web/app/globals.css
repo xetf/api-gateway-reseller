@@ -148,14 +148,12 @@ a {
 .charity-vue-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
   gap: 24px;
 }
 
 .charity-vue-info-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
-  align-items: start;
   gap: 24px;
 }
 
@@ -163,6 +161,14 @@ a {
 .content-panel,
 .charity-vue-chart {
   padding: clamp(24px, 3.4vw, 34px);
+}
+
+.metric-card,
+.quick-start,
+.model-card,
+.rules-card {
+  display: grid;
+  align-content: center;
 }
 
 .section-head {
@@ -434,7 +440,7 @@ a {
 
 .service-panel-minimal {
   display: grid;
-  grid-template-rows: auto 1fr;
+  align-content: center;
 }
 
 .service-panel-minimal .status-row {
@@ -473,7 +479,6 @@ a {
 .model-rules-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr);
-  align-items: start;
   gap: 24px;
 }
 
