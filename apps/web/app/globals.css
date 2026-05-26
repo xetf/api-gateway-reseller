@@ -148,12 +148,14 @@ a {
 .charity-vue-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 24px;
 }
 
 .charity-vue-info-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
+  align-items: start;
   gap: 24px;
 }
 
@@ -471,6 +473,7 @@ a {
 .model-rules-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr);
+  align-items: start;
   gap: 24px;
 }
 
