@@ -175,9 +175,9 @@ export async function publicRoutes(app: FastifyInstance) {
 
 async function getCharityDashboard() {
   const now = new Date();
-    const since30 = new Date(now);
-    since30.setDate(since30.getDate() - 29);
-    since30.setHours(0, 0, 0, 0);
+  const todayKey = formatShanghaiDay(now);
+  const since30Key = addDayKey(todayKey, -29);
+  const since30 = startOfShanghaiDay(since30Key);
 
     const [
       charityUserRows,
@@ -214,7 +214,7 @@ async function getCharityDashboard() {
       }),
       prisma.$queryRaw<CharityRequestRow[]>(Prisma.sql`
         SELECT
-          date_trunc('day', r."createdAt") AS day,
+          date_trunc('day', r."createdAt" AT TIME ZONE 'Asia/Shanghai') AS day,
           count(*) AS requests,
           count(*) FILTER (WHERE r.status = 'SUCCESS') AS success_requests,
           count(*) FILTER (WHERE r.status = 'FAILED') AS failed_requests,
@@ -265,7 +265,7 @@ async function getCharityDashboard() {
       `),
       prisma.$queryRaw<CharityPriceUsageRow[]>(Prisma.sql`
         SELECT
-          date_trunc('day', r."createdAt") AS day,
+          date_trunc('day', r."createdAt" AT TIME ZONE 'Asia/Shanghai') AS day,
           r.model AS model,
           r."upstreamProvider" AS upstream_provider,
           sum(r."inputTokens") AS input_tokens,
@@ -325,7 +325,7 @@ async function getCharityDashboard() {
         chargedAmountUsd: displayCharges.total.toFixed(8),
         upstreamCostUsd: moneyFromUnknown(totals._sum.upstreamCostUsd),
       },
-      trend30d: buildTrend(trendRows, since30, now, displayCharges.byDay),
+      trend30d: buildTrend(trendRows, since30Key, displayCharges.byDay),
       ranking: rankingRows.map((row, index) => ({
         name: row.display_name?.trim() || `公益项目 #${index + 1}`,
         requests: Number(row.requests),
@@ -400,11 +400,10 @@ function charityRequestWhere(): Prisma.ApiRequestWhereInput {
 
 function buildTrend(
   rows: CharityRequestRow[],
-  since: Date,
-  now: Date,
+  sinceDayKey: string,
   displayChargesByDay: Map<string, Decimal>,
 ) {
-  const byDay = new Map(rows.map((row) => [formatDay(row.day), row]));
+  const byDay = new Map(rows.map((row) => [formatShanghaiDay(row.day), row]));
   const days: Array<{
     date: string;
     requests: number;
@@ -415,8 +414,8 @@ function buildTrend(
     upstreamCostUsd: string;
   }> = [];
 
-  for (const cursor = new Date(since); cursor <= now; cursor.setDate(cursor.getDate() + 1)) {
-    const key = formatDay(cursor);
+  for (let index = 0; index < 30; index += 1) {
+    const key = addDayKey(sinceDayKey, index);
     const row = byDay.get(key);
     days.push({
       date: key,
@@ -489,7 +488,7 @@ function calculateCharityDisplayCharges(
           .mul(outputPrice),
       )
       .toDecimalPlaces(8);
-    const day = formatDay(row.day);
+    const day = formatShanghaiDay(row.day);
     byDay.set(day, (byDay.get(day) ?? new Decimal(0)).plus(charge));
     total = total.plus(charge);
   }
@@ -502,6 +501,35 @@ function calculateCharityDisplayCharges(
 
 function formatDay(value: Date) {
   return value.toISOString().slice(0, 10);
+}
+
+function formatShanghaiDay(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function addDayKey(dayKey: string, days: number) {
+  const { year, month, day } = parseDayKey(dayKey);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return formatDay(date);
+}
+
+function startOfShanghaiDay(dayKey: string) {
+  const { year, month, day } = parseDayKey(dayKey);
+  return new Date(Date.UTC(year, month - 1, day) - 8 * 60 * 60 * 1000);
+}
+
+function parseDayKey(dayKey: string) {
+  const [year = 1970, month = 1, day = 1] = dayKey.split("-").map(Number);
+  return { year, month, day };
 }
 
 function numberFromUnknown(value: unknown) {
