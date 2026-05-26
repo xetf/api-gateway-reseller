@@ -487,6 +487,16 @@ type PendingAutoTerminateSettings = {
   maxTimeoutSeconds?: number;
 };
 
+type CharityAnnouncementSettings = {
+  enabled: boolean;
+  frequency: "every_visit" | "interval";
+  intervalHours: number;
+  minIntervalHours?: number;
+  maxIntervalHours?: number;
+  title: string;
+  content: string;
+};
+
 type ReasoningEffortTransformSettings = {
   rules: ReasoningEffortTransformRule[];
 };
@@ -829,6 +839,8 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
   const [pendingAutoTerminateSettings, setPendingAutoTerminateSettings] =
     useState<PendingAutoTerminateSettings | null>(null);
+  const [charityAnnouncementSettings, setCharityAnnouncementSettings] =
+    useState<CharityAnnouncementSettings | null>(null);
   const [
     reasoningEffortTransformSettings,
     setReasoningEffortTransformSettings,
@@ -1009,6 +1021,12 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           settings: PendingAutoTerminateSettings;
         }>("/admin/pending-auto-terminate-settings", { token: authToken });
         setPendingAutoTerminateSettings(result.settings);
+      }),
+      loadData("公益页面公告", async () => {
+        const result = await apiFetch<{
+          settings: CharityAnnouncementSettings;
+        }>("/admin/charity-announcement-settings", { token: authToken });
+        setCharityAnnouncementSettings(result.settings);
       }),
       loadData("推理强度转换", async () => {
         const result = await apiFetch<{
@@ -1319,6 +1337,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               users={adminUsers}
               modelPools={modelPools}
               charityOnly
+              charityAnnouncementSettings={charityAnnouncementSettings}
               onChanged={() => refreshAll()}
               onError={setError}
             />
@@ -5653,12 +5672,14 @@ function AdminUsers({
   users,
   modelPools,
   charityOnly = false,
+  charityAnnouncementSettings = null,
   onChanged,
   onError,
 }: {
   users: AdminUser[];
   modelPools: ModelPool[];
   charityOnly?: boolean;
+  charityAnnouncementSettings?: CharityAnnouncementSettings | null;
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
@@ -5691,6 +5712,14 @@ function AdminUsers({
   const [editCharityEnabled, setEditCharityEnabled] = useState(false);
   const [editCharityDisplayName, setEditCharityDisplayName] = useState("");
   const [editCharityKey, setEditCharityKey] = useState("");
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementFrequency, setAnnouncementFrequency] =
+    useState<"every_visit" | "interval">("every_visit");
+  const [announcementIntervalHours, setAnnouncementIntervalHours] = useState("24");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementContent, setAnnouncementContent] = useState("");
+  const [announcementSaving, setAnnouncementSaving] = useState(false);
+  const [announcementSaved, setAnnouncementSaved] = useState<string | null>(null);
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
   const keyModalUser = users.find((item) => item.id === keyModalUserId) ?? null;
@@ -5707,6 +5736,17 @@ function AdminUsers({
   useEffect(() => {
     setAllowedModelsText((selectedUser?.allowedModels ?? []).join("\n"));
   }, [selectedUser?.id]);
+
+  useEffect(() => {
+    if (!charityAnnouncementSettings) {
+      return;
+    }
+    setAnnouncementEnabled(charityAnnouncementSettings.enabled);
+    setAnnouncementFrequency(charityAnnouncementSettings.frequency);
+    setAnnouncementIntervalHours(String(charityAnnouncementSettings.intervalHours));
+    setAnnouncementTitle(charityAnnouncementSettings.title);
+    setAnnouncementContent(charityAnnouncementSettings.content);
+  }, [charityAnnouncementSettings]);
 
   function beginEditUser(item: AdminUser) {
     setUserModal(null);
@@ -5849,6 +5889,40 @@ function AdminUsers({
     }
   }
 
+  async function saveCharityAnnouncement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onError(null);
+    setAnnouncementSaved(null);
+    setAnnouncementSaving(true);
+
+    try {
+      const result = await apiFetch<{ settings: CharityAnnouncementSettings }>(
+        "/admin/charity-announcement-settings",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            enabled: announcementEnabled,
+            frequency: announcementFrequency,
+            intervalHours: Number(announcementIntervalHours),
+            title: announcementTitle,
+            content: announcementContent,
+          }),
+        },
+      );
+      setAnnouncementEnabled(result.settings.enabled);
+      setAnnouncementFrequency(result.settings.frequency);
+      setAnnouncementIntervalHours(String(result.settings.intervalHours));
+      setAnnouncementTitle(result.settings.title);
+      setAnnouncementContent(result.settings.content);
+      setAnnouncementSaved("公告设置已保存，公益页刷新后生效。");
+      onChanged();
+    } catch (updateError) {
+      onError(errorToText(updateError));
+    } finally {
+      setAnnouncementSaving(false);
+    }
+  }
+
   async function deleteUser(item: AdminUser) {
     const confirmed = window.confirm(
       `确定删除用户「${item.email}」吗？这个操作会删除该用户的 API Key、钱包流水和调用记录。`,
@@ -5878,6 +5952,108 @@ function AdminUsers({
   return (
     <>
       <div className="grid admin-page">
+        {charityOnly ? (
+          <section className="card charity-announcement-settings">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">公益页面公告</h2>
+                <p className="section-subtitle">
+                  配置 free.l-kx.cn 打开时的弹窗内容和再次弹出的频率。
+                </p>
+              </div>
+              <span className={announcementEnabled ? "pill ok" : "pill"}>
+                {announcementEnabled ? "已启用" : "未启用"}
+              </span>
+            </div>
+            <form className="form" onSubmit={saveCharityAnnouncement}>
+              <div className="announcement-layout">
+                <div className="announcement-controls">
+                  <label className="checkbox-row">
+                    <input
+                      checked={announcementEnabled}
+                      onChange={(event) =>
+                        setAnnouncementEnabled(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    <span>启用公益页公告弹窗</span>
+                  </label>
+                  <label className="field">
+                    <span>弹出频率</span>
+                    <select
+                      className="input"
+                      value={announcementFrequency}
+                      onChange={(event) =>
+                        setAnnouncementFrequency(
+                          event.target.value === "interval"
+                            ? "interval"
+                            : "every_visit",
+                        )
+                      }
+                    >
+                      <option value="every_visit">每次打开都弹出</option>
+                      <option value="interval">按间隔再次弹出</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>间隔小时</span>
+                    <input
+                      className="input"
+                      disabled={announcementFrequency !== "interval"}
+                      max={charityAnnouncementSettings?.maxIntervalHours ?? 720}
+                      min={charityAnnouncementSettings?.minIntervalHours ?? 1}
+                      onChange={(event) =>
+                        setAnnouncementIntervalHours(event.target.value)
+                      }
+                      type="number"
+                      value={announcementIntervalHours}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>标题</span>
+                    <input
+                      className="input"
+                      maxLength={80}
+                      onChange={(event) =>
+                        setAnnouncementTitle(event.target.value)
+                      }
+                      placeholder="例如：公益 API 使用公告"
+                      value={announcementTitle}
+                    />
+                  </label>
+                </div>
+                <label className="field announcement-content-field">
+                  <span>弹窗内容</span>
+                  <textarea
+                    className="input textarea announcement-textarea"
+                    maxLength={2000}
+                    onChange={(event) =>
+                      setAnnouncementContent(event.target.value)
+                    }
+                    placeholder="填写要展示给公益页访问者的公告内容。"
+                    value={announcementContent}
+                  />
+                </label>
+              </div>
+              {announcementSaved ? (
+                <div className="success compact-success">
+                  {announcementSaved}
+                </div>
+              ) : null}
+              <div className="button-row">
+                <button
+                  className="button"
+                  disabled={announcementSaving}
+                  type="submit"
+                >
+                  <Save size={17} />
+                  {announcementSaving ? "保存中..." : "保存公告设置"}
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : null}
+
         <section className="action-panel">
           <div>
             <h2>用户操作</h2>

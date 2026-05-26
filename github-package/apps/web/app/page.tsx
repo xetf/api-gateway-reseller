@@ -8,6 +8,13 @@ type CharityDashboard = {
   generatedAt: string;
   gateway?: string;
   charityKey?: string | null;
+  announcement?: {
+    enabled: boolean;
+    frequency: "every_visit" | "interval";
+    intervalHours: number;
+    title: string;
+    content: string;
+  };
   totals: {
     charityUsers: number;
     requests: number;

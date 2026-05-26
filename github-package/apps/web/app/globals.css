@@ -153,7 +153,7 @@ a {
 
 .charity-vue-info-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  grid-template-columns: minmax(0, 1.55fr) minmax(240px, 0.65fr);
   gap: 24px;
 }
 
@@ -243,6 +243,10 @@ a {
   box-shadow: none;
 }
 
+.metric-grid.three .metric-item {
+  padding: 22px 20px;
+}
+
 .metric-item span {
   display: block;
   color: #64748b;
@@ -259,6 +263,11 @@ a {
   line-height: 1;
 }
 
+.metric-grid.three .metric-item strong {
+  font-size: clamp(30px, 3.2vw, 42px);
+  white-space: nowrap;
+}
+
 .usage-lines {
   display: grid;
   gap: 12px;
@@ -266,8 +275,8 @@ a {
 
 .usage-lines div {
   display: grid;
-  grid-template-columns: 126px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
 }
 
@@ -290,11 +299,11 @@ a {
 
 .usage-lines code {
   min-width: 0;
-  overflow-x: auto;
+  overflow: visible;
   padding: 12px 0;
   color: #0f172a;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -312,6 +321,81 @@ a {
 
 .copy-icon-button:hover {
   color: #0f766e;
+}
+
+.charity-announcement-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 28% 22%, rgb(147 197 253 / 28%), transparent 24rem),
+    radial-gradient(circle at 78% 80%, rgb(45 212 191 / 24%), transparent 24rem),
+    rgb(15 23 42 / 26%);
+  padding: 24px;
+  backdrop-filter: blur(16px);
+}
+
+.charity-announcement-modal {
+  position: relative;
+  width: min(560px, 100%);
+  overflow: hidden;
+  border: 1px solid rgb(226 232 240 / 92%);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 10% 0%, rgb(219 234 254 / 92%), transparent 16rem),
+    radial-gradient(circle at 96% 100%, rgb(204 251 241 / 82%), transparent 17rem),
+    linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 95%) inset,
+    0 28px 90px rgb(15 23 42 / 22%);
+  padding: clamp(28px, 5vw, 42px);
+  color: #0f172a;
+}
+
+.announcement-orbit {
+  position: absolute;
+  right: -54px;
+  top: -58px;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgb(45 212 191 / 34%), transparent 68%);
+  pointer-events: none;
+}
+
+.charity-announcement-kicker {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.charity-announcement-modal h2 {
+  margin: 12px 0 14px;
+  font-size: clamp(30px, 5vw, 44px);
+  line-height: 1.08;
+}
+
+.charity-announcement-modal p {
+  max-height: min(42vh, 360px);
+  overflow: auto;
+  margin: 0;
+  color: #475569;
+  font-size: 16px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.announcement-primary-button {
+  min-height: 44px;
+  margin-top: 28px;
+  border-radius: 999px;
+  background: #0f172a;
+  padding: 0 22px;
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 14px 30px rgb(15 23 42 / 18%);
 }
 
 .status-row {
@@ -1093,6 +1177,34 @@ a {
   display: grid;
   gap: 14px;
   min-width: 0;
+}
+
+.charity-announcement-settings {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 0% 0%, rgb(219 234 254 / 66%), transparent 20rem),
+    radial-gradient(circle at 100% 100%, rgb(204 251 241 / 58%), transparent 22rem),
+    #ffffff;
+}
+
+.announcement-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+}
+
+.announcement-controls {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.announcement-content-field {
+  min-width: 0;
+}
+
+.announcement-textarea {
+  min-height: 220px;
 }
 
 .workspace-fixed-page {

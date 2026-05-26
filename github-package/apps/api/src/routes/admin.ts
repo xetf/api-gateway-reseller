@@ -24,6 +24,12 @@ import {
   toAdminAuthSettings,
 } from "../services/auth-settings.js";
 import {
+  maxCharityAnnouncementIntervalHours,
+  minCharityAnnouncementIntervalHours,
+  readCharityAnnouncementSettings,
+  saveCharityAnnouncementSettings,
+} from "../services/charity-announcement-settings.js";
+import {
   maxPendingAutoTerminateSeconds,
   minPendingAutoTerminateSeconds,
   readPendingAutoTerminateSettings,
@@ -198,6 +204,17 @@ const pendingAutoTerminateSettingsSchema = z.object({
     .int()
     .min(minPendingAutoTerminateSeconds)
     .max(maxPendingAutoTerminateSeconds),
+});
+const charityAnnouncementSettingsSchema = z.object({
+  enabled: z.boolean(),
+  frequency: z.enum(["every_visit", "interval"]),
+  intervalHours: z
+    .number()
+    .int()
+    .min(minCharityAnnouncementIntervalHours)
+    .max(maxCharityAnnouncementIntervalHours),
+  title: z.string().trim().max(80),
+  content: z.string().trim().max(2000),
 });
 const reasoningEffortTransformRuleSchema = z.object({
   enabled: z.boolean(),
@@ -876,6 +893,29 @@ export async function adminRoutes(app: FastifyInstance) {
         ...settings,
         minTimeoutSeconds: minPendingAutoTerminateSeconds,
         maxTimeoutSeconds: maxPendingAutoTerminateSeconds,
+      },
+    };
+  });
+
+  app.get("/admin/charity-announcement-settings", async () => {
+    const settings = await readCharityAnnouncementSettings();
+    return {
+      settings: {
+        ...settings,
+        minIntervalHours: minCharityAnnouncementIntervalHours,
+        maxIntervalHours: maxCharityAnnouncementIntervalHours,
+      },
+    };
+  });
+
+  app.put("/admin/charity-announcement-settings", async (request) => {
+    const body = charityAnnouncementSettingsSchema.parse(request.body);
+    const settings = await saveCharityAnnouncementSettings(body);
+    return {
+      settings: {
+        ...settings,
+        minIntervalHours: minCharityAnnouncementIntervalHours,
+        maxIntervalHours: maxCharityAnnouncementIntervalHours,
       },
     };
   });

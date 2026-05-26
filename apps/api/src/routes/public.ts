@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@gateway/db";
+import { readCharityAnnouncementSettings } from "../services/charity-announcement-settings.js";
 import { onPublicStatusChanged } from "../services/public-status-events.js";
 
 type CharityRequestRow = {
@@ -109,7 +110,14 @@ export async function publicRoutes(app: FastifyInstance) {
     since30.setDate(since30.getDate() - 29);
     since30.setHours(0, 0, 0, 0);
 
-    const [charityUserRows, totals, trendRows, rankingRows, modelRows] = await Promise.all([
+    const [
+      charityUserRows,
+      totals,
+      trendRows,
+      rankingRows,
+      modelRows,
+      announcement,
+    ] = await Promise.all([
       prisma.user.findMany({
         where: {
           charityEnabled: true,
@@ -183,6 +191,7 @@ export async function publicRoutes(app: FastifyInstance) {
         ORDER BY charged_amount_usd DESC NULLS LAST, total_tokens DESC NULLS LAST, requests DESC
         LIMIT 12
       `),
+      readCharityAnnouncementSettings(),
     ]);
 
     const requestCount = totals._count;
@@ -207,6 +216,7 @@ export async function publicRoutes(app: FastifyInstance) {
       generatedAt: now.toISOString(),
       gateway: "https://gateway.l-kx.cn",
       charityKey,
+      announcement,
       totals: {
         charityUsers,
         requests: requestCount,

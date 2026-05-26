@@ -7,6 +7,13 @@ type CharityDashboard = {
   generatedAt: string;
   gateway?: string;
   charityKey?: string | null;
+  announcement?: {
+    enabled: boolean;
+    frequency: "every_visit" | "interval";
+    intervalHours: number;
+    title: string;
+    content: string;
+  };
   totals: {
     charityUsers: number;
     requests: number;
@@ -77,6 +84,8 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
         const apiBaseUrl = `${gateway.replace(/\/+$/, "")}/v1`;
         const serviceAvailable = ref(false);
         const statusLoaded = ref(false);
+        const showAnnouncement = ref(false);
+        const announcement = payload?.announcement;
         const displayModels = ["gpt-5.5"];
 
         const currency = (value: string) => `$${Number(value).toFixed(2)}`;
@@ -95,6 +104,8 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
         let statusSource: EventSource | null = null;
 
         onMounted(async () => {
+          showAnnouncement.value = shouldShowAnnouncement(announcement);
+
           try {
             const response = await fetch("/public/charity-status", {
               cache: "no-store",
@@ -129,6 +140,21 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
 
         return () =>
           h("main", { class: "charity-vue-page" }, [
+            showAnnouncement.value && announcement?.enabled
+              ? h("div", { class: "charity-announcement-backdrop" }, [
+                  h("section", { class: "charity-announcement-modal" }, [
+                    h("div", { class: "announcement-orbit" }),
+                    h("div", { class: "charity-announcement-kicker" }, "APIshare 公益"),
+                    h("h2", announcement.title || "公益 API 使用公告"),
+                    h("p", announcement.content || "请合理使用公益 API 资源。"),
+                    h("button", {
+                      class: "announcement-primary-button",
+                      onClick: () => dismissAnnouncement(announcement),
+                      type: "button",
+                    }, "我知道了"),
+                  ]),
+                ])
+              : null,
             h("section", { class: "charity-vue-hero" }, [
               h("div", { class: "charity-vue-title" }, [
                 h("span", { class: "hero-kicker" }, "Public AI Gateway"),
@@ -270,6 +296,34 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
 
         async function copyText(value: string) {
           await navigator.clipboard?.writeText(value);
+        }
+
+        function shouldShowAnnouncement(
+          settings: CharityDashboard["announcement"] | undefined,
+        ) {
+          if (!settings?.enabled || !settings.content.trim()) {
+            return false;
+          }
+          if (settings.frequency === "every_visit") {
+            return true;
+          }
+          const lastShownAt = Number(
+            window.localStorage.getItem("charity-announcement-last-shown-at") ?? "0",
+          );
+          const intervalMs = Math.max(1, settings.intervalHours) * 60 * 60 * 1000;
+          return Date.now() - lastShownAt >= intervalMs;
+        }
+
+        function dismissAnnouncement(
+          settings: CharityDashboard["announcement"],
+        ) {
+          if (settings?.frequency === "interval") {
+            window.localStorage.setItem(
+              "charity-announcement-last-shown-at",
+              String(Date.now()),
+            );
+          }
+          showAnnouncement.value = false;
         }
 
       },
