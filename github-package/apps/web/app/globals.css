@@ -153,7 +153,7 @@ a {
 
 .charity-vue-info-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(220px, 0.55fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
   gap: 24px;
 }
 
