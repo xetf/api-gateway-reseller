@@ -78,8 +78,8 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
 
     const vueApp = createApp({
       setup() {
-        const payload = data;
-        const totals = payload?.totals ?? {
+        const dashboard = ref<CharityDashboard | null>(data);
+        const fallbackTotals = {
           charityUsers: 0,
           requests: 0,
           successRequests: 0,
@@ -92,21 +92,21 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
           chargedAmountUsd: "0",
           upstreamCostUsd: "0",
         };
-        const trend = payload?.trend30d ?? [];
-        const today = computed(() => trend.at(-1));
-        const yesterday = computed(() => trend.at(-2));
-        const maxTokens = Math.max(1, ...trend.map((item) => item.totalTokens));
-        const maxRequests = Math.max(1, ...trend.map((item) => item.requests));
+        const totals = computed(() => dashboard.value?.totals ?? fallbackTotals);
+        const trend = computed(() => dashboard.value?.trend30d ?? []);
+        const today = computed(() => trend.value.at(-1));
+        const maxTokens = computed(() => Math.max(1, ...trend.value.map((item) => item.totalTokens)));
+        const maxRequests = computed(() => Math.max(1, ...trend.value.map((item) => item.requests)));
         const hasTrendData = computed(() =>
-          trend.some((item) => item.requests > 0 || item.totalTokens > 0),
+          trend.value.some((item) => item.requests > 0 || item.totalTokens > 0),
         );
-        const gateway = payload?.gateway ?? "https://free.l-kx.cn";
-        const charityKey = payload?.charityKey ?? "未填写公益 Key";
-        const apiBaseUrl = `${gateway.replace(/\/+$/, "")}/v1`;
+        const gateway = computed(() => dashboard.value?.gateway ?? "https://free.l-kx.cn");
+        const charityKey = computed(() => dashboard.value?.charityKey ?? "未填写公益 Key");
+        const apiBaseUrl = computed(() => `${gateway.value.replace(/\/+$/, "")}/v1`);
         const serviceAvailable = ref(false);
         const statusLoaded = ref(false);
         const showAnnouncement = ref(false);
-        const announcement = payload?.announcement;
+        const announcement = computed(() => dashboard.value?.announcement);
         const displayModels = ["gpt-5.5"];
 
         const currency = (value: string) => `$${Number(value).toFixed(2)}`;
@@ -117,15 +117,16 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
           }).format(value);
         const int = (value: number) => new Intl.NumberFormat("zh-CN").format(value);
         const sparkPoints = (value: number, max: number, index: number) => {
-          const width = 100 / Math.max(1, trend.length - 1);
+          const width = 100 / Math.max(1, trend.value.length - 1);
           const x = index * width;
           const y = 100 - (value / Math.max(1, max)) * 100;
           return `${x},${y}`;
         };
         let statusSource: EventSource | null = null;
+        let dashboardSource: EventSource | null = null;
 
         onMounted(async () => {
-          showAnnouncement.value = shouldShowAnnouncement(announcement);
+          showAnnouncement.value = shouldShowAnnouncement(announcement.value);
 
           try {
             const response = await fetch("/public/charity-status", {
@@ -152,25 +153,32 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
           statusSource.addEventListener("error", () => {
             statusLoaded.value = true;
           });
+
+          dashboardSource = new EventSource("/public/charity-dashboard/events");
+          dashboardSource.addEventListener("dashboard", (event) => {
+            dashboard.value = JSON.parse((event as MessageEvent).data) as CharityDashboard;
+          });
         });
 
         onBeforeUnmount(() => {
           statusSource?.close();
           statusSource = null;
+          dashboardSource?.close();
+          dashboardSource = null;
         });
 
         return () =>
           h("main", { class: "charity-vue-page" }, [
-            showAnnouncement.value && announcement?.enabled
+            showAnnouncement.value && announcement.value?.enabled
               ? h("div", { class: "charity-announcement-backdrop" }, [
                   h("section", { class: "charity-announcement-modal" }, [
                     h("div", { class: "announcement-orbit" }),
                     h("div", { class: "charity-announcement-kicker" }, "APIshare 公益"),
-                    h("h2", announcement.title || "公益 API 使用公告"),
-                    h("p", announcement.content || "请合理使用公益 API 资源。"),
+                    h("h2", announcement.value.title || "公益 API 使用公告"),
+                    h("p", announcement.value.content || "请合理使用公益 API 资源。"),
                     h("button", {
                       class: "announcement-primary-button",
-                      onClick: () => dismissAnnouncement(announcement),
+                      onClick: () => dismissAnnouncement(announcement.value),
                       type: "button",
                     }, "我知道了"),
                   ]),
@@ -187,8 +195,8 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
               h("article", { class: "content-panel quick-start" }, [
                 h("div", { class: "section-head compact" }, [h("h2", "快速使用")]),
                 h("div", { class: "usage-lines" }, [
-                  usageLine("Base URL", apiBaseUrl),
-                  usageLine("API Key", charityKey),
+                  usageLine("Base URL", apiBaseUrl.value),
+                  usageLine("API Key", charityKey.value),
                 ]),
               ]),
               h("article", { class: "content-panel service-panel service-panel-minimal" }, [
@@ -233,9 +241,9 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
             ]),
             h("section", { class: "charity-vue-grid" }, [
               metricCard("总统计", [
-                metricItem("总请求", int(totals.requests)),
-                metricItem("总 Token", compact(totals.totalTokens)),
-                metricItem("总费用", currency(totals.chargedAmountUsd)),
+                metricItem("总请求", int(totals.value.requests)),
+                metricItem("总 Token", compact(totals.value.totalTokens)),
+                metricItem("总费用", currency(totals.value.chargedAmountUsd)),
               ]),
               metricCard("每日统计", [
                 metricItem("今日请求", int(today.value?.requests ?? 0)),
@@ -251,23 +259,23 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
                 ? h("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none" }, [
                     h("polyline", {
                       class: "line rpm",
-                      points: trend.map((item, index) => sparkPoints(item.requests, maxRequests, index)).join(" "),
+                      points: trend.value.map((item, index) => sparkPoints(item.requests, maxRequests.value, index)).join(" "),
                     }),
                     h("polyline", {
                       class: "line tpm",
-                      points: trend.map((item, index) => sparkPoints(item.totalTokens, maxTokens, index)).join(" "),
+                      points: trend.value.map((item, index) => sparkPoints(item.totalTokens, maxTokens.value, index)).join(" "),
                     }),
-                    ...trend.flatMap((item, index) => [
+                    ...trend.value.flatMap((item, index) => [
                       h("circle", {
                         class: "chart-dot rpm",
-                        cx: index * (100 / Math.max(1, trend.length - 1)),
-                        cy: 100 - (item.requests / Math.max(1, maxRequests)) * 100,
+                        cx: index * (100 / Math.max(1, trend.value.length - 1)),
+                        cy: 100 - (item.requests / Math.max(1, maxRequests.value)) * 100,
                         r: "0.9",
                       }),
                       h("circle", {
                         class: "chart-dot tpm",
-                        cx: index * (100 / Math.max(1, trend.length - 1)),
-                        cy: 100 - (item.totalTokens / Math.max(1, maxTokens)) * 100,
+                        cx: index * (100 / Math.max(1, trend.value.length - 1)),
+                        cy: 100 - (item.totalTokens / Math.max(1, maxTokens.value)) * 100,
                         r: "0.9",
                       }),
                     ]),

@@ -1329,7 +1329,10 @@ async function runUpstreamAttempt(params: {
     }
 
     const contentType = upstreamResponse.headers.get("content-type") ?? "";
-    const rawBody = await safeReadUpstreamBody(upstreamResponse, app.log);
+    const rawBody = await safeReadUpstreamBody(upstreamResponse, {
+      logger: app.log,
+      maxBytes: getUpstreamResponseMaxBytes(endpoint),
+    });
     if ("error" in rawBody) {
       await markRequestFailed(
         { id: apiRequestId },
@@ -2731,6 +2734,11 @@ function getGatewaySessionIdentity(
     return `apiKey:${apiKeyId}:session:${normalizeStickyIdentityPart(sessionId)}`;
   }
 
+  const clientIp = getClientIp(request);
+  if (clientIp) {
+    return `apiKey:${apiKeyId}:ip:${normalizeStickyIdentityPart(clientIp)}`;
+  }
+
   return `apiKey:${apiKeyId}:session:missing`;
 }
 
@@ -2869,21 +2877,32 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 const UPSTREAM_RESPONSE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const UPSTREAM_COMPACT_RESPONSE_MAX_BYTES = 16 * 1024 * 1024; // 16MB
 
 type SafeBodyResult =
   | { json: unknown; text: string }
   | { error: { message: string; statusCode: number } };
 
+function getUpstreamResponseMaxBytes(endpoint: string) {
+  return endpoint === "/v1/responses/compact"
+    ? UPSTREAM_COMPACT_RESPONSE_MAX_BYTES
+    : UPSTREAM_RESPONSE_MAX_BYTES;
+}
+
 async function safeReadUpstreamBody(
   response: Response,
-  logger?: { warn: (value: unknown, message?: string) => void },
+  options?: {
+    logger?: { warn: (value: unknown, message?: string) => void };
+    maxBytes?: number;
+  },
 ): Promise<SafeBodyResult> {
+  const maxBytes = options?.maxBytes ?? UPSTREAM_RESPONSE_MAX_BYTES;
   const contentLength = response.headers.get("content-length");
   if (contentLength) {
     const size = Number(contentLength);
-    if (Number.isFinite(size) && size > UPSTREAM_RESPONSE_MAX_BYTES) {
-      logger?.warn(
-        { contentLength: size, maxBytes: UPSTREAM_RESPONSE_MAX_BYTES },
+    if (Number.isFinite(size) && size > maxBytes) {
+      options?.logger?.warn(
+        { contentLength: size, maxBytes },
         "Upstream response body too large, rejecting",
       );
       return {
@@ -2907,9 +2926,9 @@ async function safeReadUpstreamBody(
     };
   }
 
-  if (text.length > UPSTREAM_RESPONSE_MAX_BYTES) {
-    logger?.warn(
-      { bodyBytes: text.length, maxBytes: UPSTREAM_RESPONSE_MAX_BYTES },
+  if (text.length > maxBytes) {
+    options?.logger?.warn(
+      { bodyBytes: text.length, maxBytes },
       "Upstream response body exceeds limit after reading, rejecting",
     );
     return {
@@ -2925,7 +2944,7 @@ async function safeReadUpstreamBody(
     try {
       return { json: JSON.parse(text), text };
     } catch (_err) {
-      logger?.warn(
+      options?.logger?.warn(
         { bodyBytes: text.length },
         "Upstream returned invalid JSON, returning as text",
       );

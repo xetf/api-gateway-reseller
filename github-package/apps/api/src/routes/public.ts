@@ -115,8 +115,66 @@ export async function publicRoutes(app: FastifyInstance) {
     fallbackTimer = setInterval(sendStatus, 5000);
   });
 
-  app.get("/public/charity-dashboard", async () => {
-    const now = new Date();
+  app.get("/public/charity-dashboard", async () => getCharityDashboard());
+
+  app.get("/public/charity-dashboard/events", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let previousPayload = "";
+    let closed = false;
+    let dashboardTimer: NodeJS.Timeout | undefined;
+    let keepaliveTimer: NodeJS.Timeout | undefined;
+
+    const sendDashboard = async () => {
+      if (closed || reply.raw.destroyed) {
+        return;
+      }
+
+      try {
+        const dashboard = await getCharityDashboard();
+        const payload = JSON.stringify(dashboard);
+        if (payload !== previousPayload) {
+          previousPayload = payload;
+          reply.raw.write(`event: dashboard\ndata: ${payload}\n\n`);
+        } else {
+          reply.raw.write(": keepalive\n\n");
+        }
+      } catch (error) {
+        reply.raw.write(
+          `event: error\ndata: ${JSON.stringify({
+            message: error instanceof Error ? error.message : "dashboard failed",
+          })}\n\n`,
+        );
+      }
+    };
+
+    request.raw.on("close", () => {
+      closed = true;
+      if (dashboardTimer) {
+        clearInterval(dashboardTimer);
+      }
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+      }
+    });
+
+    await sendDashboard();
+    dashboardTimer = setInterval(sendDashboard, 5000);
+    keepaliveTimer = setInterval(() => {
+      if (!closed && !reply.raw.destroyed) {
+        reply.raw.write(": keepalive\n\n");
+      }
+    }, 15000);
+  });
+}
+
+async function getCharityDashboard() {
+  const now = new Date();
     const since30 = new Date(now);
     since30.setDate(since30.getDate() - 29);
     since30.setHours(0, 0, 0, 0);
@@ -249,7 +307,7 @@ export async function publicRoutes(app: FastifyInstance) {
       unifiedPriceSettings,
     );
 
-    return {
+  return {
       generatedAt: now.toISOString(),
       gateway: "https://gateway.l-kx.cn",
       charityKey,
@@ -287,8 +345,7 @@ export async function publicRoutes(app: FastifyInstance) {
         totalTokens: numberFromUnknown(row.total_tokens),
         chargedAmountUsd: moneyFromUnknown(row.charged_amount_usd),
       })),
-    };
-  });
+  };
 }
 
 async function getPublicModelPoolStatus() {
