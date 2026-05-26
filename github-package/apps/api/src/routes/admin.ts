@@ -100,6 +100,7 @@ const modelPoolHealthCheckEndpointSchema = z.enum(
   modelPoolHealthCheckEndpoints,
 );
 const upstreamProviderKeyStatusSchema = z.enum(["ACTIVE", "DISABLED"]);
+const compactItemTypeSchema = z.enum(["compaction", "compaction_summary"]);
 const moneyLimitSchema = z
   .union([z.string(), z.number(), z.null()])
   .optional()
@@ -2509,6 +2510,7 @@ export async function adminRoutes(app: FastifyInstance) {
         apiKey: z.string().min(1),
         priority: z.number().int().min(1).max(10000).default(100),
         timeoutMs: z.number().int().min(5000).max(600000).default(180000),
+        compactItemType: compactItemTypeSchema.default("compaction_summary"),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
       })
       .parse(request.body);
@@ -2520,6 +2522,7 @@ export async function adminRoutes(app: FastifyInstance) {
         apiKey: body.apiKey,
         priority: body.priority,
         timeoutMs: body.timeoutMs,
+        compactItemType: body.compactItemType,
         status: body.status,
       },
       create: {
@@ -2542,6 +2545,7 @@ export async function adminRoutes(app: FastifyInstance) {
         apiKey: z.string().optional(),
         priority: z.number().int().min(1).max(10000).optional(),
         timeoutMs: z.number().int().min(5000).max(600000).optional(),
+        compactItemType: compactItemTypeSchema.optional(),
         status: z.enum(["ACTIVE", "DISABLED"]).optional(),
       })
       .parse(request.body);

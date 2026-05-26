@@ -251,6 +251,7 @@ model UpstreamProvider {
   status      UpstreamProviderStatus @default(ACTIVE)
   priority    Int                    @default(100)
   timeoutMs   Int                    @default(180000)
+  compactItemType String             @default("compaction_summary")
   createdAt   DateTime               @default(now())
   updatedAt   DateTime               @updatedAt
 

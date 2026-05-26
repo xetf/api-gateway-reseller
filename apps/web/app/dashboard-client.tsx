@@ -324,6 +324,7 @@ type UpstreamProvider = {
   status: "ACTIVE" | "DISABLED";
   priority: number;
   timeoutMs: number;
+  compactItemType: "compaction" | "compaction_summary";
   keys?: UpstreamProviderKey[];
   createdAt: string;
   updatedAt: string;
@@ -8692,6 +8693,8 @@ function UpstreamProviders({
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState(100);
   const [timeoutSeconds, setTimeoutSeconds] = useState(180);
+  const [compactItemType, setCompactItemType] =
+    useState<UpstreamProvider["compactItemType"]>("compaction_summary");
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [keyModalProvider, setKeyModalProvider] =
@@ -8971,6 +8974,7 @@ function UpstreamProviders({
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       priority: Number(priority),
       timeoutMs: Math.round(Number(timeoutSeconds) * 1000),
+      compactItemType,
       status: "ACTIVE",
     };
 
@@ -8999,6 +9003,7 @@ function UpstreamProviders({
     setApiKey("");
     setPriority(provider.priority);
     setTimeoutSeconds(provider.timeoutMs / 1000);
+    setCompactItemType(provider.compactItemType ?? "compaction_summary");
     setProviderModalOpen(true);
   }
 
@@ -9009,6 +9014,7 @@ function UpstreamProviders({
     setApiKey("");
     setPriority(100);
     setTimeoutSeconds(180);
+    setCompactItemType("compaction_summary");
   }
 
   function openCreateProvider() {
@@ -9246,7 +9252,9 @@ function UpstreamProviders({
                       </div>
                       <p>
                         优先级 {provider.priority} · 超时{" "}
-                        {seconds(provider.timeoutMs)} · {provider.baseUrl}
+                        {seconds(provider.timeoutMs)} · Compact{" "}
+                        {displayCompactItemType(provider.compactItemType)} ·{" "}
+                        {provider.baseUrl}
                       </p>
                     </div>
                     <div className="button-row">
@@ -9694,6 +9702,23 @@ function UpstreamProviders({
                   />
                 </label>
               </div>
+              <label className="field">
+                <span>Compact 返回类型</span>
+                <select
+                  className="input"
+                  onChange={(event) =>
+                    setCompactItemType(
+                      event.target.value as UpstreamProvider["compactItemType"],
+                    )
+                  }
+                  value={compactItemType}
+                >
+                  <option value="compaction">compaction</option>
+                  <option value="compaction_summary">
+                    compaction_summary
+                  </option>
+                </select>
+              </label>
             </div>
             <div className="modal-footer">
               <button
@@ -10724,6 +10749,10 @@ function shortId(value: string) {
 
 function displayUpstreamProviderKeyName(name: string) {
   return name === "默认 Key" ? "key-1" : name;
+}
+
+function displayCompactItemType(type?: UpstreamProvider["compactItemType"]) {
+  return type === "compaction" ? "compaction" : "compaction_summary";
 }
 
 function formatConcurrencyLimit(value: number | null | undefined) {

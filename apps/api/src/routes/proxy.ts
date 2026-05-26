@@ -74,6 +74,8 @@ type UpstreamAttemptResult =
       responseContentType?: string;
     };
 
+type CompactItemType = "compaction" | "compaction_summary";
+
 const proxiedEndpoints = new Set([
   "/v1/chat/completions",
   "/v1/embeddings",
@@ -668,6 +670,7 @@ async function applyCompactFallback(params: {
     const replacementsByHash = buildCompactFallbackReplacements(
       cachedCompact.cache.encryptedContentHashes,
       targetCacheHit,
+      getTargetCompactItemType(route),
     );
     const replaced = replaceCompactionItemsByEncryptedContentHashes(
       body,
@@ -727,6 +730,7 @@ async function applyCompactFallback(params: {
     const replacementsByHash = buildCompactFallbackReplacements(
       cachedCompact.cache.encryptedContentHashes,
       targetCompactItems,
+      getTargetCompactItemType(route),
     );
     const replaced = replaceCompactionItemsByEncryptedContentHashes(
       body,
@@ -851,6 +855,7 @@ async function recoverInvalidEncryptedContentWithCompact(params: {
     const replacementsByHash = buildCompactFallbackReplacements(
       cachedCompact.cache.encryptedContentHashes,
       targetCompactItems,
+      getTargetCompactItemType(route),
     );
     const replaced = replaceCompactionItemsByEncryptedContentHashes(
       body,
@@ -880,6 +885,7 @@ async function recoverInvalidEncryptedContentWithCompact(params: {
 function buildCompactFallbackReplacements(
   sourceEncryptedContentHashes: string[],
   targetItems: Array<{ encryptedContent: string; item: unknown }>,
+  targetItemType: CompactItemType,
 ) {
   const replacements = new Map<string, unknown>();
   const maxLength = Math.min(
@@ -890,10 +896,54 @@ function buildCompactFallbackReplacements(
     const sourceHash = sourceEncryptedContentHashes[index];
     const targetItem = targetItems[index];
     if (sourceHash && targetItem) {
-      replacements.set(sourceHash, targetItem.item);
+      replacements.set(
+        sourceHash,
+        normalizeCompactItemForTarget(targetItem.item, targetItemType),
+      );
     }
   }
   return replacements;
+}
+
+function getTargetCompactItemType(route: UpstreamAttemptRoute): CompactItemType {
+  const value =
+    "compactItemType" in route.provider
+      ? route.provider.compactItemType
+      : undefined;
+  return value === "compaction" ? "compaction" : "compaction_summary";
+}
+
+function normalizeCompactItemForTarget(
+  item: unknown,
+  targetItemType: CompactItemType,
+) {
+  if (!isPlainObject(item)) {
+    return item;
+  }
+
+  const encryptedContent = item.encrypted_content;
+  if (typeof encryptedContent !== "string" || !encryptedContent) {
+    return item;
+  }
+
+  if (targetItemType === "compaction") {
+    const { id: _id, object: _object, ...rest } = item;
+    return {
+      ...rest,
+      type: "compaction",
+      encrypted_content: encryptedContent,
+    };
+  }
+
+  return {
+    ...item,
+    id:
+      typeof item.id === "string" && item.id
+        ? item.id
+        : `compact_${hashEncryptedContent(encryptedContent).slice(0, 24)}`,
+    type: "compaction_summary",
+    encrypted_content: encryptedContent,
+  };
 }
 
 async function requestTargetCompact(params: {

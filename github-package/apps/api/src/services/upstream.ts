@@ -52,6 +52,7 @@ export async function getDefaultProvider() {
     status: "ACTIVE" as const,
     priority: 100,
     timeoutMs: env.UPSTREAM_TIMEOUT_MS,
+    compactItemType: "compaction_summary",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
