@@ -54,6 +54,24 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
   const appRef = useRef<VueApp<Element> | null>(null);
 
   useEffect(() => {
+    const viewport = document.querySelector<HTMLMetaElement>("meta[name='viewport']");
+    const previousContent = viewport?.getAttribute("content");
+    const desktopWidth = 1120;
+    const scale = Math.min(1, window.innerWidth / desktopWidth);
+
+    viewport?.setAttribute(
+      "content",
+      `width=${desktopWidth}, initial-scale=${scale}, minimum-scale=${scale}, maximum-scale=1`,
+    );
+
+    return () => {
+      if (previousContent) {
+        viewport?.setAttribute("content", previousContent);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!mountRef.current) {
       return;
     }

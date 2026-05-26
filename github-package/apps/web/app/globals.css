@@ -624,14 +624,6 @@ a {
   background: #2563eb;
 }
 
-@media (max-width: 860px) {
-  .charity-vue-page {
-    width: 1120px;
-    max-width: none;
-    zoom: calc((100vw - 20px) / 1120);
-  }
-}
-
 .charity-page {
   min-height: 100dvh;
   background: #f3f4f6;
