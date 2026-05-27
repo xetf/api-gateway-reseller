@@ -83,6 +83,14 @@ IP 等级支持单 IP 和 IPv4 CIDR，例如 `1.2.3.4` 或 `1.2.3.0/24`。
 
 - 粘性 IP 数熵增：越多 IP 粘住这个 Key，熵值越高。
 
+当前计算口径：
+
+- 渠道熵值 = `速度排名熵增 + 渠道粘性 IP 数 * stickyHitPenalty`
+- 速度排名熵增 = `(速度排名 - 1) * speedRankPenalty`
+- Key 熵值 = `Key 粘性 IP 数 * stickyHitPenalty`
+
+速度排名来自健康检测记录的首 token 平均时间，从小到大排序。第 1 名速度排名熵增为 0。
+
 后台可配置：
 
 - 速度排名熵增
@@ -130,3 +138,32 @@ IP 等级支持单 IP 和 IPv4 CIDR，例如 `1.2.3.4` 或 `1.2.3.0/24`。
 后台可配置：
 
 - 是否允许显示/使用强制可用按钮
+
+## 后台配置字段
+
+这些字段保存在 `SystemSetting` 的 `model_dispatch_settings` 里。
+
+| 字段 | 默认值 | 白话说明 |
+| --- | ---: | --- |
+| `stickyEnabled` | `true` | 是否开启 IP + 模型粘性。关闭后不读写粘性，并清理旧粘性。 |
+| `stickyTtlSeconds` | `600` | 粘住多久；成功调用会刷新这个时间窗口。 |
+| `stickySlowUnbindEnabled` | `true` | 是否允许“连续慢”解绑粘性。粘性关闭时这个规则自动无效。 |
+| `slowFirstTokenMs` | `15000` | 首 token 超过这个时间，本次调用算慢。 |
+| `slowTotalLatencyMs` | `45000` | 总耗时超过这个时间，本次调用算慢。 |
+| `slowUnbindThreshold` | `3` | 连续慢多少次后解绑该 IP 对该模型的粘性。 |
+| `penaltyEnabled` | `true` | 是否开启真实调用失败后的渠道惩罚。 |
+| `penaltyFailureThreshold` | `2` | 同一 IP 连续失败多少次后惩罚同一上游渠道。 |
+| `penaltySeconds` | `60` | 渠道进入惩罚中后，多久后尝试恢复检测。 |
+| `healthCheckIntervalSeconds` | `30` | 可健康检测的渠道多久检测一次。健康检测规则不可关闭。 |
+| `speedRankPenalty` | `300` | 渠道速度排名每落后一名增加多少熵值。 |
+| `stickyHitPenalty` | `500` | 每多一个粘住的 IP，渠道或 Key 增加多少熵值。 |
+| `forceAvailableButtonEnabled` | `true` | 后台是否显示/允许使用强制可用按钮。 |
+
+## 已落地接口
+
+- `GET /admin/dispatch-settings`
+- `PATCH /admin/dispatch-settings`
+- `GET /admin/ip-access-tiers`
+- `POST /admin/ip-access-tiers`
+- `PATCH /admin/ip-access-tiers/:id`
+- `DELETE /admin/ip-access-tiers/:id`
