@@ -5,13 +5,13 @@ import {
   schedulePenalizedChannelRecovery,
 } from "./model-pool-health.js";
 import { clearStickyModelPoolChannel } from "./model-pool-stickiness.js";
+import { readDispatchSettings } from "./dispatch-settings.js";
 
 type Logger = {
   warn: (value: unknown, message?: string) => void;
   info?: (value: unknown, message?: string) => void;
 };
 
-const consecutiveFailureThreshold = 2;
 const failureCounterTtlSeconds = 600;
 const liveMetricSmoothingFactor = 0.25;
 
@@ -55,10 +55,15 @@ export async function recordModelPoolUserCallResult(params: {
       return;
     }
 
+    const settings = await readDispatchSettings();
+    if (!settings.penaltyEnabled) {
+      return;
+    }
+
     const failures = await redis.incr(key);
     await redis.expire(key, failureCounterTtlSeconds);
 
-    if (failures < consecutiveFailureThreshold) {
+    if (failures < settings.penaltyFailureThreshold) {
       return;
     }
 
@@ -92,9 +97,12 @@ async function penalizeChannel(params: {
   logger?: Logger;
 }) {
   const { userId, apiKeyId, callerIdentity, model, channelId, logger } = params;
-  const penaltySeconds = await getModelPoolPenaltySeconds();
+  const [penaltySeconds, settings] = await Promise.all([
+    getModelPoolPenaltySeconds(),
+    readDispatchSettings(),
+  ]);
   const penalizedUntil = new Date(Date.now() + penaltySeconds * 1000);
-  const penaltyReason = `Caller ${callerIdentity} failed this channel ${consecutiveFailureThreshold} times`;
+  const penaltyReason = `IP ${callerIdentity} failed this channel ${settings.penaltyFailureThreshold} times`;
 
   const channel = await prisma.modelPoolChannel.update({
     where: { id: channelId },

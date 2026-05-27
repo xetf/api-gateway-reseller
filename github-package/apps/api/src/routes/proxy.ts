@@ -479,7 +479,7 @@ export async function proxyRoutes(app: FastifyInstance) {
         );
       }
 
-      const stickyIdentity = getGatewaySessionIdentity(
+      const stickyIdentity = clientIp || getGatewaySessionIdentity(
         request,
         body,
         apiKey.id,

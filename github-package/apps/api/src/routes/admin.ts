@@ -121,6 +121,12 @@ import {
   saveExternalAlertSettings,
   sendExternalAlertTest,
 } from "../services/operational-alerts.js";
+import {
+  defaultDispatchSettings,
+  normalizeDispatchSettings,
+  readDispatchSettings,
+  writeDispatchSettings,
+} from "../services/dispatch-settings.js";
 
 const callableChannelStatuses = new Set(["ACTIVE", "FORCED_ACTIVE"]);
 const channelStatusSchema = z.enum([
@@ -133,6 +139,21 @@ const channelStatusSchema = z.enum([
 const modelPoolHealthCheckEndpointSchema = z.enum(
   modelPoolHealthCheckEndpoints,
 );
+const dispatchSettingsSchema = z.object({
+  stickyEnabled: z.boolean().optional(),
+  stickyTtlSeconds: z.number().int().min(60).max(86400).optional(),
+  stickySlowUnbindEnabled: z.boolean().optional(),
+  slowFirstTokenMs: z.number().int().min(1000).max(300000).optional(),
+  slowTotalLatencyMs: z.number().int().min(1000).max(600000).optional(),
+  slowUnbindThreshold: z.number().int().min(1).max(100).optional(),
+  penaltyEnabled: z.boolean().optional(),
+  penaltyFailureThreshold: z.number().int().min(1).max(100).optional(),
+  penaltySeconds: z.number().int().min(1).max(86400).optional(),
+  healthCheckIntervalSeconds: z.number().int().min(5).max(3600).optional(),
+  speedRankPenalty: z.number().int().min(0).max(60000).optional(),
+  stickyHitPenalty: z.number().int().min(0).max(60000).optional(),
+  forceAvailableButtonEnabled: z.boolean().optional(),
+});
 const upstreamProviderKeyStatusSchema = z.enum(["ACTIVE", "DISABLED"]);
 const compactItemTypeSchema = z.enum(["compaction", "compaction_summary"]);
 const userStatusSchema = z.enum([
@@ -1362,6 +1383,121 @@ export async function adminRoutes(app: FastifyInstance) {
 
     await prisma.accessTier.delete({ where: { id: params.id } });
     clearStandardAccessTierCache();
+    return { ok: true };
+  });
+
+  app.get("/admin/dispatch-settings", async () => {
+    const settings = await readDispatchSettings();
+    return { settings, defaults: defaultDispatchSettings };
+  });
+
+  app.patch("/admin/dispatch-settings", async (request) => {
+    const body = dispatchSettingsSchema.parse(request.body);
+    const settings = await writeDispatchSettings(body);
+    return { settings, defaults: defaultDispatchSettings };
+  });
+
+  app.get("/admin/ip-access-tiers", async () => {
+    const rules = await prisma.ipAccessTierRule.findMany({
+      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+      include: {
+        tier: { select: { id: true, code: true, name: true, status: true } },
+      },
+    });
+    return { rules };
+  });
+
+  app.post("/admin/ip-access-tiers", async (request, reply) => {
+    const body = z
+      .object({
+        cidrOrIp: z.string().trim().min(1).max(80),
+        tierId: z.string().min(1),
+        status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
+        priority: z.number().int().min(1).max(10000).default(100),
+        remark: z.string().trim().max(500).nullable().optional(),
+      })
+      .parse(request.body);
+    const tier = await prisma.accessTier.findUnique({
+      where: { id: body.tierId },
+      select: { id: true },
+    });
+    if (!tier) {
+      return reply.status(404).send({ message: "Access tier not found" });
+    }
+    if (!isValidIpAccessPattern(body.cidrOrIp)) {
+      return reply.status(400).send({ message: "IP rule must be IPv4 or IPv4 CIDR" });
+    }
+
+    try {
+      const rule = await prisma.ipAccessTierRule.create({
+        data: {
+          ...body,
+          cidrOrIp: body.cidrOrIp.trim(),
+          remark: normalizeNullableText(body.remark),
+        },
+        include: {
+          tier: { select: { id: true, code: true, name: true, status: true } },
+        },
+      });
+      return { rule };
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return reply.status(409).send({ message: "IP access tier rule already exists" });
+      }
+      throw error;
+    }
+  });
+
+  app.patch("/admin/ip-access-tiers/:id", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        cidrOrIp: z.string().trim().min(1).max(80).optional(),
+        tierId: z.string().min(1).optional(),
+        status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+        priority: z.number().int().min(1).max(10000).optional(),
+        remark: z.string().trim().max(500).nullable().optional(),
+      })
+      .parse(request.body);
+    if (body.cidrOrIp !== undefined && !isValidIpAccessPattern(body.cidrOrIp)) {
+      return reply.status(400).send({ message: "IP rule must be IPv4 or IPv4 CIDR" });
+    }
+    if (body.tierId) {
+      const tier = await prisma.accessTier.findUnique({
+        where: { id: body.tierId },
+        select: { id: true },
+      });
+      if (!tier) {
+        return reply.status(404).send({ message: "Access tier not found" });
+      }
+    }
+
+    try {
+      const rule = await prisma.ipAccessTierRule.update({
+        where: { id: params.id },
+        data: {
+          ...(body.cidrOrIp !== undefined ? { cidrOrIp: body.cidrOrIp.trim() } : {}),
+          ...(body.tierId !== undefined ? { tierId: body.tierId } : {}),
+          ...(body.status !== undefined ? { status: body.status } : {}),
+          ...(body.priority !== undefined ? { priority: body.priority } : {}),
+          ...(body.remark !== undefined ? { remark: normalizeNullableText(body.remark) } : {}),
+        },
+        include: {
+          tier: { select: { id: true, code: true, name: true, status: true } },
+        },
+      });
+      return { rule };
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return reply.status(409).send({ message: "IP access tier rule already exists" });
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/admin/ip-access-tiers/:id", async (request) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    await prisma.ipAccessTierRule.delete({ where: { id: params.id } });
     return { ok: true };
   });
 
@@ -3618,7 +3754,7 @@ export async function adminRoutes(app: FastifyInstance) {
         getModelPoolPenaltySeconds(),
         getModelPoolSuccessGraceSeconds(),
       ]);
-    const [pools, prices, providers, accessTiers] = await Promise.all([
+    const [pools, prices, providers, accessTiers, dispatchSettings] = await Promise.all([
       prisma.modelPool.findMany({
         orderBy: [{ model: "asc" }, { tier: { sortOrder: "asc" } }],
         include: {
@@ -3654,6 +3790,7 @@ export async function adminRoutes(app: FastifyInstance) {
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
         select: { id: true, code: true, name: true, status: true },
       }),
+      readDispatchSettings(),
     ]);
     const priceMap = new Map(
       prices.map((price) => [
@@ -3758,6 +3895,7 @@ export async function adminRoutes(app: FastifyInstance) {
         maxSuccessGraceSeconds: maxModelPoolSuccessGraceSeconds,
         serverNow: serverNow.toISOString(),
       },
+      dispatchSettings,
     };
   });
 
@@ -5032,6 +5170,14 @@ function isUniqueConstraintError(error: unknown) {
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
+  );
+}
+
+function isValidIpAccessPattern(value: string) {
+  const trimmed = value.trim();
+  return Boolean(trimmed) && (
+    ipMatchesPattern(trimmed, trimmed) ||
+    ipMatchesPattern("127.0.0.1", trimmed)
   );
 }
 

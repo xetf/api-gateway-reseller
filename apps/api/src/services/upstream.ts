@@ -11,6 +11,7 @@ import {
   getSpeedScoreMs,
   reserveBalancedModelPoolChannel,
 } from "./routing/channel-selector.js";
+import { readDispatchSettings } from "./dispatch-settings.js";
 import {
   reserveProviderKey,
   type UpstreamKeyReservation,
@@ -44,6 +45,7 @@ type RouteCandidate = {
   price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
   channelId: string;
   speedScoreMs: number;
+  entropyScore: number;
   stickyOccupancy: number;
 };
 type ModelRouteOptions = {
@@ -174,7 +176,7 @@ export async function getProviderForModel(
   decisionTrace.candidates = routeCandidates.map((route) => ({
     channelId: route.channelId,
     provider: route.provider.name,
-    speedScoreMs: route.speedScoreMs,
+    speedScoreMs: route.entropyScore,
     stickyOccupancy: route.stickyOccupancy,
     available: true,
   }));
@@ -319,13 +321,21 @@ async function getRouteCandidates(
   const stickyOccupancies = await getStickyChannelOccupancies(
     availableRoutes.map((route) => route.channelId),
   );
+  const settings = await readDispatchSettings();
 
   return availableRoutes
     .map((route) => ({
       ...route,
       stickyOccupancy: stickyOccupancies.get(route.channelId) ?? 0,
     }))
-    .sort((a, b) => a.speedScoreMs - b.speedScoreMs);
+    .sort((a, b) => a.speedScoreMs - b.speedScoreMs)
+    .map((route, index) => ({
+      ...route,
+      entropyScore:
+        index * settings.speedRankPenalty +
+        route.stickyOccupancy * settings.stickyHitPenalty,
+    }))
+    .sort((a, b) => a.entropyScore - b.entropyScore);
 }
 
 async function getBalancedRoute(
@@ -336,6 +346,7 @@ async function getBalancedRoute(
     >;
     channelId: string;
     speedScoreMs: number;
+    entropyScore: number;
     stickyOccupancy: number;
   }>,
   options: { dryRun?: boolean } = {},
@@ -350,7 +361,7 @@ async function getBalancedRoute(
     : await reserveBalancedModelPoolChannel(
         routes.map((route) => ({
           channelId: route.channelId,
-          speedScoreMs: route.speedScoreMs,
+          speedScoreMs: route.entropyScore,
           stickyOccupancy: route.stickyOccupancy,
         })),
         getInflightPenaltyMs(fastestScoreMs),

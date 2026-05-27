@@ -1,10 +1,8 @@
 import { redis } from "../lib/redis.js";
+import { readDispatchSettings } from "./dispatch-settings.js";
 
 export const modelPoolStickinessTtlSeconds = 600;
-const slowFirstTokenThresholdMs = 15_000;
-const slowTotalLatencyThresholdMs = 50_000;
-const maxConsecutiveSlowCalls = 3;
-const stickyOccupancyTtlSeconds = modelPoolStickinessTtlSeconds + 30;
+const stickyOccupancyGraceSeconds = 30;
 
 export type StickyModelPoolRoute = {
   channelId: string;
@@ -62,10 +60,15 @@ export async function setStickyModelPoolChannel(
   upstreamProviderKeyId?: string | null,
 ) {
   try {
+    const settings = await readDispatchSettings();
+    if (!settings.stickyEnabled) {
+      return;
+    }
+
     const key = stickyKey(callerIdentity, model);
     const previousRoute = parseStickyRoute(await redis.get(key));
     const member = stickyOccupancyMember(callerIdentity, model);
-    const expiresAtMs = Date.now() + modelPoolStickinessTtlSeconds * 1000;
+    const expiresAtMs = Date.now() + settings.stickyTtlSeconds * 1000;
     const operations = redis.multi();
 
     operations.set(
@@ -76,7 +79,7 @@ export async function setStickyModelPoolChannel(
         upstreamProviderKeyId: upstreamProviderKeyId ?? null,
       }),
       "EX",
-      modelPoolStickinessTtlSeconds,
+      settings.stickyTtlSeconds,
     );
 
     if (
@@ -98,12 +101,12 @@ export async function setStickyModelPoolChannel(
 
     const channelOccupancyKey = stickyChannelOccupancyKey(channelId);
     operations.zadd(channelOccupancyKey, expiresAtMs, member);
-    operations.expire(channelOccupancyKey, stickyOccupancyTtlSeconds);
+    operations.expire(channelOccupancyKey, settings.stickyTtlSeconds + stickyOccupancyGraceSeconds);
 
     if (upstreamProviderKeyId) {
       const occupancyKey = stickyProviderKeyOccupancyKey(upstreamProviderKeyId);
       operations.zadd(occupancyKey, expiresAtMs, member);
-      operations.expire(occupancyKey, stickyOccupancyTtlSeconds);
+      operations.expire(occupancyKey, settings.stickyTtlSeconds + stickyOccupancyGraceSeconds);
     }
 
     await operations.exec();
@@ -212,6 +215,10 @@ function parseStickyRoute(value: string | null): StickyModelPoolRoute | null {
 }
 
 export function isStickyCallSlow(params: {
+  settings?: {
+    slowFirstTokenMs: number;
+    slowTotalLatencyMs: number;
+  };
   failed?: boolean;
   streamed?: boolean;
   firstTokenLatencyMs?: number | null;
@@ -226,11 +233,11 @@ export function isStickyCallSlow(params: {
     params.firstTokenLatencyMs !== undefined &&
     params.firstTokenLatencyMs !== null
   ) {
-    return params.firstTokenLatencyMs >= slowFirstTokenThresholdMs;
+    return params.firstTokenLatencyMs >= (params.settings?.slowFirstTokenMs ?? 15_000);
   }
 
   if (params.latencyMs !== undefined && params.latencyMs !== null) {
-    return params.latencyMs > slowTotalLatencyThresholdMs;
+    return params.latencyMs > (params.settings?.slowTotalLatencyMs ?? 45_000);
   }
 
   return false;
@@ -259,7 +266,20 @@ export async function recordStickyModelPoolResult(params: {
     return;
   }
 
-  const slow = ignoreSlowPenalty ? false : isStickyCallSlow(params);
+  const settings = await readDispatchSettings();
+  if (!settings.stickyEnabled) {
+    await clearStickyModelPoolChannel(
+      callerIdentity,
+      model,
+      channelId,
+      upstreamProviderKeyId,
+    );
+    return;
+  }
+
+  const slow = ignoreSlowPenalty || !settings.stickySlowUnbindEnabled
+    ? false
+    : isStickyCallSlow({ ...params, settings });
 
   try {
     const key = slowKey(
@@ -283,9 +303,9 @@ export async function recordStickyModelPoolResult(params: {
     }
 
     const slowCount = await redis.incr(key);
-    await redis.expire(key, modelPoolStickinessTtlSeconds);
+    await redis.expire(key, settings.stickyTtlSeconds);
 
-    if (slowCount >= maxConsecutiveSlowCalls) {
+    if (slowCount >= settings.slowUnbindThreshold) {
       await clearStickyModelPoolChannel(
         callerIdentity,
         model,

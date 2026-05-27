@@ -15,6 +15,8 @@ export type AdminResource =
   | "upstreams"
   | "modelPrices"
   | "modelPools"
+  | "dispatchSettings"
+  | "ipAccessTiers"
   | "accessTiers"
   | "dedicatedRouteRules"
   | "redeemCodes"

@@ -117,6 +117,7 @@ model AccessTier {
   packageTemplates     PackageTemplate[]
   apiRequests          ApiRequest[]
   dedicatedRouteRules  DedicatedRouteRule[]
+  ipAccessTierRules    IpAccessTierRule[]
   redeemCodes          RedeemCode[]
 
   @@index([status, sortOrder])
@@ -495,6 +496,23 @@ model DedicatedRouteRule {
   @@index([status, startsAt, expiresAt])
   @@index([accessTierId])
   @@index([upstreamProviderKeyId])
+}
+
+model IpAccessTierRule {
+  id        String                   @id @default(cuid())
+  cidrOrIp  String
+  tierId    String
+  status    DedicatedRouteRuleStatus @default(ACTIVE)
+  priority  Int                      @default(100)
+  remark    String?
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+
+  tier AccessTier @relation(fields: [tierId], references: [id], onDelete: Restrict)
+
+  @@index([status, priority])
+  @@index([tierId])
+  @@unique([cidrOrIp])
 }
 
 model ModelPoolChannel {

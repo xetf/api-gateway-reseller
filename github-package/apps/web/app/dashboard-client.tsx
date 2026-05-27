@@ -75,6 +75,7 @@ import { Requests, type ApiRequest } from "./admin/_components/request-list";
 import { AdminAuthSettings } from "./admin/_features/admin-auth-settings";
 import { AdminGatewayNotices } from "./admin/_features/admin-gateway-notices";
 import { AdminAuditLogs, AdminLoginLogs } from "./admin/_features/admin-logs";
+import { AdminDispatchPage } from "./admin/_features/admin-dispatch";
 import { AdminModelPoolsPage } from "./admin/_features/admin-model-pools";
 import { AdminOverviewPage } from "./admin/_features/admin-overview";
 import { AdminRedeemCodes } from "./admin/_features/admin-redeem-codes";
@@ -464,6 +465,12 @@ const adminNav = [
     icon: SlidersHorizontal,
   },
   {
+    id: "admin-dispatch",
+    label: "调度与分发",
+    description: "粘性、熵值、惩罚、IP等级",
+    icon: GitBranch,
+  },
+  {
     id: "admin-routing",
     label: "分级专线",
     description: "等级、模型池、专线路由",
@@ -509,7 +516,7 @@ const adminNavGroups = [
   {
     label: "网关",
     items: adminNav.filter((item) =>
-      ["admin-upstreams", "admin-model-pools", "admin-routing"].includes(
+      ["admin-upstreams", "admin-model-pools", "admin-dispatch", "admin-routing"].includes(
         item.id,
       ),
     ),
@@ -553,7 +560,7 @@ const adminWorkspaces = [
     label: "网关配置",
     description: "上游、价格、模型池、专线",
     icon: Server,
-    tabs: ["admin-upstreams", "admin-model-pools", "admin-routing"],
+    tabs: ["admin-upstreams", "admin-model-pools", "admin-dispatch", "admin-routing"],
   },
   {
     id: "traffic-risk",
@@ -592,6 +599,7 @@ const adminTabSlugs = {
   "admin-redeem": "redeem",
   "admin-upstreams": "upstreams",
   "admin-model-pools": "model-pools",
+  "admin-dispatch": "dispatch",
   "admin-routing": "routing",
   "admin-requests": "requests",
   "admin-reports": "reports",
@@ -703,6 +711,11 @@ const pageMeta: Record<
     eyebrow: "网关配置",
     title: "模型池",
     description: "把用户可见模型映射到可用上游，并查看自动检测状态。",
+  },
+  "admin-dispatch": {
+    eyebrow: "网关配置",
+    title: "调度与分发",
+    description: "集中配置 IP 粘性、慢定义、熵值、惩罚、健康检测和 IP 等级。",
   },
   "admin-routing": {
     eyebrow: "网关配置",
@@ -973,6 +986,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         break;
       case "admin-model-pools":
         break;
+      case "admin-dispatch":
         break;
       case "admin-routing":
         await Promise.all([
@@ -1129,6 +1143,8 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         case "admin-upstreams":
           break;
         case "admin-model-pools":
+          break;
+        case "admin-dispatch":
           break;
         case "admin-routing":
           await refreshRouting();
@@ -1424,6 +1440,8 @@ function AdminDashboardContent({
       return <AdminUpstreamsPage onError={onError} />;
     case "admin-model-pools":
       return <AdminModelPoolsPage onError={onError} />;
+    case "admin-dispatch":
+      return <AdminDispatchPage onError={onError} />;
     case "admin-routing":
       return (
         <AdminRouting

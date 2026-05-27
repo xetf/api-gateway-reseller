@@ -154,6 +154,7 @@ type ModelPoolResponse = {
   availableChannels: AvailablePoolChannel[];
   accessTiers?: AccessTier[];
   healthCheck: Omit<ModelPoolHealthCheck, "receivedAtMs">;
+  dispatchSettings?: { forceAvailableButtonEnabled: boolean };
 };
 
 type UpstreamProvidersResponse = {
@@ -201,6 +202,9 @@ export function AdminModelPoolsPage({
           ? { ...modelPools.data.healthCheck, receivedAtMs: healthReceivedAtMs }
           : null
       }
+      forceAvailableButtonEnabled={
+        modelPools.data?.dispatchSettings?.forceAvailableButtonEnabled ?? true
+      }
       onRefreshModelPools={() => void modelPools.refetch()}
       onChanged={() => void modelPools.refetch()}
       onError={onError}
@@ -214,6 +218,7 @@ function AdminModelPools({
   accessTiers,
   upstreamProviders,
   healthCheck,
+  forceAvailableButtonEnabled,
   onRefreshModelPools,
   onChanged,
   onError,
@@ -223,6 +228,7 @@ function AdminModelPools({
   accessTiers: AccessTier[];
   upstreamProviders: UpstreamProvider[];
   healthCheck: ModelPoolHealthCheck | null;
+  forceAvailableButtonEnabled: boolean;
   onRefreshModelPools: () => void;
   onChanged: () => void;
   onError: (error: string | null) => void;
@@ -275,6 +281,7 @@ function AdminModelPools({
   );
   const creatableModelKey = creatableModels.join("|");
   const selectedCreateModel = createModel || creatableModels[0] || "";
+  const groupedModelPools = groupModelPools(modelPools);
 
   useEffect(() => {
     if (healthCheck) {
@@ -1207,21 +1214,31 @@ function AdminModelPools({
           />
         </div>
         <div className="provider-stack model-pool-scroll">
-          {modelPools.map((pool) => {
-            const selectableChannels = channelsForPool(pool);
-            const selectedChannel =
-              channelSelections[pool.id] ||
-              selectableChannels[0]?.upstreamProvider ||
-              "";
-            const callableChannels = pool.channels.filter(
-              isCallableModelPoolChannel,
-            );
-            const unavailableChannels = pool.channels.filter(
-              (channel) => !isCallableModelPoolChannel(channel),
-            );
+          {groupedModelPools.map((modelGroup) => (
+            <section className="provider-panel model-dispatch-model-group" key={modelGroup.model}>
+              <div className="section-head">
+                <div>
+                  <h3 className="section-title">{modelGroup.model}</h3>
+                  <p className="section-subtitle">按访问等级分组；每个等级内分可调用区和不可调用区。</p>
+                </div>
+                <StatusPill status={modelGroup.pools.some((pool) => pool.readyChannelCount > 0) ? "READY" : "UNAVAILABLE"} />
+              </div>
+              <div className="provider-stack">
+                {modelGroup.pools.map((pool) => {
+                  const selectableChannels = channelsForPool(pool);
+                  const selectedChannel =
+                    channelSelections[pool.id] ||
+                    selectableChannels[0]?.upstreamProvider ||
+                    "";
+                  const callableChannels = pool.channels.filter(
+                    isCallableModelPoolChannel,
+                  );
+                  const unavailableChannels = pool.channels.filter(
+                    (channel) => !isCallableModelPoolChannel(channel),
+                  );
 
-            return (
-              <section className="provider-panel" key={pool.id}>
+                  return (
+                    <section className="subpanel" key={pool.id}>
                 <div className="provider-head">
                   <div>
                     <div className="provider-title">
@@ -1390,6 +1407,7 @@ function AdminModelPools({
                           onCheck={checkChannel}
                           onDelete={deleteChannel}
                           onSetStatus={setChannelStatus}
+                          forceAvailableButtonEnabled={forceAvailableButtonEnabled}
                         />
                       ))}
                       {callableChannels.length === 0 ? (
@@ -1414,6 +1432,7 @@ function AdminModelPools({
                           onCheck={checkChannel}
                           onDelete={deleteChannel}
                           onSetStatus={setChannelStatus}
+                          forceAvailableButtonEnabled={forceAvailableButtonEnabled}
                         />
                       ))}
                       {unavailableChannels.length === 0 ? (
@@ -1447,7 +1466,7 @@ function AdminModelPools({
                           >
                             检测
                           </button>
-                          {channel.status !== "FORCED_ACTIVE" ? (
+                          {forceAvailableButtonEnabled && channel.status !== "FORCED_ACTIVE" ? (
                             <button
                               className="button"
                               disabled={busyId === channel.id}
@@ -1561,9 +1580,12 @@ function AdminModelPools({
                     <MobileEmpty>暂无上游渠道</MobileEmpty>
                   ) : null}
                 </div>
-              </section>
-            );
-          })}
+                    </section>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
           {modelPools.length === 0 ? (
             <div className="empty-cell">暂无模型池</div>
           ) : null}
@@ -1658,6 +1680,7 @@ function ModelPoolChannelCard({
   onCheck,
   onDelete,
   onSetStatus,
+  forceAvailableButtonEnabled,
 }: {
   channel: ModelPoolChannel;
   pool: ModelPool;
@@ -1671,6 +1694,7 @@ function ModelPoolChannelCard({
     channel: ModelPoolChannel,
     status: ModelPoolChannelStatus,
   ) => void;
+  forceAvailableButtonEnabled: boolean;
 }) {
   const priceStatus =
     channel.hasPrice && channel.priceEnabled
@@ -1788,7 +1812,7 @@ function ModelPoolChannelCard({
         >
           检测
         </button>
-        {channel.status !== "FORCED_ACTIVE" ? (
+        {forceAvailableButtonEnabled && channel.status !== "FORCED_ACTIVE" ? (
           <button
             className="button"
             disabled={busyId === channel.id}
@@ -2034,6 +2058,24 @@ function penaltyCountdown(
 
   const remaining = penaltyRemainingSeconds(channel, healthCheck, nowMs);
   return remaining === null ? "-" : remaining === 0 ? "到期" : `${remaining}s`;
+}
+
+function groupModelPools(modelPools: ModelPool[]) {
+  const groups = new Map<string, ModelPool[]>();
+  for (const pool of modelPools) {
+    groups.set(pool.model, [...(groups.get(pool.model) ?? []), pool]);
+  }
+
+  return Array.from(groups.entries())
+    .map(([model, pools]) => ({
+      model,
+      pools: pools.sort((left, right) =>
+        (left.tier?.code ?? "standard").localeCompare(
+          right.tier?.code ?? "standard",
+        ),
+      ),
+    }))
+    .sort((left, right) => left.model.localeCompare(right.model));
 }
 
 function normalizeModelPoolHealthCheckEndpoint(

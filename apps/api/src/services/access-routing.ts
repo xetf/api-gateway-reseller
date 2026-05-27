@@ -63,13 +63,18 @@ export async function resolveAccessRoutePolicy(
     listActiveDedicatedRules(),
   ]);
   const matchedRule = findMatchingDedicatedRule(rules, principal);
+  const ipTier = matchedRule
+    ? null
+    : await findMatchingIpAccessTier(principal.clientIp);
   const selectedTierId =
     matchedRule?.accessTierId ??
+    ipTier?.tierId ??
     principal.apiKeyTierId ??
     principal.userTierId ??
     standardTier.id;
   const tier =
     matchedRule?.accessTier ??
+    ipTier?.tier ??
     (await prisma.accessTier.findFirst({
       where: {
         id: selectedTierId,
@@ -86,6 +91,28 @@ export async function resolveAccessRoutePolicy(
     forcedProvider: matchedRule?.upstreamProvider ?? null,
     forcedProviderKeyId: matchedRule?.upstreamProviderKeyId ?? null,
   };
+}
+
+async function findMatchingIpAccessTier(clientIp?: string | null) {
+  if (!clientIp) {
+    return null;
+  }
+
+  const rules = await prisma.ipAccessTierRule.findMany({
+    where: {
+      status: "ACTIVE",
+      tier: { status: "ACTIVE" },
+    },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      cidrOrIp: true,
+      tierId: true,
+      tier: { select: { id: true, code: true } },
+    },
+  });
+
+  return rules.find((rule) => ipMatchesPattern(clientIp, rule.cidrOrIp)) ?? null;
 }
 
 async function listActiveDedicatedRules() {

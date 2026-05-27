@@ -14,6 +14,10 @@ import {
   nextChannelStatusAfterHealthSuccess,
   shouldKeepCallableAfterHealthFailure,
 } from "./routing/channel-state.js";
+import {
+  readDispatchSettings,
+  writeDispatchSettings,
+} from "./dispatch-settings.js";
 
 type HealthLogger = {
   error: (value: unknown, message?: string) => void;
@@ -67,10 +71,8 @@ export async function getModelPoolHealthCheckIntervalSeconds() {
     return cachedHealthCheckIntervalSeconds;
   }
 
-  const setting = await prisma.systemSetting.findUnique({
-    where: { key: modelPoolHealthCheckIntervalSettingKey },
-  });
-  const intervalSeconds = normalizeModelPoolHealthCheckIntervalSeconds(setting?.value);
+  const settings = await readDispatchSettings();
+  const intervalSeconds = normalizeModelPoolHealthCheckIntervalSeconds(settings.healthCheckIntervalSeconds);
 
   cachedHealthCheckIntervalSeconds = intervalSeconds;
   cachedHealthCheckIntervalLoadedAtMs = nowMs;
@@ -81,14 +83,7 @@ export async function getModelPoolHealthCheckIntervalSeconds() {
 export async function setModelPoolHealthCheckIntervalSeconds(value: number) {
   const intervalSeconds = normalizeModelPoolHealthCheckIntervalSeconds(value);
 
-  await prisma.systemSetting.upsert({
-    where: { key: modelPoolHealthCheckIntervalSettingKey },
-    update: { value: String(intervalSeconds) },
-    create: {
-      key: modelPoolHealthCheckIntervalSettingKey,
-      value: String(intervalSeconds),
-    },
-  });
+  await writeDispatchSettings({ healthCheckIntervalSeconds: intervalSeconds });
 
   cachedHealthCheckIntervalSeconds = intervalSeconds;
   cachedHealthCheckIntervalLoadedAtMs = Date.now();
@@ -163,10 +158,8 @@ export async function getModelPoolPenaltySeconds() {
     return cachedPenaltySeconds;
   }
 
-  const setting = await prisma.systemSetting.findUnique({
-    where: { key: modelPoolPenaltySettingKey },
-  });
-  const penaltySeconds = normalizeModelPoolPenaltySeconds(setting?.value);
+  const settings = await readDispatchSettings();
+  const penaltySeconds = normalizeModelPoolPenaltySeconds(settings.penaltySeconds);
 
   cachedPenaltySeconds = penaltySeconds;
   cachedPenaltySecondsLoadedAtMs = nowMs;
@@ -177,14 +170,7 @@ export async function getModelPoolPenaltySeconds() {
 export async function setModelPoolPenaltySeconds(value: number) {
   const penaltySeconds = normalizeModelPoolPenaltySeconds(value);
 
-  await prisma.systemSetting.upsert({
-    where: { key: modelPoolPenaltySettingKey },
-    update: { value: String(penaltySeconds) },
-    create: {
-      key: modelPoolPenaltySettingKey,
-      value: String(penaltySeconds),
-    },
-  });
+  await writeDispatchSettings({ penaltySeconds });
 
   cachedPenaltySeconds = penaltySeconds;
   cachedPenaltySecondsLoadedAtMs = Date.now();
