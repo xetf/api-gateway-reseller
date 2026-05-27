@@ -5872,3 +5872,723 @@ td .button-row.compact {
     max-width: 100%;
   }
 }
+
+/* Admin console redesign: dense enterprise layout with restrained glass surfaces. */
+.shell-admin {
+  --admin-bg: #eef2f6;
+  --admin-surface: rgb(255 255 255 / 76%);
+  --admin-surface-strong: rgb(255 255 255 / 92%);
+  --admin-surface-muted: rgb(248 250 252 / 82%);
+  --admin-border: rgb(148 163 184 / 28%);
+  --admin-border-strong: rgb(100 116 139 / 34%);
+  --admin-shadow: 0 18px 48px rgb(15 23 42 / 9%);
+  --admin-shadow-soft: 0 10px 28px rgb(15 23 42 / 7%);
+  --admin-text-soft: #475569;
+  --admin-accent: #0f766e;
+  --admin-accent-strong: #115e59;
+  --admin-accent-soft: rgb(20 184 166 / 12%);
+  --admin-blue: #2563eb;
+  --admin-danger-soft: rgb(254 242 242 / 92%);
+  --control-height: 36px;
+  grid-template-columns: 264px minmax(0, 1fr);
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 76%), rgb(226 232 240 / 68%)),
+    var(--admin-bg);
+  color: #0f172a;
+}
+
+.shell-admin.sidebar-compact {
+  grid-template-columns: 80px minmax(0, 1fr);
+}
+
+.shell-admin .admin-sidebar {
+  position: relative;
+  border-right: 1px solid rgb(148 163 184 / 26%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 78%), rgb(248 250 252 / 68%)),
+    rgb(255 255 255 / 68%);
+  box-shadow:
+    inset -1px 0 0 rgb(255 255 255 / 76%),
+    12px 0 38px rgb(15 23 42 / 5%);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+
+.shell-admin .brand {
+  min-height: 42px;
+  margin-bottom: 18px;
+}
+
+.shell-admin .brand-mark {
+  border: 1px solid rgb(255 255 255 / 64%);
+  background:
+    linear-gradient(145deg, rgb(15 118 110), rgb(15 23 42));
+  box-shadow:
+    0 10px 22px rgb(15 118 110 / 22%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+.shell-admin .brand-name {
+  color: #0f172a;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.shell-admin .sidebar-toggle {
+  border-color: var(--admin-border);
+  background: rgb(255 255 255 / 74%);
+  color: #334155;
+  backdrop-filter: blur(18px);
+}
+
+.shell-admin .sidebar-toggle:hover {
+  border-color: rgb(15 118 110 / 28%);
+  background: #ffffff;
+  color: var(--admin-accent-strong);
+}
+
+.shell-admin .nav {
+  gap: 16px;
+}
+
+.shell-admin .nav-heading {
+  margin: 0 8px 5px;
+  color: #64748b;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.shell-admin .nav button {
+  min-height: 50px;
+  border-color: transparent;
+  border-radius: 8px;
+  color: #334155;
+  padding: 9px 10px;
+}
+
+.shell-admin .nav button:hover {
+  border-color: var(--admin-border);
+  background: rgb(255 255 255 / 70%);
+  box-shadow: 0 8px 22px rgb(15 23 42 / 5%);
+}
+
+.shell-admin .nav button.active {
+  border-color: rgb(15 118 110 / 24%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 72%), rgb(240 253 250 / 82%)),
+    #ffffff;
+  color: var(--admin-accent-strong);
+  box-shadow:
+    0 10px 26px rgb(15 118 110 / 10%),
+    inset 0 1px 0 rgb(255 255 255 / 86%);
+}
+
+.shell-admin .nav button.active small {
+  color: #0f766e;
+}
+
+.shell-admin .main {
+  position: relative;
+  padding: 18px 22px 22px;
+  background: transparent;
+}
+
+.shell-admin .main::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 32%), transparent 34%),
+    linear-gradient(180deg, rgb(255 255 255 / 46%), transparent 28%);
+}
+
+.shell-admin .admin-command-bar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: 0 0 12px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 72%);
+  box-shadow: var(--admin-shadow-soft);
+  padding: 12px 14px;
+  backdrop-filter: blur(22px) saturate(160%);
+}
+
+.shell-admin .page-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.shell-admin .eyebrow {
+  margin: 0;
+  color: var(--admin-accent-strong);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.shell-admin .topbar h1 {
+  font-size: 24px;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.shell-admin .topbar p {
+  max-width: 780px;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.shell-admin .topbar-side {
+  gap: 8px;
+}
+
+.shell-admin .account-chip {
+  min-height: 34px;
+  border-color: var(--admin-border);
+  background: rgb(255 255 255 / 72%);
+  color: #334155;
+  backdrop-filter: blur(16px);
+}
+
+.shell-admin .account-chip strong {
+  color: var(--admin-accent-strong);
+}
+
+.shell-admin .admin-global-actions {
+  gap: 6px;
+}
+
+.shell-admin .workspace {
+  gap: 12px;
+  padding-right: 6px;
+}
+
+.shell-admin .admin-segmented-control {
+  position: sticky;
+  top: 0;
+  z-index: 9;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 66%);
+  box-shadow: var(--admin-shadow-soft);
+  padding: 5px;
+  backdrop-filter: blur(20px) saturate(160%);
+}
+
+.shell-admin .admin-segmented-control button {
+  min-height: 32px;
+  border-radius: 7px;
+  color: #475569;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.shell-admin .admin-segmented-control button.active {
+  border-color: rgb(15 118 110 / 20%);
+  background: rgb(15 118 110 / 10%);
+  color: var(--admin-accent-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 72%);
+}
+
+.shell-admin .admin-page {
+  gap: 12px;
+}
+
+.shell-admin .card,
+.shell-admin .action-panel,
+.shell-admin .provider-panel,
+.shell-admin .subpanel,
+.shell-admin .pricing-preview,
+.shell-admin .admin-action-card,
+.shell-admin .admin-foldout {
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 82%), rgb(248 250 252 / 72%)),
+    var(--admin-surface);
+  box-shadow:
+    var(--admin-shadow-soft),
+    inset 0 1px 0 rgb(255 255 255 / 78%);
+  backdrop-filter: blur(18px) saturate(145%);
+}
+
+.shell-admin .card,
+.shell-admin .provider-panel {
+  padding: 13px;
+}
+
+.shell-admin .action-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, auto);
+  align-items: center;
+  gap: 14px;
+  padding: 12px 13px;
+}
+
+.shell-admin .action-panel h2 {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 780;
+}
+
+.shell-admin .action-panel p {
+  max-width: 680px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.shell-admin .action-panel > .button-row,
+.shell-admin .section-head > .button-row,
+.shell-admin .provider-head > .button-row,
+.shell-admin .card-head > .button-row {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.shell-admin .action-panel > .button-row {
+  padding-left: 14px;
+  border-left: 1px solid rgb(148 163 184 / 24%);
+}
+
+.shell-admin .admin-toolbar {
+  position: relative;
+  overflow: hidden;
+}
+
+.shell-admin .admin-toolbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, var(--admin-accent), rgb(37 99 235 / 62%));
+}
+
+.shell-admin .admin-toolbar-actions {
+  align-items: center;
+}
+
+.shell-admin .admin-toolbar-actions .button:first-child {
+  min-width: 112px;
+}
+
+.shell-admin .section-head,
+.shell-admin .card-head,
+.shell-admin .provider-head {
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.shell-admin .section-title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.shell-admin .section-subtitle {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.shell-admin .metric {
+  min-height: 96px;
+  border-color: rgb(148 163 184 / 22%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 84%), rgb(248 250 252 / 70%)),
+    rgb(255 255 255 / 76%);
+}
+
+.shell-admin .metric-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.shell-admin .metric-value {
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.shell-admin .metric-caption {
+  color: #64748b;
+}
+
+.shell-admin .table-wrap {
+  border-color: var(--admin-border);
+  background: rgb(255 255 255 / 84%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 74%);
+}
+
+.shell-admin table {
+  font-size: 12px;
+}
+
+.shell-admin th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 1px solid rgb(148 163 184 / 30%);
+  background:
+    linear-gradient(180deg, rgb(248 250 252 / 96%), rgb(241 245 249 / 94%));
+  color: #475569;
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.shell-admin td {
+  border-bottom-color: rgb(226 232 240 / 86%);
+  color: #1e293b;
+  vertical-align: middle;
+}
+
+.shell-admin tbody tr:hover td {
+  background: rgb(240 253 250 / 46%);
+}
+
+.shell-admin td .button-row.compact {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.shell-admin td .button-row.compact .button {
+  min-height: 28px;
+  border-radius: 7px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.shell-admin td .button-row.compact .button.danger {
+  margin-left: 5px;
+}
+
+.shell-admin .button {
+  min-height: 36px;
+  border-radius: 7px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 48%),
+    var(--admin-accent);
+  box-shadow:
+    0 8px 18px rgb(15 118 110 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.shell-admin .button:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 48%),
+    var(--admin-accent-strong);
+  box-shadow:
+    0 10px 22px rgb(15 118 110 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 18%);
+}
+
+.shell-admin .button.secondary {
+  border-color: var(--admin-border);
+  background: rgb(255 255 255 / 70%);
+  color: #334155;
+  box-shadow:
+    0 4px 12px rgb(15 23 42 / 5%),
+    inset 0 1px 0 rgb(255 255 255 / 76%);
+  backdrop-filter: blur(14px);
+}
+
+.shell-admin .button.secondary:hover:not(:disabled),
+.shell-admin .button.secondary.active {
+  border-color: rgb(15 118 110 / 28%);
+  background: rgb(240 253 250 / 82%);
+  color: var(--admin-accent-strong);
+}
+
+.shell-admin .button.danger {
+  border-color: rgb(220 38 38 / 30%);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 48%),
+    #b42318;
+  box-shadow: 0 8px 18px rgb(180 35 24 / 14%);
+}
+
+.shell-admin .button.danger:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 48%),
+    #912018;
+}
+
+.shell-admin .button-count {
+  background: rgb(15 118 110 / 12%);
+  color: var(--admin-accent-strong);
+  font-weight: 800;
+}
+
+.shell-admin .input {
+  min-height: 36px;
+  border-color: rgb(148 163 184 / 34%);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 76%);
+  color: #0f172a;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%);
+}
+
+.shell-admin .input:focus {
+  border-color: rgb(15 118 110 / 48%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 70%),
+    0 0 0 3px rgb(15 118 110 / 12%);
+}
+
+.shell-admin .field span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.shell-admin .form {
+  gap: 10px;
+}
+
+.shell-admin .modal-backdrop {
+  background:
+    linear-gradient(180deg, rgb(15 23 42 / 48%), rgb(15 23 42 / 62%));
+  backdrop-filter: blur(8px);
+}
+
+.shell-admin .form-modal,
+.shell-admin .config-modal {
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 92%), rgb(248 250 252 / 90%)),
+    #ffffff;
+  box-shadow:
+    0 34px 100px rgb(15 23 42 / 32%),
+    inset 0 1px 0 rgb(255 255 255 / 88%);
+}
+
+.shell-admin .modal-header {
+  border-bottom-color: rgb(148 163 184 / 24%);
+  padding: 16px 18px 13px;
+}
+
+.shell-admin .modal-header h2 {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.shell-admin .modal-header p {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.shell-admin .modal-body {
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.shell-admin .modal-footer {
+  border-top-color: rgb(148 163 184 / 24%);
+  background: rgb(248 250 252 / 76%);
+  padding: 12px 18px;
+}
+
+.shell-admin .modal-close:hover {
+  background: rgb(15 118 110 / 8%);
+  color: var(--admin-accent-strong);
+}
+
+.shell-admin .admin-request-filter-card {
+  gap: 12px;
+}
+
+.shell-admin .request-summary-grid {
+  gap: 7px;
+}
+
+.shell-admin .request-summary-tile {
+  min-height: 68px;
+  border-color: rgb(148 163 184 / 22%);
+  background: rgb(255 255 255 / 58%);
+}
+
+.shell-admin .filter-bar,
+.shell-admin .advanced-filter-panel {
+  border: 1px solid rgb(148 163 184 / 22%);
+  border-radius: 8px;
+  background: rgb(248 250 252 / 72%);
+  padding: 10px;
+}
+
+.shell-admin .advanced-filter-panel {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 68%);
+}
+
+.shell-admin .upstream-workbench {
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+}
+
+.shell-admin .upstream-provider-browser {
+  top: 74px;
+  max-height: calc(100dvh - 112px);
+}
+
+.shell-admin .upstream-provider-item {
+  border-color: rgb(148 163 184 / 24%);
+  background: rgb(255 255 255 / 62%);
+}
+
+.shell-admin .upstream-provider-item:hover,
+.shell-admin .upstream-provider-item.active {
+  border-color: rgb(15 118 110 / 28%);
+  background: rgb(240 253 250 / 76%);
+}
+
+.shell-admin .provider-panel {
+  border-left: 1px solid var(--admin-border);
+}
+
+.shell-admin .provider-panel::before {
+  width: 2px;
+  background: linear-gradient(180deg, var(--admin-accent), rgb(37 99 235 / 70%));
+}
+
+.shell-admin .pill {
+  border-color: rgb(148 163 184 / 26%);
+  background: rgb(255 255 255 / 64%);
+}
+
+.shell-admin .pill.ok {
+  border-color: rgb(2 122 72 / 24%);
+  background: rgb(236 253 245 / 82%);
+}
+
+.shell-admin .pill.warn {
+  border-color: rgb(181 71 8 / 24%);
+  background: rgb(255 250 235 / 88%);
+}
+
+.shell-admin .pill.danger {
+  border-color: rgb(180 35 24 / 24%);
+  background: var(--admin-danger-soft);
+}
+
+.shell-admin .notice,
+.shell-admin .success,
+.shell-admin .error {
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 56%);
+}
+
+@media (max-width: 1180px) {
+  .shell-admin .action-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .shell-admin .action-panel > .button-row {
+    justify-content: flex-start;
+    border-left: 0;
+    border-top: 1px solid rgb(148 163 184 / 24%);
+    padding: 10px 0 0;
+  }
+
+  .shell-admin .upstream-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  .shell-admin,
+  .shell-admin.sidebar-compact {
+    background: var(--admin-bg);
+  }
+
+  .shell-admin .admin-sidebar {
+    background: rgb(255 255 255 / 82%);
+    backdrop-filter: blur(18px) saturate(150%);
+  }
+
+  .shell-admin .main {
+    padding: 12px;
+  }
+
+  .shell-admin .admin-command-bar {
+    position: static;
+    align-items: stretch;
+  }
+
+  .shell-admin .admin-segmented-control {
+    position: static;
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .shell-admin .admin-segmented-control button {
+    flex: 0 0 auto;
+  }
+
+  .shell-admin .topbar-side {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .shell-admin .account-chip {
+    min-width: 0;
+  }
+
+  .shell-admin .action-panel > .button-row,
+  .shell-admin .section-head > .button-row,
+  .shell-admin .provider-head > .button-row,
+  .shell-admin .card-head > .button-row {
+    display: flex;
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
+  }
+
+  .shell-admin .action-panel > .button-row .button,
+  .shell-admin .section-head > .button-row .button,
+  .shell-admin .provider-head > .button-row .button,
+  .shell-admin .card-head > .button-row .button {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell-admin .main {
+    padding: 10px;
+  }
+
+  .shell-admin .admin-command-bar {
+    padding: 10px;
+  }
+
+  .shell-admin .topbar h1 {
+    font-size: 21px;
+  }
+
+  .shell-admin .topbar p {
+    font-size: 12px;
+  }
+
+  .shell-admin .card,
+  .shell-admin .action-panel,
+  .shell-admin .provider-panel {
+    padding: 10px;
+  }
+
+  .shell-admin .filter-bar,
+  .shell-admin .advanced-filter-panel {
+    padding: 8px;
+  }
+
+  .shell-admin td .button-row.compact {
+    flex-wrap: wrap;
+  }
+}

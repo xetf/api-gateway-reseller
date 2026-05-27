@@ -2039,7 +2039,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             : "shell"
       }
     >
-      <aside className="sidebar">
+      <aside className={mode === "admin" ? "sidebar admin-sidebar" : "sidebar"}>
         <div className="brand">
           <span className="brand-lockup">
             <span className="brand-mark">A</span>
@@ -2090,7 +2090,11 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         </nav>
       </aside>
       <section className={fixedWorkspace ? "main main-fixed-page" : "main"}>
-        <div className="topbar">
+        <div
+          className={
+            mode === "admin" ? "topbar admin-command-bar" : "topbar"
+          }
+        >
           <div className="page-heading">
             <span className="eyebrow">{currentPage.eyebrow}</span>
             <h1>{currentPage.title}</h1>
@@ -2101,7 +2105,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               <span>{user.email}</span>
               {user.role === "ADMIN" ? <strong>管理员</strong> : null}
             </div>
-            <div className="button-row">
+            <div className="button-row admin-global-actions">
               <button
                 className="button secondary"
                 onClick={() => refreshAll()}
@@ -2567,7 +2571,7 @@ function AdminWorkspaceTabs({
 
   return (
     <div
-      className="admin-workspace-tabs"
+      className="admin-workspace-tabs admin-segmented-control"
       role="tablist"
       aria-label="后台子功能"
     >
@@ -2663,7 +2667,13 @@ function NavButton({
   return (
     <button
       aria-label={item.label}
-      className={active ? "active" : ""}
+      className={[
+        "nav-item",
+        active ? "active" : "",
+        compact ? "compact" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onClick={onClick}
       title={compact ? item.label : undefined}
       type="button"
@@ -9766,7 +9776,7 @@ function AdminUsers({
           />
         ) : null}
 
-        <section className="action-panel">
+        <section className="action-panel admin-toolbar">
           <div>
             <h2>用户操作</h2>
             <p>
@@ -9775,7 +9785,7 @@ function AdminUsers({
                 : "创建账号、调整余额和设置模型权限都从弹窗完成。用户通过邮箱验证码进入。"}
             </p>
           </div>
-          <div className="button-row">
+          <div className="button-row admin-toolbar-actions">
             <button
               className="button"
               onClick={() => {
@@ -13108,20 +13118,12 @@ function AdminModelPools({
         </ModalShell>
       ) : null}
 
-      <section className="action-panel">
+      <section className="action-panel admin-toolbar">
         <div>
           <h2>模型池操作</h2>
           <p>模型池决定用户侧能看到和能调用的模型。</p>
         </div>
-        <div className="button-row">
-          <button
-            className="button secondary"
-            onClick={() => setModelPoolModal("health")}
-            type="button"
-          >
-            <Settings size={17} />
-            检测参数
-          </button>
+        <div className="button-row admin-toolbar-actions">
           <button
             className="button"
             disabled={creatableModels.length === 0 || !selectedCreateTierId}
@@ -13130,6 +13132,14 @@ function AdminModelPools({
           >
             <Plus size={17} />
             添加模型池
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => setModelPoolModal("health")}
+            type="button"
+          >
+            <Settings size={17} />
+            检测参数
           </button>
           <button
             className="button secondary"
@@ -14569,7 +14579,7 @@ function AdminRedeemCodes({
   return (
     <>
       <div className="grid admin-page">
-        <section className="action-panel">
+        <section className="action-panel admin-toolbar">
           <div>
             <h2>兑换码操作</h2>
             <p>生成规则放进弹窗，生成后的明文会在页面上保留一次。</p>
@@ -15555,12 +15565,20 @@ function UpstreamProviders({
   return (
     <>
       <div className="grid admin-page">
-        <section className="action-panel">
+        <section className="action-panel admin-toolbar">
           <div>
             <h2>上游操作</h2>
             <p>新增和编辑上游配置都在弹窗里完成，密钥不会占用列表空间。</p>
           </div>
-          <div className="button-row">
+          <div className="button-row admin-toolbar-actions">
+            <button
+              className="button"
+              onClick={openCreateProvider}
+              type="button"
+            >
+              <Plus size={17} />
+              添加上游
+            </button>
             <button
               className="button secondary"
               onClick={openPriceImportModal}
@@ -15577,14 +15595,6 @@ function UpstreamProviders({
             >
               <SlidersHorizontal size={17} />
               统一定价
-            </button>
-            <button
-              className="button"
-              onClick={openCreateProvider}
-              type="button"
-            >
-              <Plus size={17} />
-              添加上游
             </button>
           </div>
         </section>
