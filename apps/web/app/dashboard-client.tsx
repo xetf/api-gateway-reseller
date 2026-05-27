@@ -832,7 +832,10 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   function switchTab(tab: Tab) {
     setActiveTab(tab);
     if (mode === "admin" && isAdminTab(tab)) {
-      router.push(`/admin/${adminTabSlugs[tab]}`);
+      const nextPath = `/admin/${adminTabSlugs[tab]}`;
+      if (pathname !== nextPath) {
+        router.push(nextPath);
+      }
     }
   }
 
