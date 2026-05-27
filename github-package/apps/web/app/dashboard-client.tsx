@@ -5634,8 +5634,52 @@ function AdminRequests({
   }
 
   return (
-    <div className="grid admin-page admin-requests-page">
-      <section className="card admin-request-filter-card">
+    <div className="grid admin-page admin-requests-page admin-operations-page">
+      <section className="admin-hero-panel admin-requests-hero">
+        <div>
+          <span className="eyebrow">Traffic Audit</span>
+          <h2>全站调用工作台</h2>
+          <p>查询、成本审计、风控动作集中在一个工作台里；高频筛选在左，治理动作在右。</p>
+        </div>
+        <div className="admin-hero-actions">
+          <button
+            className="button secondary"
+            onClick={() => openBanModal()}
+            type="button"
+          >
+            <Shield size={17} />
+            IP 封禁
+            <span className="button-count">{ipBanRules.length}</span>
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => setAutoTerminateModalOpen(true)}
+            type="button"
+          >
+            <CircleStop size={17} />
+            自动终止
+            <span className="button-count">
+              {pendingAutoTerminateSettings?.enabled
+                ? `${pendingAutoTerminateSettings.timeoutSeconds}s`
+                : "关"}
+            </span>
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => setReasoningTransformModalOpen(true)}
+            type="button"
+          >
+            <SlidersHorizontal size={17} />
+            推理转换
+            <span className="button-count">
+              {getEnabledReasoningRulesSummary(
+                reasoningEffortTransformSettings,
+              )}
+            </span>
+          </button>
+        </div>
+      </section>
+      <section className="card admin-request-filter-card admin-query-console">
         <div className="section-head">
           <div>
             <h2 className="section-title">账单与调用筛选</h2>
@@ -5644,41 +5688,6 @@ function AdminRequests({
             </p>
           </div>
           <div className="button-row">
-            <button
-              className="button secondary"
-              onClick={() => openBanModal()}
-              type="button"
-            >
-              <Shield size={17} />
-              IP 封禁
-              <span className="button-count">{ipBanRules.length}</span>
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => setAutoTerminateModalOpen(true)}
-              type="button"
-            >
-              <CircleStop size={17} />
-              自动终止
-              <span className="button-count">
-                {pendingAutoTerminateSettings?.enabled
-                  ? `${pendingAutoTerminateSettings.timeoutSeconds}s`
-                  : "关"}
-              </span>
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => setReasoningTransformModalOpen(true)}
-              type="button"
-            >
-              <SlidersHorizontal size={17} />
-              推理转换
-              <span className="button-count">
-                {getEnabledReasoningRulesSummary(
-                  reasoningEffortTransformSettings,
-                )}
-              </span>
-            </button>
             <button
               aria-expanded={advancedOpen}
               className={
@@ -5929,15 +5938,17 @@ function AdminRequests({
           ) : null}
         </form>
       </section>
-      <Requests
-        requests={requests}
-        ipBanRules={ipBanRules}
-        showCost
-        hasMore={hasMore}
-        loadingMore={loadingMore}
-        onLoadMore={onLoadMore}
-        onRequestTerminated={onRequestTerminated}
-      />
+      <section className="admin-data-workbench">
+        <Requests
+          requests={requests}
+          ipBanRules={ipBanRules}
+          showCost
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={onLoadMore}
+          onRequestTerminated={onRequestTerminated}
+        />
+      </section>
       {autoTerminateModalOpen ? (
         <ModalShell
           title="Pending 自动终止"
@@ -6664,16 +6675,37 @@ function AdminOverviewPanel({
       .slice(0, 4) ?? [];
 
   return (
-    <div className="grid admin-page">
-      <div className="grid cols-3 metric-row">
+    <div className="grid admin-page admin-dashboard-page">
+      <section className="admin-hero-panel">
+        <div>
+          <span className="eyebrow">Control Overview</span>
+          <h2>运营驾驶舱</h2>
+          <p>先看经营指标，再看配置进度和实时健康状态。日常巡检不用在多个卡片之间来回跳。</p>
+        </div>
+        <div className="admin-hero-status">
+          <StatusTile
+            label="初始化"
+            ok={
+              setupWizard
+                ? setupWizard.completed === setupWizard.total
+                : undefined
+            }
+            value={`${setupWizard?.completed ?? 0}/${setupWizard?.total ?? 0}`}
+          />
+          <StatusTile
+            label="网关"
+            ok={serverStatus?.server.database.ok && serverStatus?.server.redis.ok}
+            value={serverStatus ? dateTime(serverStatus.checkedAt) : "加载中"}
+          />
+        </div>
+      </section>
+      <div className="admin-kpi-strip">
         <Metric label="用户数" value={String(overview?.users ?? 0)} />
         <Metric label="总请求数" value={String(overview?.requests ?? 0)} />
         <Metric
           label="总 token"
           value={formatNumber(overview?.totalTokens ?? 0)}
         />
-      </div>
-      <div className="grid cols-3 metric-row">
         <Metric
           label="客户扣费"
           value={`$${money(overview?.revenue ?? "0")}`}
@@ -6687,66 +6719,60 @@ function AdminOverviewPanel({
           value={`$${money(overview?.grossProfit ?? "0")}`}
         />
       </div>
-      <section className="card">
-        <h2 className="section-title">资金概览</h2>
-        <div className="info-list">
-          <InfoLine
-            label="用户余额总额"
-            value={`$${money(overview?.totalWalletBalance ?? "0")}`}
-          />
-          <InfoLine
-            label="累计收入"
-            value={`$${money(overview?.revenue ?? "0")}`}
-          />
-          <InfoLine
-            label="累计成本"
-            value={`$${money(overview?.upstreamCost ?? "0")}`}
-          />
-        </div>
-      </section>
-      <section className="card">
-        <div className="card-head">
-          <div>
-            <h2 className="section-title">首次配置向导</h2>
-            <p className="section-subtitle">
-              按上线顺序检查关键配置是否已经完成。
+      <div className="admin-dashboard-grid">
+        <section className="card admin-command-card">
+          <div className="card-head">
+            <div>
+              <h2 className="section-title">首次配置向导</h2>
+              <p className="section-subtitle">按上线顺序检查关键配置是否已经完成。</p>
+            </div>
+            <StatusPill
+              status={
+                setupWizard && setupWizard.completed === setupWizard.total
+                  ? "READY"
+                  : "WAITING"
+              }
+            />
+          </div>
+          <div className="admin-progress-card">
+            <strong>{setupWizard?.percent ?? 0}%</strong>
+            <span>{setupWizard?.completed ?? 0} / {setupWizard?.total ?? 0}</span>
+            <p>
+              下一步：{setupWizard?.steps.find((step) => !step.completed)?.label ?? "已完成"}
             </p>
           </div>
-          <StatusPill
-            status={
-              setupWizard && setupWizard.completed === setupWizard.total
-                ? "READY"
-                : "WAITING"
-            }
-          />
-        </div>
-        <div className="metric-grid">
-          <Metric
-            label="完成进度"
-            value={`${setupWizard?.percent ?? 0}%`}
-            caption={`${setupWizard?.completed ?? 0} / ${setupWizard?.total ?? 0}`}
-          />
-          <Metric
-            label="下一步"
-            value={
-              setupWizard?.steps.find((step) => !step.completed)?.label ??
-              "已完成"
-            }
-            small
-          />
-        </div>
-        <div className="audit-stack">
-          {(setupWizard?.steps ?? []).map((step) => (
+          <div className="admin-step-list">
+            {(setupWizard?.steps ?? []).map((step) => (
+              <div className={step.completed ? "admin-step done" : "admin-step"} key={step.id}>
+                <span>{step.completed ? "✓" : "•"}</span>
+                <div>
+                  <strong>{step.label}</strong>
+                  <small>{step.detail}</small>
+                </div>
+              </div>
+            ))}
+            {!setupWizard ? <InfoLine label="状态" value="加载中" /> : null}
+          </div>
+        </section>
+        <section className="card admin-command-card">
+          <h2 className="section-title">资金概览</h2>
+          <div className="info-list">
             <InfoLine
-              key={step.id}
-              label={`${step.completed ? "✓" : "•"} ${step.label}`}
-              value={step.detail}
+              label="用户余额总额"
+              value={`$${money(overview?.totalWalletBalance ?? "0")}`}
             />
-          ))}
-          {!setupWizard ? <InfoLine label="状态" value="加载中" /> : null}
-        </div>
-      </section>
-      <section className="card">
+            <InfoLine
+              label="累计收入"
+              value={`$${money(overview?.revenue ?? "0")}`}
+            />
+            <InfoLine
+              label="累计成本"
+              value={`$${money(overview?.upstreamCost ?? "0")}`}
+            />
+          </div>
+        </section>
+      </div>
+      <section className="card admin-monitor-panel">
         <div className="card-head">
           <div>
             <h2 className="section-title">实时状态</h2>
@@ -6920,8 +6946,18 @@ function AdminAuditLogs({
   onSearch: (query: string, outcome: string) => void;
 }) {
   return (
-    <section className="stack">
-      <div className="toolbar">
+    <section className="stack admin-log-page">
+      <section className="admin-hero-panel">
+        <div>
+          <span className="eyebrow">Audit Trail</span>
+          <h2>操作审计工作台</h2>
+          <p>按管理员、动作、路径、目标或 IP 查询后台写操作，重点查看失败和异常来源。</p>
+        </div>
+        <div className="admin-hero-status">
+          <StatusTile label="已加载" ok={logs.length > 0 ? true : undefined} value={`${logs.length} 条`} />
+        </div>
+      </section>
+      <div className="toolbar admin-log-toolbar">
         <form
           className="filter-row"
           onSubmit={(event) => {
@@ -6964,7 +7000,7 @@ function AdminAuditLogs({
         </button>
       </div>
 
-      <section className="card">
+      <section className="card admin-log-table-card">
         <div className="requests-head">
           <h2 className="section-title">后台操作</h2>
           <span className="section-subtitle">已加载 {logs.length} 条</span>
@@ -7049,8 +7085,18 @@ function AdminLoginLogs({
   onSearch: (query: string, success: string) => void;
 }) {
   return (
-    <section className="stack">
-      <div className="toolbar">
+    <section className="stack admin-log-page">
+      <section className="admin-hero-panel">
+        <div>
+          <span className="eyebrow">Login Trail</span>
+          <h2>登录日志工作台</h2>
+          <p>集中排查管理员和用户登录成功、失败、来源 IP 与失败原因。</p>
+        </div>
+        <div className="admin-hero-status">
+          <StatusTile label="已加载" ok={logs.length > 0 ? true : undefined} value={`${logs.length} 条`} />
+        </div>
+      </section>
+      <div className="toolbar admin-log-toolbar">
         <form
           className="filter-row"
           onSubmit={(event) => {
@@ -7092,7 +7138,7 @@ function AdminLoginLogs({
         </button>
       </div>
 
-      <section className="card">
+      <section className="card admin-log-table-card">
         <div className="requests-head">
           <h2 className="section-title">登录记录</h2>
           <span className="section-subtitle">已加载 {logs.length} 条</span>
@@ -9359,6 +9405,24 @@ function AdminUsers({
       .toLowerCase()
       .includes(userSearch.trim().toLowerCase());
   });
+  const activeUserCount = filteredUsers.filter(
+    (item) => item.status === "ACTIVE",
+  ).length;
+  const disabledUserCount = filteredUsers.filter(
+    (item) => item.status === "DISABLED",
+  ).length;
+  const totalWalletBalance = filteredUsers.reduce(
+    (total, item) => total + Number(item.wallet?.balance ?? 0),
+    0,
+  );
+  const totalApiKeys = filteredUsers.reduce(
+    (total, item) => total + item._count.apiKeys,
+    0,
+  );
+  const totalUserRequests = filteredUsers.reduce(
+    (total, item) => total + item._count.apiRequests,
+    0,
+  );
 
   useEffect(() => {
     setAllowedModelsText((selectedUser?.allowedModels ?? []).join("\n"));
@@ -9638,7 +9702,61 @@ function AdminUsers({
 
   return (
     <>
-      <div className="grid admin-page">
+      <div className="grid admin-page admin-users-page">
+        <section className="admin-hero-panel">
+          <div>
+            <span className="eyebrow">
+              {charityOnly ? "Charity Accounts" : "Customer Operations"}
+            </span>
+            <h2>{charityOnly ? "公益账号运营台" : "用户运营台"}</h2>
+            <p>
+              {charityOnly
+                ? "公益服务、公开 Key、单 IP 限流和用户 Key 管理集中处理。"
+                : "账号开通、余额、套餐、模型权限和 Key 管理按运营任务组织。"}
+            </p>
+          </div>
+          <div className="admin-hero-actions">
+            <button
+              className="button"
+              onClick={() => {
+                setEditingUser(null);
+                setUserModal("create");
+              }}
+              type="button"
+            >
+              <Plus size={17} />
+              {charityOnly ? "创建公益用户" : "创建用户"}
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => {
+                setEditingUser(null);
+                setUserModal("balance");
+              }}
+              type="button"
+            >
+              <CreditCard size={17} />
+              余额调整
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => {
+                setEditingUser(null);
+                setUserModal("models");
+              }}
+              type="button"
+            >
+              <SlidersHorizontal size={17} />
+              模型白名单
+            </button>
+          </div>
+        </section>
+        <div className="admin-kpi-strip">
+          <Metric label="当前列表" value={String(filteredUsers.length)} caption={`全部 ${users.length}`} />
+          <Metric label="启用账号" value={String(activeUserCount)} caption={`停用 ${disabledUserCount}`} />
+          <Metric label="余额合计" value={`$${money(totalWalletBalance)}`} />
+          <Metric label="API Key" value={String(totalApiKeys)} caption={`${formatNumber(totalUserRequests)} 请求`} />
+        </div>
         {charityOnly ? (
           <section className="card charity-announcement-settings">
             <div className="section-head">
@@ -9776,9 +9894,9 @@ function AdminUsers({
           />
         ) : null}
 
-        <section className="action-panel admin-toolbar">
+        <section className="action-panel admin-toolbar admin-secondary-toolbar">
           <div>
-            <h2>用户操作</h2>
+            <h2>批量任务入口</h2>
             <p>
               {charityOnly
                 ? "公益账号仍然是普通用户账号；这里单独集中创建、调余额、设模型和管理 Key。"
@@ -9822,7 +9940,7 @@ function AdminUsers({
           </div>
         </section>
 
-        <section className="card">
+        <section className="card admin-user-directory">
           <div className="section-head">
             <div>
               <h2 className="section-title">
@@ -9834,16 +9952,19 @@ function AdminUsers({
                   : "搜索用户、查看余额和模型限制。"}
               </p>
             </div>
-            <input
-              className="input search-input"
-              value={userSearch}
-              onChange={(event) => setUserSearch(event.target.value)}
-              placeholder={
-                charityOnly
-                  ? "搜索邮箱 / 公益名称 / 状态"
-                  : "搜索邮箱 / 状态 / 角色"
-              }
-            />
+            <div className="admin-directory-tools">
+              <input
+                className="input search-input"
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder={
+                  charityOnly
+                    ? "搜索邮箱 / 公益名称 / 状态"
+                    : "搜索邮箱 / 状态 / 角色"
+                }
+              />
+              <span className="pill">{filteredUsers.length} 条</span>
+            </div>
           </div>
           <div className="table-wrap">
             <table>
@@ -12789,7 +12910,26 @@ function AdminModelPools({
   }
 
   return (
-    <div className="grid admin-page">
+    <div className="grid admin-page admin-model-pool-page">
+      <section className="admin-hero-panel">
+        <div>
+          <span className="eyebrow">Model Pool Control</span>
+          <h2>模型池调度工作台</h2>
+          <p>模型池是用户可见模型、访问等级和上游渠道之间的调度层；这里按健康、覆盖和批量维护来组织。</p>
+        </div>
+        <div className="admin-hero-status">
+          <StatusTile
+            label="可调用模型池"
+            ok={modelPools.some((pool) => pool.readyChannelCount > 0)}
+            value={`${modelPools.filter((pool) => pool.readyChannelCount > 0).length}/${modelPools.length}`}
+          />
+          <StatusTile
+            label="自动检测"
+            ok={healthCheck ? healthCheck.intervalSeconds > 0 : undefined}
+            value={healthCheck ? `${healthCheck.intervalSeconds}s` : "加载中"}
+          />
+        </div>
+      </section>
       {modelPoolModal === "health" ? (
         <ModalShell
           title="模型池检测参数"
@@ -13118,7 +13258,7 @@ function AdminModelPools({
         </ModalShell>
       ) : null}
 
-      <section className="action-panel admin-toolbar">
+      <section className="action-panel admin-toolbar admin-secondary-toolbar">
         <div>
           <h2>模型池操作</h2>
           <p>模型池决定用户侧能看到和能调用的模型。</p>
@@ -15564,8 +15704,19 @@ function UpstreamProviders({
 
   return (
     <>
-      <div className="grid admin-page">
-        <section className="action-panel admin-toolbar">
+      <div className="grid admin-page admin-gateway-page">
+        <section className="admin-hero-panel">
+          <div>
+            <span className="eyebrow">Upstream Control</span>
+            <h2>上游渠道工作台</h2>
+            <p>先选渠道，再处理 Key、价格、导入和导出；避免所有上游和价格表同时摊开。</p>
+          </div>
+          <div className="admin-hero-status">
+            <StatusTile label="启用渠道" ok={activeProviderCount > 0} value={`${activeProviderCount}/${providers.length}`} />
+            <StatusTile label="启用价格" ok={enabledPriceCount > 0} value={`${enabledPriceCount}`} />
+          </div>
+        </section>
+        <section className="action-panel admin-toolbar admin-secondary-toolbar">
           <div>
             <h2>上游操作</h2>
             <p>新增和编辑上游配置都在弹窗里完成，密钥不会占用列表空间。</p>
