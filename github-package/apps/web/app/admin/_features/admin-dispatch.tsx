@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Save, Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 import { confirmAdminAction } from "../_components/admin-confirm";
 import { useAdminResource } from "../_components/admin-hooks";
@@ -87,7 +87,11 @@ export function AdminDispatchPage({
   const [busy, setBusy] = useState(false);
 
   const tiers = tiersQuery.data?.tiers ?? [];
-  const activeTiers = tiers.filter((tier) => tier.status === "ACTIVE");
+  const activeTiers = useMemo(
+    () => tiers.filter((tier) => tier.status === "ACTIVE"),
+    [tiers],
+  );
+  const defaultTierId = activeTiers[0]?.id ?? "";
   const rules = ipRulesQuery.data?.rules ?? [];
 
   useEffect(() => {
@@ -99,9 +103,9 @@ export function AdminDispatchPage({
   useEffect(() => {
     setIpDraft((current) => ({
       ...current,
-      tierId: current.tierId || activeTiers[0]?.id || "",
+      tierId: current.tierId || defaultTierId,
     }));
-  }, [activeTiers]);
+  }, [defaultTierId]);
 
   useEffect(() => {
     const error = settingsQuery.error ?? tiersQuery.error ?? ipRulesQuery.error;
