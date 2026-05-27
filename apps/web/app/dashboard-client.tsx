@@ -29,7 +29,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   FormEvent,
   type ReactNode,
@@ -1301,10 +1301,6 @@ function adminTabFromPath(pathname: string | null): AdminTab {
   return (matched?.[0] as AdminTab | undefined) ?? "admin-overview";
 }
 
-function adminTabPath(tab: AdminTab) {
-  return `/admin/${adminTabSlugs[tab]}`;
-}
-
 function adminWorkspaceForTab(tab: AdminTab) {
   return (
     adminWorkspaces.find((workspace) =>
@@ -1420,9 +1416,9 @@ const pageMeta: Record<
 
 export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [token, setTokenState] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(
     mode === "admin" ? adminTabFromPath(pathname) : "overview",
   );
@@ -1511,11 +1507,23 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const adminRequestsLoadedFiltersRef = useRef<RequestFilters>(requestFilters);
 
   useEffect(() => {
+    let cancelled = false;
     const saved = getToken();
     if (saved) {
+      setAuthChecked(false);
       setTokenState(saved);
-      void refreshAll(saved);
+      void refreshAll(saved).finally(() => {
+        if (!cancelled) {
+          setAuthChecked(true);
+        }
+      });
+    } else {
+      setAuthChecked(true);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [mode]);
 
   useEffect(() => {
@@ -1529,12 +1537,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
-    if (mode === "admin" && isAdminTab(tab)) {
-      const nextPath = adminTabPath(tab);
-      if (pathname !== nextPath) {
-        router.push(nextPath);
-      }
-    }
   }
 
   function toggleSidebarCompact() {
@@ -1994,15 +1996,27 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     clearToken();
     setTokenState(null);
     setUser(null);
+    setAuthChecked(true);
     if (mode === "admin") {
       const nextTab: AdminTab = "admin-overview";
       setActiveTab(nextTab);
-      if (pathname !== adminTabPath(nextTab)) {
-        router.replace(adminTabPath(nextTab));
-      }
       return;
     }
     setActiveTab("overview");
+  }
+
+  if (!authChecked) {
+    return (
+      <main className="auth-boot-page">
+        <section className="auth-boot-panel" aria-label="正在进入控制台">
+          <span className="auth-boot-mark">A</span>
+          <div>
+            <strong>正在进入控制台</strong>
+            <p>正在恢复登录状态...</p>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   if (!token || !user) {
