@@ -75,12 +75,36 @@ a {
 .charity-vue-root {
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 15% 8%, rgb(147 197 253 / 72%) 0, transparent 30rem),
-    radial-gradient(circle at 86% 14%, rgb(94 234 212 / 58%) 0, transparent 27rem),
-    radial-gradient(circle at 4% 88%, rgb(125 211 252 / 62%) 0, transparent 36rem),
-    radial-gradient(circle at 96% 84%, rgb(196 181 253 / 58%) 0, transparent 38rem),
-    radial-gradient(circle at 16% 102%, rgb(251 207 232 / 58%) 0, transparent 34rem),
-    radial-gradient(circle at 86% 104%, rgb(45 212 191 / 54%) 0, transparent 38rem),
+    radial-gradient(
+      circle at 15% 8%,
+      rgb(147 197 253 / 72%) 0,
+      transparent 30rem
+    ),
+    radial-gradient(
+      circle at 86% 14%,
+      rgb(94 234 212 / 58%) 0,
+      transparent 27rem
+    ),
+    radial-gradient(
+      circle at 4% 88%,
+      rgb(125 211 252 / 62%) 0,
+      transparent 36rem
+    ),
+    radial-gradient(
+      circle at 96% 84%,
+      rgb(196 181 253 / 58%) 0,
+      transparent 38rem
+    ),
+    radial-gradient(
+      circle at 16% 102%,
+      rgb(251 207 232 / 58%) 0,
+      transparent 34rem
+    ),
+    radial-gradient(
+      circle at 86% 104%,
+      rgb(45 212 191 / 54%) 0,
+      transparent 38rem
+    ),
     linear-gradient(180deg, #f3f8ff 0%, #f7fffd 42%, #f6f3ff 72%, #f3fffd 100%);
   background-attachment: fixed;
 }
@@ -102,8 +126,12 @@ a {
 .charity-vue-chart {
   border: 1px solid rgb(226 232 240 / 92%);
   border-radius: 28px;
-  background:
-    linear-gradient(145deg, rgb(255 255 255) 0%, rgb(255 255 255) 56%, rgb(248 250 252) 100%);
+  background: linear-gradient(
+    145deg,
+    rgb(255 255 255) 0%,
+    rgb(255 255 255) 56%,
+    rgb(248 250 252) 100%
+  );
   box-shadow:
     0 1px 0 rgb(255 255 255 / 95%) inset,
     0 -18px 42px rgb(148 163 184 / 8%) inset,
@@ -348,8 +376,16 @@ a {
   display: grid;
   place-items: center;
   background:
-    radial-gradient(circle at 28% 22%, rgb(147 197 253 / 28%), transparent 24rem),
-    radial-gradient(circle at 78% 80%, rgb(45 212 191 / 24%), transparent 24rem),
+    radial-gradient(
+      circle at 28% 22%,
+      rgb(147 197 253 / 28%),
+      transparent 24rem
+    ),
+    radial-gradient(
+      circle at 78% 80%,
+      rgb(45 212 191 / 24%),
+      transparent 24rem
+    ),
     rgb(15 23 42 / 26%);
   padding: 24px;
   backdrop-filter: blur(16px);
@@ -362,8 +398,16 @@ a {
   border: 1px solid rgb(226 232 240 / 92%);
   border-radius: 28px;
   background:
-    radial-gradient(circle at 10% 0%, rgb(219 234 254 / 92%), transparent 16rem),
-    radial-gradient(circle at 96% 100%, rgb(204 251 241 / 82%), transparent 17rem),
+    radial-gradient(
+      circle at 10% 0%,
+      rgb(219 234 254 / 92%),
+      transparent 16rem
+    ),
+    radial-gradient(
+      circle at 96% 100%,
+      rgb(204 251 241 / 82%),
+      transparent 17rem
+    ),
     linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
   box-shadow:
     0 1px 0 rgb(255 255 255 / 95%) inset,
@@ -1530,7 +1574,11 @@ a {
   overflow: hidden;
   background:
     radial-gradient(circle at 0% 0%, rgb(219 234 254 / 66%), transparent 20rem),
-    radial-gradient(circle at 100% 100%, rgb(204 251 241 / 58%), transparent 22rem),
+    radial-gradient(
+      circle at 100% 100%,
+      rgb(204 251 241 / 58%),
+      transparent 22rem
+    ),
     #ffffff;
 }
 
@@ -1620,8 +1668,7 @@ a {
   min-width: 0;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
   padding: 12px;
   box-shadow: var(--panel-shadow);
 }
@@ -2658,6 +2705,13 @@ tbody tr:hover td {
   flex: 0 0 auto;
 }
 
+.button.compact {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  box-shadow: none;
+}
+
 .button.secondary {
   border-color: var(--line);
   background: #ffffff;
@@ -3037,12 +3091,47 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.admin-action-card,
 .admin-foldout {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: #ffffff;
   box-shadow: var(--panel-shadow);
   overflow: clip;
+}
+
+.admin-action-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 14px;
+}
+
+.admin-action-card > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-action-card strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.admin-action-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.admin-action-card-side {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .admin-foldout-trigger {
