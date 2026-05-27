@@ -5948,14 +5948,14 @@ td .button-row.compact {
 
 .shell-admin .admin-sidebar {
   position: relative;
+  z-index: 2;
   border-right: 1px solid rgb(148 163 184 / 26%);
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 78%), rgb(248 250 252 / 68%)),
-    rgb(255 255 255 / 68%);
+    linear-gradient(180deg, #ffffff, #f8fafc),
+    #ffffff;
   box-shadow:
     inset -1px 0 0 rgb(255 255 255 / 76%),
     12px 0 38px rgb(15 23 42 / 5%);
-  backdrop-filter: blur(24px) saturate(160%);
 }
 
 .shell-admin .brand {
@@ -6040,11 +6040,16 @@ td .button-row.compact {
 .shell-admin .main::before {
   content: "";
   position: fixed;
-  inset: 0;
+  inset: 0 0 0 264px;
   pointer-events: none;
+  z-index: 0;
   background:
     linear-gradient(90deg, rgb(255 255 255 / 32%), transparent 34%),
     linear-gradient(180deg, rgb(255 255 255 / 46%), transparent 28%);
+}
+
+.shell-admin.sidebar-compact .main::before {
+  left: 80px;
 }
 
 .shell-admin .admin-command-bar {
