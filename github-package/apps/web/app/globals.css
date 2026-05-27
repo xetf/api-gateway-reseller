@@ -6833,3 +6833,56 @@ td .button-row.compact {
     flex-wrap: wrap;
   }
 }
+
+/* Performance pass: keep the glass look without live backdrop blurs on dense admin screens. */
+.shell-admin {
+  --admin-shadow: 0 10px 24px rgb(15 23 42 / 6%);
+  --admin-shadow-soft: 0 4px 14px rgb(15 23 42 / 5%);
+}
+
+.shell-admin .admin-sidebar,
+.shell-admin .sidebar-toggle,
+.shell-admin .admin-command-bar,
+.shell-admin .account-chip,
+.shell-admin .admin-segmented-control,
+.shell-admin .card,
+.shell-admin .action-panel,
+.shell-admin .provider-panel,
+.shell-admin .subpanel,
+.shell-admin .pricing-preview,
+.shell-admin .admin-action-card,
+.shell-admin .admin-foldout,
+.shell-admin .button.secondary,
+.shell-admin .admin-hero-panel,
+.shell-admin .admin-log-toolbar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.shell-admin .card,
+.shell-admin .action-panel,
+.shell-admin .provider-panel,
+.shell-admin .subpanel,
+.shell-admin .pricing-preview,
+.shell-admin .admin-action-card,
+.shell-admin .admin-foldout,
+.shell-admin .admin-hero-panel,
+.shell-admin .admin-log-toolbar {
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 70%) inset,
+    var(--admin-shadow-soft);
+}
+
+.shell-admin .table-wrap,
+.shell-admin .audit-table-wrap,
+.shell-admin .model-pool-scroll,
+.shell-admin .upstream-provider-list {
+  transform: translateZ(0);
+  will-change: scroll-position;
+}
+
+.shell-admin .modal-backdrop {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgb(15 23 42 / 58%);
+}
