@@ -6062,16 +6062,28 @@ td .button-row.compact {
 }
 
 .shell-admin .workspace {
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 12px;
   padding-right: 6px;
+}
+
+.shell-admin .workspace.workspace-fixed-page {
+  grid-auto-rows: auto;
 }
 
 .shell-admin .admin-segmented-control {
   position: sticky;
   top: 0;
   z-index: 9;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: start;
+  justify-self: start;
   width: fit-content;
   max-width: 100%;
+  min-height: 44px;
+  height: auto;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
   background: rgb(255 255 255 / 66%);
@@ -6081,11 +6093,14 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-segmented-control button {
+  flex: 0 0 auto;
   min-height: 32px;
+  height: 32px;
   border-radius: 7px;
   color: #475569;
   padding: 0 10px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .shell-admin .admin-segmented-control button.active {
@@ -6502,6 +6517,18 @@ td .button-row.compact {
   padding: 18px;
   overflow: hidden;
   backdrop-filter: blur(20px) saturate(150%);
+}
+
+.shell-admin .admin-segmented-control.admin-workspace-tabs {
+  min-height: 44px;
+  max-height: 44px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.shell-admin .admin-segmented-control.admin-workspace-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .shell-admin .admin-hero-panel h2 {
