@@ -6957,23 +6957,23 @@ td .button-row.compact {
   max-width: 360px;
 }
 
-.admin-console-v2 .shell-admin th:last-child,
-.admin-console-v2 .shell-admin td:last-child {
+.admin-console-v2 .shell-admin .has-sticky-actions th:last-child,
+.admin-console-v2 .shell-admin .has-sticky-actions td:last-child {
   position: sticky;
   right: 0;
   z-index: 1;
   box-shadow: -1px 0 0 rgb(226 232 240 / 92%);
 }
 
-.admin-console-v2 .shell-admin th:last-child {
+.admin-console-v2 .shell-admin .has-sticky-actions th:last-child {
   z-index: 3;
 }
 
-.admin-console-v2 .shell-admin td:last-child {
+.admin-console-v2 .shell-admin .has-sticky-actions td:last-child {
   background: rgb(255 255 255 / 96%);
 }
 
-.admin-console-v2 .shell-admin tbody tr:hover td:last-child {
+.admin-console-v2 .shell-admin .has-sticky-actions tbody tr:hover td:last-child {
   background: rgb(240 253 250 / 96%);
 }
 
@@ -7216,8 +7216,8 @@ td .button-row.compact {
     min-width: 0;
   }
 
-  .admin-console-v2 .shell-admin th:last-child,
-  .admin-console-v2 .shell-admin td:last-child {
+  .admin-console-v2 .shell-admin .has-sticky-actions th:last-child,
+  .admin-console-v2 .shell-admin .has-sticky-actions td:last-child {
     position: static;
     box-shadow: none;
   }

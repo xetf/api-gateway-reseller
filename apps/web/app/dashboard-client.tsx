@@ -49,7 +49,15 @@ import {
 } from "../lib/api";
 import { confirmAdminAction } from "./admin/_components/admin-confirm";
 import { adminDownload } from "./admin/_components/admin-api";
-import { AdminDataTable, AdminPanel } from "./admin/_components/admin-ui";
+import {
+  AdminDataTable,
+  AdminPanel,
+  Metric,
+  MobileField,
+  MobileRecord,
+  StatusPill,
+  StatusTile,
+} from "./admin/_components/admin-ui";
 import { z } from "zod";
 
 type User = {
@@ -1529,6 +1537,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     useState<RequestFilters>(emptyRequestFilters);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshingActivePage, setRefreshingActivePage] = useState(false);
   const loadingModelPoolsRef = useRef(false);
   const loadingAdminRequestsRef = useRef(false);
   const adminRequestsLoadedFiltersRef = useRef<RequestFilters>(requestFilters);
@@ -2156,55 +2165,72 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     setActiveTab("overview");
   }
 
-  function refreshActiveAdminPage() {
-    if (mode !== "admin" || !isAdminTab(activeTab)) {
-      void refreshAll();
+  async function refreshActiveAdminPage() {
+    if (refreshingActivePage) {
       return;
     }
 
-    switch (activeTab) {
-      case "admin-overview":
-        void Promise.all([refreshAdminOverview(), refreshRiskCenter()]);
-        break;
-      case "admin-users":
-      case "admin-charity":
-        void Promise.all([
-          refreshAdminUsers(),
-          refreshCommercialOps(),
-          refreshSettings(),
-        ]);
-        break;
-      case "admin-upstreams":
-        void refreshUpstreams();
-        break;
-      case "admin-model-pools":
-        void refreshModelPools();
-        break;
-      case "admin-routing":
-        void Promise.all([refreshRouting(), refreshModelPools()]);
-        break;
-      case "admin-settings":
-      case "admin-notices":
-        void refreshSettings();
-        break;
-      case "admin-risk":
-        void refreshRiskCenter();
-        break;
-      case "admin-redeem":
-        void refreshRedeemCodes();
-        break;
-      case "admin-requests":
-        void refreshAdminRequests({ filters: requestFilters });
-        break;
-      case "admin-reports":
-        void refreshReports();
-        break;
-      case "admin-audit-logs":
-        void refreshAdminAuditLogs();
-        break;
-      case "admin-login-logs":
-        void refreshLoginLogs();
-        break;
+    setRefreshingActivePage(true);
+    setError(null);
+
+    if (mode !== "admin" || !isAdminTab(activeTab)) {
+      try {
+        await refreshAll();
+      } finally {
+        setRefreshingActivePage(false);
+      }
+      return;
+    }
+
+    try {
+      switch (activeTab) {
+        case "admin-overview":
+          await Promise.all([refreshAdminOverview(), refreshRiskCenter()]);
+          break;
+        case "admin-users":
+        case "admin-charity":
+          await Promise.all([
+            refreshAdminUsers(),
+            refreshCommercialOps(),
+            refreshSettings(),
+          ]);
+          break;
+        case "admin-upstreams":
+          await refreshUpstreams();
+          break;
+        case "admin-model-pools":
+          await refreshModelPools();
+          break;
+        case "admin-routing":
+          await Promise.all([refreshRouting(), refreshModelPools()]);
+          break;
+        case "admin-settings":
+        case "admin-notices":
+          await refreshSettings();
+          break;
+        case "admin-risk":
+          await refreshRiskCenter();
+          break;
+        case "admin-redeem":
+          await refreshRedeemCodes();
+          break;
+        case "admin-requests":
+          await refreshAdminRequests({ filters: requestFilters });
+          break;
+        case "admin-reports":
+          await refreshReports();
+          break;
+        case "admin-audit-logs":
+          await refreshAdminAuditLogs();
+          break;
+        case "admin-login-logs":
+          await refreshLoginLogs();
+          break;
+      }
+    } catch (refreshError) {
+      setError(`刷新失败：${errorToText(refreshError)}`);
+    } finally {
+      setRefreshingActivePage(false);
     }
   }
 
@@ -2325,11 +2351,12 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <div className="button-row admin-global-actions">
               <button
                 className="button secondary"
-                onClick={refreshActiveAdminPage}
+                disabled={refreshingActivePage}
+                onClick={() => void refreshActiveAdminPage()}
                 type="button"
               >
                 <RefreshCw size={17} />
-                <span>刷新</span>
+                <span>{refreshingActivePage ? "刷新中..." : "刷新"}</span>
               </button>
               <button
                 className="button secondary"
@@ -2433,7 +2460,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               loginLogs={loginLogs}
               loginLogQuery={loginLogQuery}
               loginLogSuccess={loginLogSuccess}
-              onRefreshAll={refreshAll}
               onError={setError}
               onRefreshAdminUsers={refreshAdminUsers}
               onRefreshCommercialOps={refreshCommercialOps}
@@ -2511,7 +2537,6 @@ function AdminDashboardContent({
   loginLogs,
   loginLogQuery,
   loginLogSuccess,
-  onRefreshAll,
   onError,
   onRefreshAdminUsers,
   onRefreshCommercialOps,
@@ -2575,7 +2600,6 @@ function AdminDashboardContent({
   loginLogs: LoginLog[];
   loginLogQuery: string;
   loginLogSuccess: string;
-  onRefreshAll: () => void;
   onError: (error: string | null) => void;
   onRefreshAdminUsers: () => Promise<void>;
   onRefreshCommercialOps: () => Promise<void>;
@@ -7484,11 +7508,21 @@ function AdminAuthSettings({
     return parsed.data;
   }
 
+  function authSettingsRequestBody() {
+    const payload = authSettingsPayload();
+    if (!payload) {
+      return null;
+    }
+
+    const { smtpPassword: password, ...body } = payload;
+    return password.trim() ? { ...body, smtpPassword: password } : body;
+  }
+
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onError(null);
     setSavedMessage(null);
-    const payload = authSettingsPayload();
+    const payload = authSettingsRequestBody();
     if (!payload) {
       return;
     }
@@ -7497,12 +7531,7 @@ function AdminAuthSettings({
     try {
       await apiFetch("/admin/auth-settings", {
         method: "PUT",
-        body: JSON.stringify({
-          ...payload,
-          ...(payload.smtpPassword.trim()
-            ? { smtpPassword: payload.smtpPassword }
-            : {}),
-        }),
+        body: JSON.stringify(payload),
       });
       setSmtpPassword("");
       setSavedMessage("登录设置已保存。");
@@ -7520,7 +7549,7 @@ function AdminAuthSettings({
       return;
     }
 
-    const payload = authSettingsPayload();
+    const payload = authSettingsRequestBody();
     if (!payload) {
       return;
     }
@@ -7534,9 +7563,6 @@ function AdminAuthSettings({
         method: "POST",
         body: JSON.stringify({
           ...payload,
-          ...(payload.smtpPassword.trim()
-            ? { smtpPassword: payload.smtpPassword }
-            : {}),
           testEmail,
         }),
       });
@@ -17126,151 +17152,11 @@ function UpstreamProviders({
   );
 }
 
-function Metric({
-  label,
-  value,
-  caption,
-  small = false,
-}: {
-  label: string;
-  value: string;
-  caption?: string;
-  small?: boolean;
-}) {
-  return (
-    <section className="card metric">
-      <div className="metric-label">{label}</div>
-      <div className={`metric-value ${small ? "small" : ""}`}>{value}</div>
-      {caption ? <div className="metric-caption">{caption}</div> : null}
-    </section>
-  );
-}
-
 function InfoLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="info-line">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function StatusTile({
-  label,
-  ok,
-  value,
-}: {
-  label: string;
-  ok: boolean | undefined;
-  value: string;
-}) {
-  const status = ok === undefined ? "WAITING" : ok ? "HEALTHY" : "UNHEALTHY";
-
-  return (
-    <div className="status-tile">
-      <div className="status-tile-head">
-        <span>{label}</span>
-        <StatusPill status={status} strong={ok === false} />
-      </div>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function StatusPill({
-  status,
-  strong = false,
-}: {
-  status: string;
-  strong?: boolean;
-}) {
-  const labelMap: Record<string, string> = {
-    HEALTHY: "正常",
-    UNHEALTHY: "异常",
-    WAITING: "等待",
-    FORCED_ACTIVE: "人工可用",
-    FORCED_READY: "人工可调用",
-    PENALIZED: "惩罚中",
-    AUTO_CHECK_ON: "自动检测开",
-    AUTO_CHECK_OFF: "自动检测关",
-    AUTO_TERMINATE_ON: "自动终止开",
-    AUTO_TERMINATE_OFF: "自动终止关",
-    REASONING_TRANSFORM_ON: "强度转换开",
-    REASONING_TRANSFORM_OFF: "强度转换关",
-    TERMINATED: "已终止",
-  };
-  const ok =
-    status === "ACTIVE" ||
-    status === "SUCCESS" ||
-    status === "HEALTHY" ||
-    status === "READY" ||
-    status === "FORCED_ACTIVE" ||
-    status === "FORCED_READY" ||
-    status === "AUTO_CHECK_ON" ||
-    status === "AUTO_TERMINATE_ON" ||
-    status === "REASONING_TRANSFORM_ON";
-  const danger =
-    status === "FAILED" ||
-    status === "UNHEALTHY" ||
-    status === "REVOKED" ||
-    status === "DISABLED" ||
-    status === "UNAVAILABLE" ||
-    status === "PENALIZED" ||
-    status === "MISSING" ||
-    status === "AUTO_CHECK_OFF" ||
-    status === "AUTO_TERMINATE_OFF" ||
-    status === "REASONING_TRANSFORM_OFF";
-  const special = status === "TERMINATED";
-  return (
-    <span
-      className={`pill ${ok ? "ok" : danger ? "warn" : ""} ${special ? "terminated" : ""} ${strong ? "strong" : ""}`}
-    >
-      {labelMap[status] ?? status}
-    </span>
-  );
-}
-
-function MobileRecord({
-  title,
-  meta,
-  badges,
-  children,
-  actions,
-}: {
-  title: ReactNode;
-  meta?: ReactNode;
-  badges?: ReactNode;
-  children: ReactNode;
-  actions?: ReactNode;
-}) {
-  return (
-    <article className="mobile-record">
-      <div className="mobile-record-head">
-        <div className="mobile-record-title-block">
-          <strong className="mobile-record-title">{title}</strong>
-          {meta ? <p>{meta}</p> : null}
-        </div>
-        {badges ? <div className="mobile-record-badges">{badges}</div> : null}
-      </div>
-      <div className="mobile-field-grid">{children}</div>
-      {actions ? <div className="mobile-actions">{actions}</div> : null}
-    </article>
-  );
-}
-
-function MobileField({
-  label,
-  children,
-  wide = false,
-}: {
-  label: string;
-  children: ReactNode;
-  wide?: boolean;
-}) {
-  return (
-    <div className={wide ? "mobile-field wide" : "mobile-field"}>
-      <span>{label}</span>
-      <strong>{children}</strong>
     </div>
   );
 }
