@@ -6,7 +6,7 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import type { ReactNode } from "react";
+import type { ReactNode, UIEventHandler } from "react";
 
 export function AdminEmptyState({ children }: { children: ReactNode }) {
   return <div className="admin-empty-state">{children}</div>;
@@ -41,20 +41,51 @@ export function AdminDataTable<T>({
   data,
   columns,
   empty,
+  className,
+  onScroll,
+  tableClassName,
 }: {
   data: T[];
   columns: ColumnDef<T>[];
   empty?: ReactNode;
+  className?: string;
+  onScroll?: UIEventHandler<HTMLDivElement>;
+  tableClassName?: string;
 }) {
+  const hasStickyActions = columns.some((column, index) => {
+    if (index !== columns.length - 1) {
+      return false;
+    }
+
+    const key = "accessorKey" in column ? column.accessorKey : undefined;
+    return column.id === "actions" || key === "actions" || column.header === "操作";
+  });
   const table = useReactTable({
     data,
     columns,
+    getRowId: (row, index) => {
+      if (row && typeof row === "object" && "id" in row) {
+        const id = (row as { id?: unknown }).id;
+        if (typeof id === "string" || typeof id === "number") {
+          return String(id);
+        }
+      }
+
+      return String(index);
+    },
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
-    <div className="table-wrap admin-data-table-v2">
-      <table>
+    <div
+      className={
+        className
+          ? `table-wrap admin-data-table-v2${hasStickyActions ? " has-sticky-actions" : ""} ${className}`
+          : `table-wrap admin-data-table-v2${hasStickyActions ? " has-sticky-actions" : ""}`
+      }
+      onScroll={onScroll}
+    >
+      <table className={tableClassName}>
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
