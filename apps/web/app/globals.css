@@ -6605,6 +6605,10 @@ td .button-row.compact {
   min-width: min(420px, 40vw);
 }
 
+.shell-admin .admin-hero-status .status-tile {
+  min-width: 128px;
+}
+
 .shell-admin .admin-hero-actions {
   max-width: 560px;
 }
@@ -7160,6 +7164,18 @@ td .button-row.compact {
   text-align: center;
 }
 
+.admin-console-v2 .admin-page-loading {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  border: 1px solid rgb(203 213 225 / 80%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 82%);
+  color: #475569;
+  font-size: 13px;
+  font-weight: 720;
+}
+
 .admin-console-v2 .admin-request-filter-form {
   min-width: 0;
 }
@@ -7214,6 +7230,11 @@ td .button-row.compact {
   .admin-console-v2 .shell-admin .admin-hero-actions {
     justify-content: flex-start;
     min-width: 0;
+    width: 100%;
+  }
+
+  .admin-console-v2 .shell-admin .admin-hero-status .status-tile {
+    flex: 1 1 160px;
   }
 
   .admin-console-v2 .shell-admin .has-sticky-actions th:last-child,

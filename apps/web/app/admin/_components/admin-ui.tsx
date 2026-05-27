@@ -1,15 +1,59 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
+import { SlidersHorizontal } from "lucide-react";
 import {
   flexRender,
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import type { ReactNode, UIEventHandler } from "react";
+import { useState, type ReactNode, type UIEventHandler } from "react";
 
 export function AdminEmptyState({ children }: { children: ReactNode }) {
   return <div className="admin-empty-state">{children}</div>;
+}
+
+export function ModalShell({
+  title,
+  description,
+  onClose,
+  children,
+  wide = false,
+}: {
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-backdrop" />
+        <Dialog.Content
+          className={wide ? "form-modal modal-wide" : "form-modal"}
+        >
+          <div className="modal-header">
+            <div>
+              <Dialog.Title asChild>
+                <h2>{title}</h2>
+              </Dialog.Title>
+              {description ? (
+                <Dialog.Description asChild>
+                  <p>{description}</p>
+                </Dialog.Description>
+              ) : null}
+            </div>
+            <Dialog.Close className="modal-close" type="button">
+              ×
+            </Dialog.Close>
+          </div>
+          {children}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
 }
 
 export function Metric({
@@ -75,10 +119,14 @@ export function StatusPill({
     REASONING_TRANSFORM_ON: "强度转换开",
     REASONING_TRANSFORM_OFF: "强度转换关",
     TERMINATED: "已终止",
+    success: "成功",
+    failure: "失败",
+    unknown: "未知",
   };
   const ok =
     status === "ACTIVE" ||
     status === "SUCCESS" ||
+    status === "success" ||
     status === "HEALTHY" ||
     status === "READY" ||
     status === "FORCED_ACTIVE" ||
@@ -88,6 +136,7 @@ export function StatusPill({
     status === "REASONING_TRANSFORM_ON";
   const danger =
     status === "FAILED" ||
+    status === "failure" ||
     status === "UNHEALTHY" ||
     status === "REVOKED" ||
     status === "DISABLED" ||
@@ -149,6 +198,67 @@ export function MobileField({
     <div className={wide ? "mobile-field wide" : "mobile-field"}>
       <span>{label}</span>
       <strong>{children}</strong>
+    </div>
+  );
+}
+
+export function MobileEmpty({ children }: { children: ReactNode }) {
+  return <div className="mobile-empty">{children}</div>;
+}
+
+export function AdminFoldout({
+  title,
+  description,
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description?: string;
+  badge?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <>
+      <section className="admin-action-card">
+        <div>
+          <strong>{title}</strong>
+          {description ? <small>{description}</small> : null}
+        </div>
+        <div className="admin-action-card-side">
+          {badge}
+          <button
+            className="button secondary compact"
+            onClick={() => setOpen(true)}
+            type="button"
+          >
+            <SlidersHorizontal size={16} />
+            配置
+          </button>
+        </div>
+      </section>
+      {open ? (
+        <ModalShell
+          description={description}
+          onClose={() => setOpen(false)}
+          title={title}
+          wide
+        >
+          <div className="modal-body">{children}</div>
+        </ModalShell>
+      ) : null}
+    </>
+  );
+}
+
+export function InfoLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="info-line">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }

@@ -9,7 +9,7 @@ export function useAdminResource<T>(
   enabled = true,
 ) {
   return useQuery({
-    queryKey: adminQueryKeys.resource(resource),
+    queryKey: adminQueryKeys.resource(resource, path),
     queryFn: () => adminFetch<T>(path),
     enabled,
   });
