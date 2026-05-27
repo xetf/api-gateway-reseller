@@ -14,6 +14,8 @@ export async function disableExpiredOrOverLimitApiKeys(userId?: string) {
     },
     data: {
       status: "DISABLED",
+      disabledReason: "Expired",
+      disabledAt: now,
     },
   });
 
@@ -36,7 +38,11 @@ export async function disableExpiredOrOverLimitApiKeys(userId?: string) {
     if (await isApiKeyTotalLimitReached(apiKey.id, apiKey.totalLimitUsd?.toString())) {
       await prisma.apiKey.update({
         where: { id: apiKey.id },
-        data: { status: "DISABLED" },
+        data: {
+          status: "DISABLED",
+          disabledReason: "Total quota reached",
+          disabledAt: new Date(),
+        },
       });
     }
   }
@@ -56,7 +62,11 @@ export async function disableApiKeyIfTotalLimitReached(
 
   await prisma.apiKey.update({
     where: { id: apiKey.id },
-    data: { status: "DISABLED" },
+    data: {
+      status: "DISABLED",
+      disabledReason: "Total quota reached",
+      disabledAt: new Date(),
+    },
   });
 
   return true;

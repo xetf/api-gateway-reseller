@@ -12,6 +12,7 @@ import {
 } from "../services/auth-settings.js";
 import { hashPassword, requireUser, verifyPassword } from "../services/auth.js";
 import { sendEmailLoginCode } from "../services/mailer.js";
+import { getClientIp } from "../services/proxy-request-utils.js";
 
 const emailCodeSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
@@ -25,6 +26,9 @@ const adminLoginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 });
+
+const adminLoginMaxFailures = 5;
+const adminLoginWindowSeconds = 15 * 60;
 
 export async function authRoutes(app: FastifyInstance) {
   app.get("/auth/settings", async () => {
@@ -85,8 +89,17 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/auth/email-code/login", async (request, reply) => {
     const body = emailCodeLoginSchema.parse(request.body);
     const settings = await readAuthSettings();
+    const clientIp = getClientIp(request);
 
     if (!settings.emailCodeLoginEnabled) {
+      await writeLoginLog({
+        method: "email_code",
+        email: body.email,
+        success: false,
+        failureReason: "email_code_login_disabled",
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(403).send({ message: "邮箱验证码登录已关闭" });
     }
 
@@ -97,11 +110,27 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     if (attempts > 5) {
+      await writeLoginLog({
+        method: "email_code",
+        email: body.email,
+        success: false,
+        failureReason: "too_many_code_attempts",
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(429).send({ message: "验证码尝试次数过多，请重新获取。" });
     }
 
     const storedHash = await app.redis.get(emailCodeKey(body.email));
     if (!storedHash || storedHash !== hashEmailCode(body.email, body.code)) {
+      await writeLoginLog({
+        method: "email_code",
+        email: body.email,
+        success: false,
+        failureReason: "invalid_or_expired_code",
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(400).send({ message: "验证码无效或已过期。" });
     }
 
@@ -109,12 +138,29 @@ export async function authRoutes(app: FastifyInstance) {
       where: { email: body.email },
     });
 
-    if (user && user.status !== "ACTIVE") {
+    if (user && !["ACTIVE", "TRIAL"].includes(user.status)) {
+      await writeLoginLog({
+        method: "email_code",
+        userId: user.id,
+        email: body.email,
+        success: false,
+        failureReason: `user_status_${user.status}`,
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(401).send({ message: "User is disabled" });
     }
 
     if (!user) {
       if (!settings.emailCodeAutoRegisterEnabled) {
+        await writeLoginLog({
+          method: "email_code",
+          email: body.email,
+          success: false,
+          failureReason: "auto_register_disabled",
+          ip: clientIp,
+          userAgent: request.headers["user-agent"],
+        });
         return reply.status(403).send({ message: "邮箱验证码自动注册已关闭" });
       }
 
@@ -141,6 +187,18 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     await app.redis.del(emailCodeKey(body.email), attemptsKey, emailCodeCooldownKey(body.email));
+    await writeLoginLog({
+      method: "email_code",
+      userId: user.id,
+      email: body.email,
+      success: true,
+      ip: clientIp,
+      userAgent: request.headers["user-agent"],
+    });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
     return authResponse(app, user);
   });
 
@@ -152,20 +210,73 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post("/auth/admin-login", async (request, reply) => {
     const body = adminLoginSchema.parse(request.body);
+    const clientIp = getClientIp(request);
+    const throttleKey = adminLoginThrottleKey(body.username, clientIp);
+    const failures = Number(await app.redis.get(throttleKey));
+    if (Number.isFinite(failures) && failures >= adminLoginMaxFailures) {
+      await writeLoginLog({
+        method: "admin_password",
+        username: body.username,
+        success: false,
+        failureReason: "too_many_login_attempts",
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
+      return reply.status(429).send({
+        message: "登录失败次数过多，请稍后再试。",
+      });
+    }
+
     const user = await prisma.user.findUnique({
       where: { username: body.username },
     });
 
-    if (!user || user.role !== "ADMIN" || user.status !== "ACTIVE") {
+    if (
+      !user ||
+      user.role !== "ADMIN" ||
+      !["ACTIVE", "TRIAL"].includes(user.status)
+    ) {
+      await recordAdminLoginFailure(app, {
+        throttleKey,
+        user,
+        username: body.username,
+        reason: !user ? "user_not_found" : `user_status_or_role_${user.status}`,
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(401).send({ message: "Invalid username or password" });
     }
 
     const valid = await verifyPassword(body.password, user.passwordHash);
 
     if (!valid) {
+      await recordAdminLoginFailure(app, {
+        throttleKey,
+        user,
+        username: body.username,
+        reason: "invalid_password",
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      });
       return reply.status(401).send({ message: "Invalid username or password" });
     }
 
+    await Promise.all([
+      app.redis.del(throttleKey),
+      writeLoginLog({
+        method: "admin_password",
+        userId: user.id,
+        username: body.username,
+        email: user.email,
+        success: true,
+        ip: clientIp,
+        userAgent: request.headers["user-agent"],
+      }),
+      prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      }),
+    ]);
     return authResponse(app, user);
   });
 
@@ -188,6 +299,64 @@ export async function authRoutes(app: FastifyInstance) {
 
     return { user };
   });
+}
+
+async function recordAdminLoginFailure(
+  app: FastifyInstance,
+  input: {
+    throttleKey: string;
+    user: { id: string; email: string } | null;
+    username: string;
+    reason: string;
+    ip: string | null;
+    userAgent?: string | string[];
+  },
+) {
+  const attempts = await app.redis.incr(input.throttleKey);
+  if (attempts === 1) {
+    await app.redis.expire(input.throttleKey, adminLoginWindowSeconds);
+  }
+
+  await writeLoginLog({
+    method: "admin_password",
+    userId: input.user?.id,
+    username: input.username,
+    email: input.user?.email,
+    success: false,
+    failureReason: input.reason,
+    ip: input.ip,
+    userAgent: input.userAgent,
+  });
+}
+
+async function writeLoginLog(input: {
+  method: string;
+  success: boolean;
+  userId?: string | null;
+  email?: string | null;
+  username?: string | null;
+  failureReason?: string | null;
+  ip?: string | null;
+  userAgent?: string | string[];
+}) {
+  await prisma.loginLog.create({
+    data: {
+      method: input.method,
+      success: input.success,
+      userId: input.userId,
+      email: input.email,
+      username: input.username,
+      failureReason: input.failureReason,
+      ip: input.ip,
+      userAgent: Array.isArray(input.userAgent)
+        ? input.userAgent.join(", ")
+        : input.userAgent,
+    },
+  });
+}
+
+function adminLoginThrottleKey(username: string, ip: string | null) {
+  return `admin-login-failures:${username.trim().toLowerCase()}:${ip ?? "unknown"}`;
 }
 
 function isUniqueConstraintError(error: unknown) {
@@ -262,6 +431,7 @@ async function createPublicUser(
       data: {
         userId: created.id,
         type: "RECHARGE",
+        source: "NEW_USER_BONUS",
         amount: bonus.toFixed(8),
         balanceBefore: "0",
         balanceAfter: bonus.toFixed(8),

@@ -39,6 +39,33 @@ export async function redeemCodeRoutes(app: FastifyInstance) {
             throw new RedeemError("兑换码已被使用完。");
           }
 
+          const currentUser = await tx.user.findUnique({
+            where: { id: user.sub },
+            select: { id: true, tierId: true },
+          });
+
+          if (!currentUser) {
+            throw new RedeemError("用户不存在，请重新登录。");
+          }
+
+          if (
+            redeemCode.validUserTierId &&
+            redeemCode.validUserTierId !== currentUser.tierId
+          ) {
+            throw new RedeemError("当前账号等级不能使用这个兑换码。");
+          }
+
+          const redeemedByUser = await tx.redeemCodeRedemption.count({
+            where: {
+              redeemCodeId: redeemCode.id,
+              userId: user.sub,
+            },
+          });
+
+          if (redeemedByUser >= redeemCode.perUserLimit) {
+            throw new RedeemError("你已经达到这个兑换码的使用次数限制。");
+          }
+
           const amount = new Decimal(redeemCode.amount.toString());
           if (!amount.isFinite() || amount.lte(0)) {
             throw new RedeemError("兑换码金额异常，请联系管理员。");
@@ -64,14 +91,19 @@ export async function redeemCodeRoutes(app: FastifyInstance) {
             },
           });
 
-          await tx.redeemCode.update({
-            where: { id: redeemCode.id },
+          const updatedCode = await tx.redeemCode.updateMany({
+            where: {
+              id: redeemCode.id,
+              redeemedCount: { lt: redeemCode.maxRedemptions },
+            },
             data: {
-              redeemedCount: {
-                increment: 1,
-              },
+              redeemedCount: { increment: 1 },
             },
           });
+
+          if (updatedCode.count === 0) {
+            throw new RedeemError("兑换码已被使用完。");
+          }
 
           await tx.redeemCodeRedemption.create({
             data: {
@@ -85,6 +117,7 @@ export async function redeemCodeRoutes(app: FastifyInstance) {
             data: {
               userId: user.sub,
               type: "RECHARGE",
+              source: "REDEEM",
               amount: amount.toFixed(8),
               balanceBefore: balanceBefore.toFixed(8),
               balanceAfter: balanceAfter.toFixed(8),

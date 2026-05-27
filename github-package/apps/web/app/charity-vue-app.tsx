@@ -8,6 +8,8 @@ type CharityDashboard = {
   gateway?: string;
   charityKey?: string | null;
   announcement?: {
+    serviceEnabled?: boolean;
+    serviceDisabledMessage?: string;
     enabled: boolean;
     frequency: "every_visit" | "interval";
     intervalHours: number;
@@ -222,6 +224,9 @@ export default function CharityVueApp({ data }: { data: CharityDashboard | null 
                     ),
                   ],
                 ),
+                !serviceAvailable.value && dashboard.value?.announcement?.serviceDisabledMessage
+                  ? h("p", { class: "service-disabled-message" }, dashboard.value.announcement.serviceDisabledMessage)
+                  : null,
               ]),
             ]),
             h("section", { class: "model-rules-grid" }, [

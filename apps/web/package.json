@@ -8,7 +8,7 @@
     "build": "dotenv -e ../../.env -- next build",
     "start": "dotenv -e ../../.env -- next start -p ${WEB_PORT:-4101}",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.554.0",

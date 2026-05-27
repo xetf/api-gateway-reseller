@@ -15,6 +15,9 @@ enum UserRole {
 enum UserStatus {
   ACTIVE
   DISABLED
+  SUSPENDED
+  TRIAL
+  RISK_REVIEW
 }
 
 enum ApiKeyStatus {
@@ -36,6 +39,20 @@ enum ApiRequestStatus {
   FAILED
 }
 
+enum ApiRequestResultType {
+  PROXIED_SUCCESS
+  UPSTREAM_ERROR
+  GATEWAY_NOTICE
+  IP_BAN
+  RATE_LIMITED
+  INSUFFICIENT_BALANCE
+  MANUAL_TERMINATED
+  AUTO_TERMINATED
+  BILLING_ERROR
+  CLIENT_CLOSED
+  GATEWAY_ERROR
+}
+
 enum UpstreamProviderStatus {
   ACTIVE
   DISABLED
@@ -46,6 +63,65 @@ enum RedeemCodeStatus {
   DISABLED
 }
 
+enum AccessTierStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum DedicatedRouteTargetType {
+  USER
+  API_KEY
+  IP
+}
+
+enum DedicatedRouteRuleStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TenantStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum PackageTemplateStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum BillingAccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+}
+
+model AccessTier {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  name        String
+  status      AccessTierStatus @default(ACTIVE)
+  sortOrder   Int              @default(100)
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  users                User[]
+  apiKeys              ApiKey[]
+  modelPools           ModelPool[]
+  packageTemplates     PackageTemplate[]
+  apiRequests          ApiRequest[]
+  dedicatedRouteRules  DedicatedRouteRule[]
+  redeemCodes          RedeemCode[]
+
+  @@index([status, sortOrder])
+}
+
 model User {
   id           String     @id @default(cuid())
   email        String     @unique
@@ -54,21 +130,121 @@ model User {
   passwordHash String
   role         UserRole   @default(USER)
   status       UserStatus @default(ACTIVE)
+  statusReason String?
   allowedModels String[]   @default([])
   rateLimitPerMinute Int    @default(0)
   concurrencyLimit   Int    @default(0)
   charityEnabled     Boolean @default(false)
   charityDisplayName String?
   charityKey         String?
+  charityIpRateLimitEnabled Boolean @default(false)
+  charityIpRateLimitPerMinute Int @default(0)
+  tierId       String?
+  tenantId     String?
+  packageTemplateId String?
   tokenVersion       Int    @default(0)
+  lastLoginAt DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  tier               AccessTier? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  tenant             Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  packageTemplate    PackageTemplate? @relation(fields: [packageTemplateId], references: [id], onDelete: SetNull)
+  billingAccount     BillingAccount?
   apiKeys            ApiKey[]
   wallet             Wallet?
   walletTransactions WalletTransaction[]
   apiRequests        ApiRequest[]
   redeemRedemptions  RedeemCodeRedemption[]
+  dedicatedRouteRules DedicatedRouteRule[] @relation("DedicatedRouteRuleUser")
+  createdModelPrices ModelPrice[]
+  loginLogs          LoginLog[]
+
+  @@index([tierId])
+  @@index([tenantId])
+  @@index([packageTemplateId])
+  @@index([status])
+}
+
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  code        String       @unique
+  status      TenantStatus @default(ACTIVE)
+  reseller    Boolean      @default(false)
+  contactEmail String?
+  remark      String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  users User[]
+
+  @@index([status, reseller])
+}
+
+model PackageTemplate {
+  id                    String                @id @default(cuid())
+  name                  String
+  code                  String                @unique
+  status                PackageTemplateStatus @default(ACTIVE)
+  tierId                String?
+  allowedModels         String[]              @default([])
+  rateLimitPerMinute    Int                   @default(0)
+  concurrencyLimit      Int                   @default(0)
+  initialBalanceUsd     Decimal               @default(0) @db.Decimal(18, 8)
+  monthlyCreditLimitUsd Decimal               @default(0) @db.Decimal(18, 8)
+  remark                String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  tier  AccessTier? @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  users User[]
+
+  @@index([status])
+  @@index([tierId])
+}
+
+model BillingAccount {
+  id                    String               @id @default(cuid())
+  userId                String               @unique
+  status                BillingAccountStatus @default(ACTIVE)
+  monthlySettlement     Boolean              @default(false)
+  creditLimitUsd        Decimal              @default(0) @db.Decimal(18, 8)
+  creditUsedUsd         Decimal              @default(0) @db.Decimal(18, 8)
+  billingDay            Int                  @default(1)
+  invoiceTitle          String?
+  taxNumber             String?
+  billingEmail          String?
+  remark                String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([status, monthlySettlement])
+}
+
+model Invoice {
+  id               String        @id @default(cuid())
+  billingAccountId String
+  invoiceNo        String        @unique
+  status           InvoiceStatus @default(DRAFT)
+  amountUsd        Decimal       @db.Decimal(18, 8)
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  issuedAt         DateTime?
+  paidAt           DateTime?
+  title            String?
+  taxNumber        String?
+  remark           String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  billingAccount BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+
+  @@index([billingAccountId, createdAt])
+  @@index([status, createdAt])
 }
 
 model ApiKey {
@@ -86,22 +262,32 @@ model ApiKey {
   concurrencyLimit   Int          @default(0)
   noticeEnabled      Boolean      @default(false)
   noticeText         String?
+  tags               String[]     @default([])
+  disabledReason     String?
+  disabledAt         DateTime?
+  ipWhitelist        String[]     @default([])
+  tierId             String?
   expiresAt          DateTime?
   lastUsedAt         DateTime?
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
+  tier        AccessTier?  @relation(fields: [tierId], references: [id], onDelete: SetNull)
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   apiRequests ApiRequest[]
+  dedicatedRouteRules DedicatedRouteRule[] @relation("DedicatedRouteRuleApiKey")
 
   @@index([userId])
   @@index([keyPrefix])
+  @@index([tierId])
+  @@index([status, disabledAt])
 }
 
 model Wallet {
   id        String   @id @default(cuid())
   userId    String   @unique
   balance   Decimal  @default(0) @db.Decimal(18, 8)
+  reservedBalance Decimal @default(0) @db.Decimal(18, 8)
   currency  String   @default("USD")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -114,6 +300,7 @@ model WalletTransaction {
   userId        String
   requestId     String?
   type          WalletTransactionType
+  source        String                @default("UNKNOWN")
   amount        Decimal               @db.Decimal(18, 8)
   balanceBefore Decimal               @db.Decimal(18, 8)
   balanceAfter  Decimal               @db.Decimal(18, 8)
@@ -126,6 +313,7 @@ model WalletTransaction {
 
   @@index([userId, createdAt])
   @@index([requestId])
+  @@index([source, createdAt])
 }
 
 model ApiRequest {
@@ -141,6 +329,7 @@ model ApiRequest {
   endpoint          String
   method            String
   status            ApiRequestStatus @default(PENDING)
+  resultType        ApiRequestResultType?
   httpStatus        Int?
   inputTokens       Int              @default(0)
   cachedInputTokens Int              @default(0)
@@ -148,6 +337,7 @@ model ApiRequest {
   totalTokens       Int              @default(0)
   upstreamCostUsd   Decimal          @default(0) @db.Decimal(18, 8)
   chargedAmountUsd  Decimal          @default(0) @db.Decimal(18, 8)
+  reservedAmountUsd Decimal          @default(0) @db.Decimal(18, 8)
   latencyMs         Int?
   firstTokenLatencyMs Int?
   errorMessage      String?
@@ -156,19 +346,71 @@ model ApiRequest {
   userAgent         String?
   requestBody       Json?
   responseUsage     Json?
+  accessTierId      String?
+  dedicatedRouteRuleId String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   apiKey             ApiKey?             @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
   upstreamProviderKey UpstreamProviderKey? @relation(fields: [upstreamProviderKeyId], references: [id], onDelete: SetNull)
+  accessTier         AccessTier?         @relation(fields: [accessTierId], references: [id], onDelete: SetNull)
+  dedicatedRouteRule DedicatedRouteRule?  @relation(fields: [dedicatedRouteRuleId], references: [id], onDelete: SetNull)
   walletTransactions WalletTransaction[]
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
   @@index([upstreamProviderKeyId, createdAt])
+  @@index([accessTierId, createdAt])
+  @@index([dedicatedRouteRuleId, createdAt])
   @@index([status, createdAt])
+  @@index([resultType, createdAt])
   @@index([model, createdAt])
+}
+
+model AdminAuditLog {
+  id             String   @id @default(cuid())
+  adminUserId    String?
+  adminEmail     String?
+  action         String
+  method         String
+  path           String
+  targetType     String?
+  targetId       String?
+  requestBody    Json?
+  responseStatus Int?
+  outcome        String?
+  errorMessage   String?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  @@index([adminUserId, createdAt])
+  @@index([action, createdAt])
+  @@index([outcome, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([createdAt])
+}
+
+model LoginLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  email        String?
+  username     String?
+  method       String
+  success      Boolean
+  failureReason String?
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([email, createdAt])
+  @@index([username, createdAt])
+  @@index([method, success, createdAt])
+  @@index([ip, createdAt])
 }
 
 model ModelPrice {
@@ -186,27 +428,73 @@ model ModelPrice {
   customerPriceMultiplier Decimal @default(1) @db.Decimal(18, 8)
   minimumChargeUsd        Decimal  @default(0) @db.Decimal(18, 8)
   enabled                 Boolean  @default(true)
+  priceVersion            String   @default("v1")
+  effectiveFrom           DateTime?
+  effectiveTo             DateTime?
+  createdByUserId         String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
+  createdBy User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
   @@index([enabled])
   @@index([upstreamProvider, enabled])
+  @@index([priceVersion])
+  @@index([effectiveFrom, effectiveTo])
+  @@index([createdByUserId])
   @@unique([upstreamProvider, model])
 }
 
 model ModelPool {
   id                     String             @id @default(cuid())
-  model                  String             @unique
+  model                  String
+  tierId                 String?
   status                 String             @default("ACTIVE")
   autoHealthCheckEnabled Boolean            @default(true)
   healthCheckEndpoint    String             @default("responses")
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @default(now()) @updatedAt
 
+  tier     AccessTier? @relation(fields: [tierId], references: [id], onDelete: SetNull)
   channels ModelPoolChannel[]
 
   @@index([status])
+  @@index([tierId])
   @@index([autoHealthCheckEnabled])
+  @@unique([model, tierId])
+}
+
+model DedicatedRouteRule {
+  id                    String                   @id @default(cuid())
+  name                  String
+  targetType            DedicatedRouteTargetType
+  userId                String?
+  apiKeyId              String?
+  ipPattern             String?
+  accessTierId          String
+  upstreamProvider      String?
+  upstreamProviderKeyId String?
+  status                DedicatedRouteRuleStatus @default(ACTIVE)
+  priority              Int                      @default(100)
+  startsAt              DateTime?
+  expiresAt             DateTime?
+  remark                String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user                User?                @relation("DedicatedRouteRuleUser", fields: [userId], references: [id], onDelete: Cascade)
+  apiKey              ApiKey?              @relation("DedicatedRouteRuleApiKey", fields: [apiKeyId], references: [id], onDelete: Cascade)
+  accessTier          AccessTier           @relation(fields: [accessTierId], references: [id], onDelete: Restrict)
+  upstreamProviderKey UpstreamProviderKey?  @relation(fields: [upstreamProviderKeyId], references: [id], onDelete: SetNull)
+  apiRequests         ApiRequest[]
+
+  @@index([targetType, status, priority])
+  @@index([userId, status, priority])
+  @@index([apiKeyId, status, priority])
+  @@index([ipPattern, status, priority])
+  @@index([status, startsAt, expiresAt])
+  @@index([accessTierId])
+  @@index([upstreamProviderKeyId])
 }
 
 model ModelPoolChannel {
@@ -263,6 +551,8 @@ model UpstreamProviderKey {
   upstreamProviderId String
   name               String
   key                String
+  encryptedKey       String?
+  encryptionKeyVersion String?
   keyPrefix          String
   status             String   @default("ACTIVE")
   priority           Int      @default(100)
@@ -270,14 +560,22 @@ model UpstreamProviderKey {
   lastCheckStatus    String?
   lastCheckedAt      DateTime?
   lastError          String?
+  dailyLimitUsd      Decimal? @db.Decimal(18, 8)
+  monthlyLimitUsd    Decimal? @db.Decimal(18, 8)
+  providerRateLimit  Int?
+  disabledReason     String?
+  lastErrorCategory  String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   upstreamProvider UpstreamProvider @relation(fields: [upstreamProviderId], references: [id], onDelete: Cascade)
   apiRequests      ApiRequest[]
+  dedicatedRouteRules DedicatedRouteRule[]
 
   @@index([upstreamProviderId, status, priority])
   @@index([lastUsedAt])
+  @@index([encryptionKeyVersion])
+  @@index([lastErrorCategory])
   @@unique([upstreamProviderId, name])
 }
 
@@ -293,13 +591,19 @@ model RedeemCode {
   expiresAt       DateTime?
   createdByUserId String?
   remark          String?
+  campaignName    String?
+  validUserTierId String?
+  perUserLimit    Int                @default(1)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
   redemptions RedeemCodeRedemption[]
+  validUserTier AccessTier?          @relation(fields: [validUserTierId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([codePrefix])
+  @@index([campaignName])
+  @@index([validUserTierId])
 }
 
 model RedeemCodeRedemption {
@@ -312,7 +616,6 @@ model RedeemCodeRedemption {
   redeemCode RedeemCode @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([redeemCodeId, userId])
   @@index([userId, createdAt])
   @@index([redeemCodeId, createdAt])
 }

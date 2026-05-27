@@ -12,6 +12,7 @@ export async function walletRoutes(app: FastifyInstance) {
       select: {
         id: true,
         balance: true,
+        reservedBalance: true,
         currency: true,
         createdAt: true,
         updatedAt: true,
@@ -74,6 +75,7 @@ export async function walletRoutes(app: FastifyInstance) {
           data: {
             userId: body.userId,
             type: "RECHARGE",
+            source: "ADMIN_RECHARGE",
             amount: amount.toFixed(8),
             balanceBefore: balanceBefore.toFixed(8),
             balanceAfter: balanceAfter.toFixed(8),

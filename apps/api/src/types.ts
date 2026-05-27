@@ -3,7 +3,19 @@ import type { ApiKey, User } from "@gateway/db";
 
 export type AuthenticatedUser = Pick<
   User,
-  "id" | "email" | "role" | "status" | "allowedModels" | "rateLimitPerMinute" | "concurrencyLimit" | "tokenVersion"
+  | "id"
+  | "email"
+  | "role"
+  | "status"
+  | "statusReason"
+  | "allowedModels"
+  | "rateLimitPerMinute"
+  | "concurrencyLimit"
+  | "charityEnabled"
+  | "charityIpRateLimitEnabled"
+  | "charityIpRateLimitPerMinute"
+  | "tierId"
+  | "tokenVersion"
 >;
 
 export type ApiKeyAuth = {

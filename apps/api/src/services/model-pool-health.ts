@@ -4,7 +4,16 @@ import {
   formatUpstreamKeyLabel,
   getActiveProviderKeys,
 } from "./upstream-provider-keys.js";
+import { resolveStoredUpstreamKey } from "./upstream-key-encryption.js";
 import { buildUpstreamUrl } from "./upstream.js";
+import {
+  canHealthCheckModelPoolChannel,
+  healthCheckedChannelStatuses,
+  isPenalizedModelPoolChannel,
+  nextChannelStatusAfterHealthFailure,
+  nextChannelStatusAfterHealthSuccess,
+  shouldKeepCallableAfterHealthFailure,
+} from "./routing/channel-state.js";
 
 type HealthLogger = {
   error: (value: unknown, message?: string) => void;
@@ -34,8 +43,6 @@ export const maxModelPoolPenaltySeconds = 86400;
 export const modelPoolPenaltySettingKey = "model_pool_penalty_seconds";
 const schedulerTickMs = 1_000;
 const maxCheckMs = 30_000;
-const checkedChannelStatuses = ["ACTIVE", "UNAVAILABLE"];
-const checkedChannelStatusSet = new Set(checkedChannelStatuses);
 const inFlightChannelChecks = new Map<
   string,
   {
@@ -214,7 +221,7 @@ export function getModelPoolChannelHealthTiming(
     ? channel.lastSuccessfulCallAt.getTime() + successGraceMs
     : null;
 
-  if (channel.status === "PENALIZED") {
+  if (isPenalizedModelPoolChannel(channel.status)) {
     const penaltyRemainingSeconds = penalizedUntilMs === null
       ? null
       : Math.max(0, Math.ceil((penalizedUntilMs - now.getTime()) / 1000));
@@ -231,7 +238,7 @@ export function getModelPoolChannelHealthTiming(
     };
   }
 
-  if (!checkedChannelStatusSet.has(channel.status)) {
+  if (!canHealthCheckModelPoolChannel(channel.status)) {
     return {
       isChecking,
       checkingStartedAt: inFlightCheck?.startedAt.toISOString() ?? null,
@@ -395,9 +402,20 @@ async function performModelPoolChannelCheck(
     return markChannelFailure(channel, "No active upstream key is available", undefined, options);
   }
 
+  const resolvedActiveKeys = activeKeys
+    .map((key) => ({
+      ...key,
+      key: resolveStoredUpstreamKey(key),
+    }))
+    .filter((key) => key.key);
+
+  if (resolvedActiveKeys.length === 0) {
+    return markChannelFailure(channel, "No decryptable active upstream key is available", undefined, options);
+  }
+
   const healthCheckEndpoint = normalizeModelPoolHealthCheckEndpoint(channel.modelPool.healthCheckEndpoint);
   const keyResults = await Promise.all(
-    activeKeys.map((key) =>
+    resolvedActiveKeys.map((key) =>
       probeProviderKey({
         baseUrl: provider.baseUrl,
         apiKey: key.key,
@@ -484,7 +502,7 @@ async function findDueModelPoolChannels() {
     where: {
       OR: [
         {
-          status: { in: checkedChannelStatuses },
+          status: { in: [...healthCheckedChannelStatuses] },
           modelPool: {
             status: "ACTIVE",
             autoHealthCheckEnabled: true,
@@ -578,11 +596,11 @@ function isModelPoolChannelDueForHealthCheck(
   intervalMs: number,
   successGraceMs = 0,
 ) {
-  if (channel.status === "PENALIZED") {
+  if (isPenalizedModelPoolChannel(channel.status)) {
     return Boolean(channel.penalizedUntil && channel.penalizedUntil.getTime() <= nowMs);
   }
 
-  if (!checkedChannelStatusSet.has(channel.status)) {
+  if (!canHealthCheckModelPoolChannel(channel.status)) {
     return false;
   }
 
@@ -634,19 +652,19 @@ async function markChannelSuccess(
   const nextRecoverySuccesses = channel.status === "FORCED_ACTIVE"
     ? 0
     : Math.min(recoverySuccessThreshold, channel.recoverySuccesses + 1);
-  const shouldRestoreActive = channel.status === "ACTIVE" || nextRecoverySuccesses >= recoverySuccessThreshold;
+  const nextStatus = nextChannelStatusAfterHealthSuccess(
+    channel.status,
+    nextRecoverySuccesses,
+    recoverySuccessThreshold,
+  );
 
   return prisma.modelPoolChannel.update({
     where: { id: channel.id },
     data: {
-      status: channel.status === "FORCED_ACTIVE"
-        ? "FORCED_ACTIVE"
-        : shouldRestoreActive
-          ? "ACTIVE"
-          : "UNAVAILABLE",
+      status: nextStatus,
       priority: Math.max(1, firstTokenLatencyMs ?? latencyMs),
       consecutiveFailures: 0,
-      recoverySuccesses: shouldRestoreActive ? 0 : nextRecoverySuccesses,
+      recoverySuccesses: nextStatus === "ACTIVE" ? 0 : nextRecoverySuccesses,
       penalizedUntil: null,
       penaltyReason: null,
       lastCheckStatus: "SUCCESS",
@@ -665,12 +683,11 @@ async function markChannelFailure(
   options: ChannelHealthCheckOptions = {},
 ) {
   const consecutiveFailures = channel.consecutiveFailures + 1;
-  const shouldKeepCallable = channel.status === "FORCED_ACTIVE";
 
   return prisma.modelPoolChannel.update({
     where: { id: channel.id },
     data: {
-      status: shouldKeepCallable ? "FORCED_ACTIVE" : "UNAVAILABLE",
+      status: nextChannelStatusAfterHealthFailure(channel.status),
       priority: Math.min(10_000, channel.priority + 1000),
       consecutiveFailures,
       recoverySuccesses: 0,
@@ -688,7 +705,7 @@ async function markChannelFailure(
 async function forceUnavailableAfterFailedCheck(channel: ModelPoolChannel | null) {
   if (
     !channel ||
-    channel.status === "FORCED_ACTIVE" ||
+    shouldKeepCallableAfterHealthFailure(channel.status) ||
     channel.status === "UNAVAILABLE" ||
     channel.lastCheckStatus !== "FAILED"
   ) {

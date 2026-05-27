@@ -66,7 +66,21 @@ const createKeySchema = z.object({
   expiresAt: expiresAtSchema,
   concurrencyLimit: z.number().int().min(0).max(10000).default(0),
   allowedModels: z.array(z.string()).default([]),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  ipWhitelist: z.array(z.string().trim().min(1).max(128)).max(100).default([]),
 });
+
+function normalizeTags(tags: string[] | undefined) {
+  return Array.from(
+    new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
+  ).slice(0, 20);
+}
+
+function normalizeIpPatterns(patterns: string[] | undefined) {
+  return Array.from(
+    new Set((patterns ?? []).map((pattern) => pattern.trim()).filter(Boolean)),
+  ).slice(0, 100);
+}
 
 export async function apiKeyRoutes(app: FastifyInstance) {
   app.get("/api-keys", { preHandler: requireUser }, async (request) => {
@@ -88,6 +102,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         expiresAt: true,
         concurrencyLimit: true,
         allowedModels: true,
+        tags: true,
+        disabledReason: true,
+        disabledAt: true,
+        ipWhitelist: true,
         lastUsedAt: true,
         createdAt: true,
       },
@@ -113,6 +131,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         expiresAt: body.expiresAt,
         concurrencyLimit: body.concurrencyLimit,
         allowedModels: body.allowedModels,
+        tags: normalizeTags(body.tags),
+        ipWhitelist: normalizeIpPatterns(body.ipWhitelist),
       },
       select: {
         id: true,
@@ -126,6 +146,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         expiresAt: true,
         concurrencyLimit: true,
         allowedModels: true,
+        tags: true,
+        disabledReason: true,
+        disabledAt: true,
+        ipWhitelist: true,
         createdAt: true,
       },
     });
@@ -149,6 +173,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         expiresAt: expiresAtSchema,
         concurrencyLimit: z.number().int().min(0).max(10000).optional(),
         allowedModels: z.array(z.string()).optional(),
+        tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+        ipWhitelist: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
       })
       .parse(request.body);
     const shouldActivate = body.status === "ACTIVE";
@@ -158,6 +184,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         body.totalLimitUsd === undefined ? body.dailyLimitUsd : body.totalLimitUsd,
       dailyLimitUsd: undefined,
       status: shouldActivate ? undefined : body.status,
+      ...(body.tags !== undefined ? { tags: normalizeTags(body.tags) } : {}),
+      ...(body.ipWhitelist !== undefined
+        ? { ipWhitelist: normalizeIpPatterns(body.ipWhitelist) }
+        : {}),
     };
 
     const existing = await prisma.apiKey.findFirst({
@@ -169,6 +199,8 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         id: true,
         expiresAt: true,
         totalLimitUsd: true,
+        disabledReason: true,
+        disabledAt: true,
       },
     });
 
@@ -203,7 +235,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
     if (shouldActivate) {
       const activatedApiKey = await prisma.apiKey.update({
         where: { id: apiKey.id },
-        data: { status: "ACTIVE" },
+        data: { status: "ACTIVE", disabledReason: null, disabledAt: null },
       });
       return { apiKey: await withApiKeyUsage(activatedApiKey) };
     }
@@ -211,7 +243,11 @@ export async function apiKeyRoutes(app: FastifyInstance) {
     if (apiKey.status === "ACTIVE" && apiKey.expiresAt && apiKey.expiresAt <= new Date()) {
       const disabledApiKey = await prisma.apiKey.update({
         where: { id: apiKey.id },
-        data: { status: "DISABLED" },
+        data: {
+          status: "DISABLED",
+          disabledReason: "Expired",
+          disabledAt: new Date(),
+        },
       });
       return { apiKey: await withApiKeyUsage(disabledApiKey) };
     }

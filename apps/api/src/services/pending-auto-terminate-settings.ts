@@ -3,11 +3,13 @@ import { prisma } from "@gateway/db";
 export type PendingAutoTerminateSettings = {
   enabled: boolean;
   timeoutSeconds: number;
+  message: string;
 };
 
 export const defaultPendingAutoTerminateSettings: PendingAutoTerminateSettings = {
   enabled: true,
   timeoutSeconds: 30,
+  message: "手动终止",
 };
 
 export const minPendingAutoTerminateSeconds = 5;
@@ -69,6 +71,7 @@ function normalizePendingAutoTerminateSettings(input: Partial<PendingAutoTermina
   return {
     enabled: typeof input.enabled === "boolean" ? input.enabled : defaultPendingAutoTerminateSettings.enabled,
     timeoutSeconds: normalizePendingAutoTerminateSeconds(input.timeoutSeconds),
+    message: normalizePendingAutoTerminateMessage(input.message),
   };
 }
 
@@ -82,4 +85,9 @@ export function normalizePendingAutoTerminateSeconds(value: unknown) {
     maxPendingAutoTerminateSeconds,
     Math.max(minPendingAutoTerminateSeconds, Math.round(numeric)),
   );
+}
+
+function normalizePendingAutoTerminateMessage(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || defaultPendingAutoTerminateSettings.message;
 }

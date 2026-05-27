@@ -30,11 +30,12 @@ export async function requireUser(request: FastifyRequest, reply: FastifyReply) 
     select: {
       id: true,
       status: true,
+      statusReason: true,
       tokenVersion: true,
     },
   });
 
-  if (!user || user.status !== "ACTIVE") {
+  if (!user || !["ACTIVE", "TRIAL"].includes(user.status)) {
     return reply.status(401).send({ message: "Unauthorized" });
   }
 
@@ -81,23 +82,36 @@ export async function requireApiKey(
           email: true,
           role: true,
           status: true,
+          statusReason: true,
           allowedModels: true,
           rateLimitPerMinute: true,
           concurrencyLimit: true,
+          charityEnabled: true,
+          charityIpRateLimitEnabled: true,
+          charityIpRateLimitPerMinute: true,
+          tierId: true,
           tokenVersion: true,
         },
       },
     },
   });
 
-  if (!apiKey || apiKey.status !== "ACTIVE" || apiKey.user.status !== "ACTIVE") {
+  if (
+    !apiKey ||
+    apiKey.status !== "ACTIVE" ||
+    !["ACTIVE", "TRIAL"].includes(apiKey.user.status)
+  ) {
     return sendApiError(reply, 401, "Invalid API key", "authentication_error");
   }
 
   if (apiKey.expiresAt && apiKey.expiresAt <= new Date()) {
     await prisma.apiKey.update({
       where: { id: apiKey.id },
-      data: { status: "DISABLED" },
+      data: {
+        status: "DISABLED",
+        disabledReason: "Expired",
+        disabledAt: new Date(),
+      },
     });
     return sendApiError(reply, 401, "API key expired and has been disabled", "authentication_error");
   }

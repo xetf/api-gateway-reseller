@@ -1,10 +1,18 @@
 import { Decimal } from "decimal.js";
 import { performance } from "node:perf_hooks";
-import { prisma, type ApiRequest, type ModelPrice } from "@gateway/db";
+import { Prisma } from "@prisma/client";
+import {
+  prisma,
+  type ApiRequest,
+  type ApiRequestResultType,
+  type ModelPrice,
+} from "@gateway/db";
 import { sanitizeJsonForPostgres, sanitizePostgresText } from "../lib/db-sanitize.js";
 import { calculateCharges } from "../lib/money.js";
 import { applyUnifiedCustomerPricing } from "./unified-pricing.js";
 import type { Usage } from "../types.js";
+
+export const defaultWalletReservationUsd = new Decimal("0.01");
 
 export async function ensureWalletCanStart(userId: string) {
   const wallet = await prisma.wallet.findUnique({
@@ -22,6 +30,109 @@ export async function ensureWalletCanStart(userId: string) {
   }
 
   return { ok: true as const, balance };
+}
+
+export async function reserveWalletBalance(params: {
+  userId: string;
+  amountUsd?: Decimal;
+}) {
+  const amount = params.amountUsd ?? defaultWalletReservationUsd;
+  if (amount.lte(0)) {
+    return { ok: true as const, amount: new Decimal(0) };
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const wallet = await tx.wallet.findUnique({
+      where: { userId: params.userId },
+    });
+    if (!wallet) {
+      return { ok: false as const, reason: "Wallet not found" };
+    }
+
+    const reservedBalance = new Decimal(wallet.reservedBalance.toString());
+    const balance = new Decimal(wallet.balance.toString());
+    const available = balance.minus(reservedBalance);
+    if (available.lt(amount)) {
+      return { ok: false as const, reason: "Insufficient available balance" };
+    }
+
+    const updatedRows = await tx.$executeRaw(
+      Prisma.sql`
+        UPDATE "Wallet"
+        SET "reservedBalance" = "reservedBalance" + ${amount.toFixed(8)}::numeric
+        WHERE "userId" = ${params.userId}
+          AND ("balance" - "reservedBalance") >= ${amount.toFixed(8)}::numeric
+      `,
+    );
+
+    if (updatedRows === 0) {
+      return { ok: false as const, reason: "Insufficient available balance" };
+    }
+
+    return { ok: true as const, amount };
+  });
+}
+
+export async function releaseWalletReservedAmount(params: {
+  userId: string;
+  amountUsd: Decimal;
+}) {
+  if (params.amountUsd.lte(0)) {
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const wallet = await tx.wallet.findUnique({
+      where: { userId: params.userId },
+      select: { reservedBalance: true },
+    });
+    const currentReserved = new Decimal(
+      wallet?.reservedBalance?.toString() ?? "0",
+    );
+
+    await tx.wallet.update({
+      where: { userId: params.userId },
+      data: {
+        reservedBalance: Decimal.max(
+          0,
+          currentReserved.minus(params.amountUsd),
+        ).toFixed(8),
+      },
+    });
+  });
+}
+
+export async function releaseWalletReservation(params: {
+  requestId: string;
+  userId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const request = await tx.apiRequest.findUnique({
+      where: { id: params.requestId },
+      select: { reservedAmountUsd: true },
+    });
+    const reservedAmount = new Decimal(request?.reservedAmountUsd?.toString() ?? "0");
+    if (reservedAmount.lte(0)) {
+      return;
+    }
+
+    const wallet = await tx.wallet.findUnique({
+      where: { userId: params.userId },
+      select: { reservedBalance: true },
+    });
+    const currentReserved = new Decimal(wallet?.reservedBalance?.toString() ?? "0");
+
+    await tx.wallet.update({
+      where: { userId: params.userId },
+      data: {
+        reservedBalance: Decimal.max(0, currentReserved.minus(reservedAmount)).toFixed(8),
+      },
+    });
+    await tx.apiRequest.update({
+      where: { id: params.requestId },
+      data: { reservedAmountUsd: "0" },
+    });
+  });
 }
 
 export async function chargeForRequest(params: {
@@ -42,6 +153,7 @@ export async function chargeForRequest(params: {
         id: true,
         apiKeyId: true,
         status: true,
+        reservedAmountUsd: true,
       },
     });
 
@@ -60,6 +172,7 @@ export async function chargeForRequest(params: {
       },
       data: {
         status: "SUCCESS",
+        resultType: "PROXIED_SUCCESS",
         inputTokens: usage.inputTokens,
         cachedInputTokens: usage.cachedInputTokens,
         outputTokens: usage.outputTokens,
@@ -67,6 +180,7 @@ export async function chargeForRequest(params: {
         latencyMs: startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
         upstreamCostUsd: upstreamCostUsd.toFixed(8),
         chargedAmountUsd: chargedAmountUsd.toFixed(8),
+        reservedAmountUsd: "0",
         responseUsage: usage.raw === undefined ? undefined : (sanitizeJsonForPostgres(usage.raw) as object),
       },
     });
@@ -84,6 +198,8 @@ export async function chargeForRequest(params: {
     }
 
     const balanceBefore = new Decimal(wallet.balance.toString());
+    const reservedAmount = new Decimal(existingRequest.reservedAmountUsd?.toString() ?? "0");
+    const reservedBalance = new Decimal(wallet.reservedBalance.toString());
     const balanceAfter = balanceBefore.minus(chargedAmountUsd);
 
     if (balanceAfter.lt(0)) {
@@ -94,6 +210,7 @@ export async function chargeForRequest(params: {
       where: { userId },
       data: {
         balance: balanceAfter.toFixed(8),
+        reservedBalance: Decimal.max(0, reservedBalance.minus(reservedAmount)).toFixed(8),
       },
     });
 
@@ -102,6 +219,7 @@ export async function chargeForRequest(params: {
         userId,
         requestId,
         type: "CHARGE",
+        source: "API_CHARGE",
         amount: chargedAmountUsd.negated().toFixed(8),
         balanceBefore: balanceBefore.toFixed(8),
         balanceAfter: balanceAfter.toFixed(8),
@@ -148,7 +266,11 @@ export async function chargeForRequest(params: {
           if (usedUsd.gte(limit)) {
             await tx.apiKey.update({
               where: { id: apiKey.id },
-              data: { status: "DISABLED" },
+              data: {
+                status: "DISABLED",
+                disabledReason: "Total quota reached",
+                disabledAt: new Date(),
+              },
             });
           }
         }
@@ -165,20 +287,57 @@ export async function markRequestFailed(
   httpStatus?: number,
   latencyMs?: number,
   responseUsage?: unknown,
+  resultType: ApiRequestResultType = "GATEWAY_ERROR",
 ) {
-  await prisma.apiRequest.updateMany({
-    where: {
-      id: request.id,
-      status: "PENDING",
-    },
-    data: {
-      status: "FAILED",
-      errorMessage: sanitizePostgresText(errorMessage),
-      httpStatus,
-      latencyMs,
-      ...(responseUsage === undefined
-        ? {}
-        : { responseUsage: sanitizeJsonForPostgres(responseUsage) as object }),
-    },
+  await prisma.$transaction(async (tx) => {
+    const existingRequest = await tx.apiRequest.findUnique({
+      where: { id: request.id },
+      select: {
+        userId: true,
+        reservedAmountUsd: true,
+        status: true,
+      },
+    });
+
+    if (!existingRequest || existingRequest.status !== "PENDING") {
+      return;
+    }
+
+    const reservedAmount = new Decimal(
+      existingRequest.reservedAmountUsd?.toString() ?? "0",
+    );
+    if (reservedAmount.gt(0)) {
+      const wallet = await tx.wallet.findUnique({
+        where: { userId: existingRequest.userId },
+        select: { reservedBalance: true },
+      });
+      const currentReserved = new Decimal(
+        wallet?.reservedBalance?.toString() ?? "0",
+      );
+      await tx.wallet.update({
+        where: { userId: existingRequest.userId },
+        data: {
+          reservedBalance: Decimal.max(
+            0,
+            currentReserved.minus(reservedAmount),
+          ).toFixed(8),
+        },
+      });
+    }
+
+    await tx.apiRequest.update({
+      where: { id: request.id },
+      data: {
+        status: "FAILED",
+        resultType,
+        errorMessage: sanitizePostgresText(errorMessage),
+        httpStatus,
+        latencyMs,
+        reservedAmountUsd: "0",
+        ...(responseUsage === undefined
+          ? {}
+          : { responseUsage: sanitizeJsonForPostgres(responseUsage) as object }),
+      },
+    });
   });
 }

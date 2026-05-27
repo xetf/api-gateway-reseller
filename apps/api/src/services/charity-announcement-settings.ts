@@ -3,6 +3,8 @@ import { prisma } from "@gateway/db";
 export type CharityAnnouncementFrequency = "every_visit" | "interval";
 
 export type CharityAnnouncementSettings = {
+  serviceEnabled: boolean;
+  serviceDisabledMessage: string;
   enabled: boolean;
   frequency: CharityAnnouncementFrequency;
   intervalHours: number;
@@ -14,6 +16,8 @@ export const minCharityAnnouncementIntervalHours = 1;
 export const maxCharityAnnouncementIntervalHours = 24 * 30;
 
 export const defaultCharityAnnouncementSettings: CharityAnnouncementSettings = {
+  serviceEnabled: true,
+  serviceDisabledMessage: "公益 API 当前暂不可用，请稍后再试。",
   enabled: false,
   frequency: "every_visit",
   intervalHours: 24,
@@ -65,6 +69,16 @@ function normalizeCharityAnnouncementSettings(
   input: Partial<CharityAnnouncementSettings>,
 ): CharityAnnouncementSettings {
   return {
+    serviceEnabled:
+      typeof input.serviceEnabled === "boolean"
+        ? input.serviceEnabled
+        : defaultCharityAnnouncementSettings.serviceEnabled,
+    serviceDisabledMessage: String(
+      input.serviceDisabledMessage ??
+        defaultCharityAnnouncementSettings.serviceDisabledMessage,
+    )
+      .trim()
+      .slice(0, 8000),
     enabled: typeof input.enabled === "boolean" ? input.enabled : defaultCharityAnnouncementSettings.enabled,
     frequency: input.frequency === "interval" ? "interval" : "every_visit",
     intervalHours: clampInteger(

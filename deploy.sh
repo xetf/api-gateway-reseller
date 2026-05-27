@@ -6,6 +6,7 @@ cd "$PROJECT_ROOT"
 
 MODE="install"
 SKIP_DOCKER="false"
+SKIP_BACKUP="false"
 PM2_BIN=""
 
 for arg in "$@"; do
@@ -16,12 +17,16 @@ for arg in "$@"; do
     --skip-docker)
       SKIP_DOCKER="true"
       ;;
+    --skip-backup)
+      SKIP_BACKUP="true"
+      ;;
     -h|--help)
       cat <<'USAGE'
 Usage:
   bash deploy.sh            First deployment or idempotent redeploy
   bash deploy.sh --update   Pull-safe rebuild/migrate/restart flow
   bash deploy.sh --skip-docker  Do not start bundled Postgres/Redis
+  bash deploy.sh --update --skip-backup  Update without migration backup
 USAGE
       exit 0
       ;;
@@ -291,6 +296,29 @@ build_and_migrate() {
   npm run db:migrate:deploy
 }
 
+run_predeploy_checks() {
+  if [ "$MODE" != "update" ]; then
+    return
+  fi
+
+  log "Running predeploy checks"
+  bash scripts/predeploy-check.sh
+}
+
+backup_before_migrate() {
+  if [ "$MODE" != "update" ]; then
+    return
+  fi
+
+  if [ "$SKIP_BACKUP" = "true" ]; then
+    warn "Skipping migration backup because --skip-backup was provided."
+    return
+  fi
+
+  log "Creating database backup before migrations"
+  bash scripts/backup-db.sh
+}
+
 seed_data() {
   log "Seeding blank deployment data"
   npm run db:seed
@@ -346,6 +374,8 @@ main() {
   start_infra
   wait_for_postgres
   install_dependencies
+  run_predeploy_checks
+  backup_before_migrate
   build_and_migrate
   start_pm2
   seed_data

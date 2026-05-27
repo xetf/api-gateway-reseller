@@ -2,10 +2,11 @@ import { prisma } from "@gateway/db";
 import {
   abortActiveApiRequest,
   createManualTerminateUsage,
-  manualTerminateMessage,
   manualTerminateStatusCode,
 } from "./active-api-requests.js";
 import { readPendingAutoTerminateSettings } from "./pending-auto-terminate-settings.js";
+import { redis } from "../lib/redis.js";
+import { recordAutoTerminatedIp } from "./temporary-ip-notice-ban.js";
 
 type PendingRequestCleanupLogger = {
   error: (value: unknown, message?: string) => void;
@@ -33,6 +34,7 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
     select: {
       id: true,
       createdAt: true,
+      clientIp: true,
       responseUsage: true,
     },
     orderBy: {
@@ -62,7 +64,7 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
       data: {
         status: "FAILED",
         httpStatus: manualTerminateStatusCode,
-        errorMessage: manualTerminateMessage,
+        errorMessage: settings.message,
         latencyMs,
         responseUsage: createManualTerminateUsage(abortResult.aborted),
       },
@@ -73,6 +75,7 @@ export async function cleanupStalePendingRequests(olderThanMs?: number) {
       if (abortResult.aborted) {
         abortedActiveCount += 1;
       }
+      await recordAutoTerminatedIp(redis, pendingRequest.clientIp);
     }
   }
 

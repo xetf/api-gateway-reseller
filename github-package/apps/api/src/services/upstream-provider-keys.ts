@@ -1,6 +1,11 @@
 import { prisma, type UpstreamProvider, type UpstreamProviderKey } from "@gateway/db";
 import { redis } from "../lib/redis.js";
 import { getStickyProviderKeyOccupancies } from "./model-pool-stickiness.js";
+import {
+  encryptUpstreamKey,
+  resolveStoredUpstreamKey,
+} from "./upstream-key-encryption.js";
+import type { RoutingKeyCandidateTrace } from "./routing/decision-trace.js";
 
 const initialProviderKeyName = "key-1";
 
@@ -22,6 +27,10 @@ export type UpstreamKeyReservation = {
     | "updatedAt"
   >;
   release: () => Promise<void>;
+  decisionTrace?: {
+    selectedBy: "preferred" | "balanced" | "fallback";
+    candidates: RoutingKeyCandidateTrace[];
+  };
 };
 
 const keyInflightTtlSeconds = 180;
@@ -77,6 +86,7 @@ export async function ensureDefaultProviderKey(
     },
     update: {
       key: provider.apiKey,
+      ...encryptUpstreamKey(provider.apiKey),
       keyPrefix: upstreamKeyPrefix(provider.apiKey),
       status: provider.status === "ACTIVE" ? "ACTIVE" : "DISABLED",
     },
@@ -84,6 +94,7 @@ export async function ensureDefaultProviderKey(
       upstreamProviderId: provider.id,
       name: initialProviderKeyName,
       key: provider.apiKey,
+      ...encryptUpstreamKey(provider.apiKey),
       keyPrefix: upstreamKeyPrefix(provider.apiKey),
       status: provider.status === "ACTIVE" ? "ACTIVE" : "DISABLED",
       priority: 100,
@@ -105,9 +116,14 @@ export async function getActiveProviderKeys(
       { createdAt: "asc" },
     ],
   });
+  const quotaFilteredKeys = await filterKeysWithinSpendLimits(keys);
 
-  if (keys.length > 0 || provider.status !== "ACTIVE") {
-    return keys;
+  if (
+    quotaFilteredKeys.length > 0 ||
+    keys.length > 0 ||
+    provider.status !== "ACTIVE"
+  ) {
+    return quotaFilteredKeys;
   }
 
   const keyCount = await prisma.upstreamProviderKey.count({
@@ -121,12 +137,85 @@ export async function getActiveProviderKeys(
   }
 
   const defaultKey = await ensureDefaultProviderKey(provider);
-  return defaultKey?.status === "ACTIVE" ? [defaultKey] : [];
+  return defaultKey?.status === "ACTIVE"
+    ? await filterKeysWithinSpendLimits([defaultKey])
+    : [];
+}
+
+async function filterKeysWithinSpendLimits(keys: UpstreamProviderKey[]) {
+  const limitedKeys = keys.filter(
+    (key) => key.dailyLimitUsd !== null || key.monthlyLimitUsd !== null,
+  );
+  if (limitedKeys.length === 0) {
+    return keys;
+  }
+
+  const now = new Date();
+  const dailyStart = startOfUtcDay(now);
+  const monthlyStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  );
+  const [dailySpend, monthlySpend] = await Promise.all([
+    prisma.apiRequest.groupBy({
+      by: ["upstreamProviderKeyId"],
+      where: {
+        upstreamProviderKeyId: { in: limitedKeys.map((key) => key.id) },
+        status: "SUCCESS",
+        createdAt: { gte: dailyStart },
+      },
+      _sum: { upstreamCostUsd: true },
+    }),
+    prisma.apiRequest.groupBy({
+      by: ["upstreamProviderKeyId"],
+      where: {
+        upstreamProviderKeyId: { in: limitedKeys.map((key) => key.id) },
+        status: "SUCCESS",
+        createdAt: { gte: monthlyStart },
+      },
+      _sum: { upstreamCostUsd: true },
+    }),
+  ]);
+  const dailySpendByKey = new Map(
+    dailySpend.map((row) => [
+      row.upstreamProviderKeyId,
+      Number(row._sum.upstreamCostUsd?.toString() ?? 0),
+    ]),
+  );
+  const monthlySpendByKey = new Map(
+    monthlySpend.map((row) => [
+      row.upstreamProviderKeyId,
+      Number(row._sum.upstreamCostUsd?.toString() ?? 0),
+    ]),
+  );
+
+  return keys.filter((key) => {
+    const dailyLimit = Number(key.dailyLimitUsd?.toString() ?? 0);
+    if (dailyLimit > 0 && (dailySpendByKey.get(key.id) ?? 0) >= dailyLimit) {
+      return false;
+    }
+
+    const monthlyLimit = Number(key.monthlyLimitUsd?.toString() ?? 0);
+    if (
+      monthlyLimit > 0 &&
+      (monthlySpendByKey.get(key.id) ?? 0) >= monthlyLimit
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function startOfUtcDay(date = new Date()) {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
 }
 
 export async function reserveProviderKey(
   provider: Pick<UpstreamProvider, "id" | "apiKey" | "status">,
   preferredKeyId?: string | null,
+  options: { dryRun?: boolean } = {},
 ): Promise<UpstreamKeyReservation | null> {
   const keys = await getActiveProviderKeys(provider);
 
@@ -137,15 +226,49 @@ export async function reserveProviderKey(
   if (preferredKeyId) {
     const preferredKey = keys.find((key) => key.id === preferredKeyId);
     if (preferredKey) {
-      await prisma.upstreamProviderKey.update({
-        where: { id: preferredKey.id },
-        data: { lastUsedAt: new Date() },
-      });
-      return createKeyReservation(preferredKey);
+      const preferredTrace = {
+        selectedBy: "preferred" as const,
+        candidates: keys.map((key) => ({
+          keyId: key.id,
+          priority: key.priority,
+          available: true,
+        })),
+      };
+      if (!options.dryRun) {
+        await prisma.upstreamProviderKey.update({
+          where: { id: preferredKey.id },
+          data: { lastUsedAt: new Date() },
+        });
+      }
+      return {
+        ...(options.dryRun
+          ? createDryRunKeyReservation(preferredKey)
+          : createKeyReservation(preferredKey)),
+        decisionTrace: preferredTrace,
+      };
     }
   }
 
   const stickyOccupancies = await getStickyProviderKeyOccupancies(keys.map((key) => key.id));
+  const keyCandidates = keys.map((key) => ({
+    keyId: key.id,
+    priority: key.priority,
+    stickyOccupancy: stickyOccupancies.get(key.id) ?? 0,
+    available: true,
+  }));
+
+  if (options.dryRun) {
+    const fallbackKey = chooseFallbackKey(keys, stickyOccupancies);
+    return fallbackKey
+      ? {
+          ...createDryRunKeyReservation(fallbackKey),
+          decisionTrace: {
+            selectedBy: "fallback",
+            candidates: keyCandidates,
+          },
+        }
+      : null;
+  }
 
   try {
     const selectedKeyId = await reserveKeyAtomically(keys, stickyOccupancies);
@@ -162,7 +285,13 @@ export async function reserveProviderKey(
       data: { lastUsedAt: new Date() },
     });
 
-    return createKeyReservation(selectedKey);
+    return {
+      ...createKeyReservation(selectedKey),
+      decisionTrace: {
+        selectedBy: "balanced",
+        candidates: keyCandidates,
+      },
+    };
   } catch {
     const fallbackKey = chooseFallbackKey(keys, stickyOccupancies);
     if (!fallbackKey) {
@@ -177,6 +306,10 @@ export async function reserveProviderKey(
     return {
       key: fallbackKey,
       release: async () => {},
+      decisionTrace: {
+        selectedBy: "fallback",
+        candidates: keyCandidates,
+      },
     };
   }
 }
@@ -267,7 +400,10 @@ function createKeyReservation(key: UpstreamProviderKey) {
   }, refreshKeyInflightTtlMs);
 
   return {
-    key,
+    key: {
+      ...key,
+      key: resolveStoredUpstreamKey(key),
+    },
     release: async () => {
       if (released) {
         return;
@@ -287,5 +423,15 @@ function createKeyReservation(key: UpstreamProviderKey) {
         // TTL handles stale counters if Redis release fails.
       }
     },
+  };
+}
+
+function createDryRunKeyReservation(key: UpstreamProviderKey) {
+  return {
+    key: {
+      ...key,
+      key: resolveStoredUpstreamKey(key),
+    },
+    release: async () => {},
   };
 }

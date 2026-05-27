@@ -10,6 +10,7 @@ const envSchema = z.object({
   UPSTREAM_BASE_URL: z.string().url().default("https://api.openai.com"),
   UPSTREAM_API_KEY: z.string().default(""),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().default(60000),
+  UPSTREAM_KEY_ENCRYPTION_SECRET: z.string().optional(),
   DEFAULT_CURRENCY: z.string().default("USD"),
 });
 

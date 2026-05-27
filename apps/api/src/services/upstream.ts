@@ -10,11 +10,17 @@ import {
   getInflightPenaltyMs,
   getSpeedScoreMs,
   reserveBalancedModelPoolChannel,
-} from "./model-pool-load-balancer.js";
+} from "./routing/channel-selector.js";
 import {
   reserveProviderKey,
   type UpstreamKeyReservation,
-} from "./upstream-provider-keys.js";
+} from "./routing/key-selector.js";
+import { ensureStandardAccessTier } from "./access-routing.js";
+import { callableChannelStatuses } from "./routing/channel-state.js";
+import {
+  createRoutingDecisionTrace,
+  type RoutingDecisionTrace,
+} from "./routing/decision-trace.js";
 
 type Provider = Awaited<ReturnType<typeof getDefaultProvider>>;
 type ReleaseModelPoolReservation = () => Promise<void>;
@@ -24,10 +30,30 @@ type RoutedProvider = Provider & {
   upstreamProviderKeyName?: string;
   upstreamProviderKeyPrefix?: string;
 };
+type PreparedModelRoute = {
+  provider: RoutedProvider;
+  price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+  channelId: string;
+  upstreamProviderKeyId?: string;
+  keyDecisionTrace?: UpstreamKeyReservation["decisionTrace"];
+  release?: ReleaseModelPoolReservation;
+  decisionTrace?: RoutingDecisionTrace;
+};
+type RouteCandidate = {
+  provider: Provider;
+  price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
+  channelId: string;
+  speedScoreMs: number;
+  stickyOccupancy: number;
+};
 type ModelRouteOptions = {
+  tierId?: string | null;
+  forcedProvider?: string | null;
+  forcedProviderKeyId?: string | null;
   excludeChannelIds?: string[];
   bypassSticky?: boolean;
   skipStickyUpdate?: boolean;
+  dryRun?: boolean;
 };
 
 export async function getDefaultProvider() {
@@ -62,59 +88,68 @@ export async function getProviderForModel(
   callerIdentity: string,
   model: string,
   options: ModelRouteOptions = {},
-): Promise<{
-  provider: RoutedProvider;
-  price: NonNullable<Awaited<ReturnType<typeof prisma.modelPrice.findUnique>>>;
-  channelId?: string;
-  upstreamProviderKeyId?: string;
-  release?: ReleaseModelPoolReservation;
-} | null> {
-  const modelPool = await prisma.modelPool.findFirst({
-    where: {
-      model,
-      status: "ACTIVE",
-    },
-    include: {
-      channels: {
-        where: {
-          status: { in: ["ACTIVE", "FORCED_ACTIVE"] },
-        },
-        orderBy: [
-          { lastFirstTokenLatencyMs: "asc" },
-          { lastLatencyMs: "asc" },
-          { priority: "asc" },
-          { updatedAt: "desc" },
-        ],
-      },
-    },
+): Promise<PreparedModelRoute | null> {
+  const decisionTrace = createRoutingDecisionTrace({
+    model,
+    tierId: options.tierId,
+    forcedProvider: options.forcedProvider,
+    forcedProviderKeyId: options.forcedProviderKeyId,
+    dryRun: options.dryRun,
   });
+  const modelPool = await findModelPoolForTier(model, options.tierId);
 
   if (!modelPool || modelPool.channels.length === 0) {
+    decisionTrace.unavailableReasons.push("没有可用模型池或模型池没有可路由渠道");
     return null;
   }
 
+  const channels = options.forcedProvider
+    ? modelPool.channels.filter(
+        (channel) => channel.upstreamProvider === options.forcedProvider,
+      )
+    : modelPool.channels;
+
+  if (channels.length === 0) {
+    decisionTrace.unavailableReasons.push("专线限定的上游不在模型池中");
+    return null;
+  }
+
+  const scopedCallerIdentity = options.tierId
+    ? `${callerIdentity}:tier:${options.tierId}`
+    : callerIdentity;
   const excludedChannelIds = new Set(options.excludeChannelIds ?? []);
   const stickyRouteState = options.bypassSticky
     ? null
-    : await getStickyModelPoolRoute(callerIdentity, model);
+    : await getStickyModelPoolRoute(scopedCallerIdentity, model);
+  decisionTrace.stickyTried = Boolean(stickyRouteState);
   if (stickyRouteState) {
-    const stickyChannel = modelPool.channels.find(
+    const stickyChannel = channels.find(
       (channel) => channel.id === stickyRouteState.channelId,
     );
     if (stickyChannel && !excludedChannelIds.has(stickyChannel.id)) {
       const stickyRoute = await getRouteForChannelWithKey(
         model,
         stickyChannel,
-        stickyRouteState.upstreamProviderKeyId,
+        options.forcedProviderKeyId ?? stickyRouteState.upstreamProviderKeyId,
+        options.dryRun,
       );
 
       if (stickyRoute) {
+        stickyRoute.decisionTrace = decisionTrace;
+        decisionTrace.stickyHit = true;
+        decisionTrace.selectedBy = "sticky";
+        decisionTrace.selectedChannelId = stickyRoute.channelId;
+        decisionTrace.selectedProvider = stickyRoute.provider.name;
+        decisionTrace.selectedUpstreamProviderKeyId =
+          stickyRoute.upstreamProviderKeyId ?? null;
+        decisionTrace.keyCandidates =
+          stickyRoute.keyDecisionTrace?.candidates ?? [];
         if (options.skipStickyUpdate) {
           return stickyRoute;
         }
 
         await setStickyModelPoolChannel(
-          callerIdentity,
+          scopedCallerIdentity,
           model,
           stickyChannel.id,
           stickyRoute.upstreamProviderKeyId,
@@ -124,7 +159,7 @@ export async function getProviderForModel(
     }
 
     await clearStickyModelPoolChannel(
-      callerIdentity,
+      scopedCallerIdentity,
       model,
       stickyRouteState.channelId,
       stickyRouteState.upstreamProviderKeyId,
@@ -133,9 +168,18 @@ export async function getProviderForModel(
 
   const routeCandidates = await getRouteCandidates(
     model,
-    modelPool.channels.filter((channel) => !excludedChannelIds.has(channel.id)),
+    channels.filter((channel) => !excludedChannelIds.has(channel.id)),
+    options.forcedProviderKeyId,
   );
+  decisionTrace.candidates = routeCandidates.map((route) => ({
+    channelId: route.channelId,
+    provider: route.provider.name,
+    speedScoreMs: route.speedScoreMs,
+    stickyOccupancy: route.stickyOccupancy,
+    available: true,
+  }));
   if (routeCandidates.length === 0) {
+    decisionTrace.unavailableReasons.push("没有通过价格、上游和 Key 检查的渠道");
     return null;
   }
 
@@ -145,19 +189,33 @@ export async function getProviderForModel(
     const selectableRoutes = routeCandidates.filter(
       (route) => !skippedChannelIds.has(route.channelId),
     );
-    const balancedRoute = await getBalancedRoute(selectableRoutes);
+    const balancedRoute = await getBalancedRoute(selectableRoutes, {
+      dryRun: options.dryRun,
+    });
     if (!balancedRoute) {
       return null;
     }
 
-    const preparedRoute = await prepareRoute(balancedRoute);
+    const preparedRoute = await prepareRoute(
+      balancedRoute,
+      options.forcedProviderKeyId,
+      options.dryRun,
+    );
     if (preparedRoute) {
+      preparedRoute.decisionTrace = decisionTrace;
+      decisionTrace.selectedBy = balancedRoute.release ? "balanced" : "fallback";
+      decisionTrace.selectedChannelId = preparedRoute.channelId;
+      decisionTrace.selectedProvider = preparedRoute.provider.name;
+      decisionTrace.selectedUpstreamProviderKeyId =
+        preparedRoute.upstreamProviderKeyId ?? null;
+      decisionTrace.keyCandidates =
+        preparedRoute.keyDecisionTrace?.candidates ?? [];
       if (options.skipStickyUpdate) {
         return preparedRoute;
       }
 
       await setStickyModelPoolChannel(
-        callerIdentity,
+        scopedCallerIdentity,
         model,
         balancedRoute.channelId,
         preparedRoute.upstreamProviderKeyId,
@@ -168,13 +226,54 @@ export async function getProviderForModel(
     await balancedRoute.release?.();
     skippedChannelIds.add(balancedRoute.channelId);
     await clearStickyModelPoolChannel(
-      callerIdentity,
+      scopedCallerIdentity,
       model,
       balancedRoute.channelId,
     );
   }
 
+  decisionTrace.unavailableReasons.push("渠道存在，但没有可用上游 Key");
   return null;
+}
+
+async function findModelPoolForTier(model: string, tierId?: string | null) {
+  const requestedPool = tierId
+    ? await findActiveModelPool(model, tierId)
+    : null;
+
+  if (requestedPool) {
+    return requestedPool;
+  }
+
+  const standardTier = await ensureStandardAccessTier();
+  if (standardTier.id === tierId) {
+    return null;
+  }
+
+  return findActiveModelPool(model, standardTier.id);
+}
+
+function findActiveModelPool(model: string, tierId: string) {
+  return prisma.modelPool.findFirst({
+    where: {
+      model,
+      tierId,
+      status: "ACTIVE",
+    },
+    include: {
+      channels: {
+        where: {
+          status: { in: [...callableChannelStatuses] },
+        },
+        orderBy: [
+          { lastFirstTokenLatencyMs: "asc" },
+          { lastLatencyMs: "asc" },
+          { priority: "asc" },
+          { updatedAt: "desc" },
+        ],
+      },
+    },
+  });
 }
 
 async function getRouteCandidates(
@@ -186,12 +285,20 @@ async function getRouteCandidates(
     lastLatencyMs: number | null;
     priority: number;
   }>,
-) {
+  forcedProviderKeyId?: string | null,
+): Promise<RouteCandidate[]> {
   const routes = await Promise.all(
     channels.map(async (channel) => {
       const route = await getRouteForChannel(model, channel);
 
       if (!route) {
+        return null;
+      }
+
+      if (
+        forcedProviderKeyId &&
+        !(await providerHasActiveKey(route.provider.id, forcedProviderKeyId))
+      ) {
         return null;
       }
 
@@ -231,20 +338,23 @@ async function getBalancedRoute(
     speedScoreMs: number;
     stickyOccupancy: number;
   }>,
+  options: { dryRun?: boolean } = {},
 ) {
   if (routes.length === 0) {
     return null;
   }
 
   const fastestScoreMs = routes[0]?.speedScoreMs ?? 0;
-  const reservation = await reserveBalancedModelPoolChannel(
-    routes.map((route) => ({
-      channelId: route.channelId,
-      speedScoreMs: route.speedScoreMs,
-      stickyOccupancy: route.stickyOccupancy,
-    })),
-    getInflightPenaltyMs(fastestScoreMs),
-  );
+  const reservation = options.dryRun
+    ? null
+    : await reserveBalancedModelPoolChannel(
+        routes.map((route) => ({
+          channelId: route.channelId,
+          speedScoreMs: route.speedScoreMs,
+          stickyOccupancy: route.stickyOccupancy,
+        })),
+        getInflightPenaltyMs(fastestScoreMs),
+      );
 
   if (reservation) {
     const route = routes.find(
@@ -330,6 +440,21 @@ async function getRouteForChannel(
   return null;
 }
 
+async function providerHasActiveKey(providerId: string, keyId: string) {
+  if (providerId === "env") {
+    return keyId === "env";
+  }
+
+  const count = await prisma.upstreamProviderKey.count({
+    where: {
+      id: keyId,
+      upstreamProviderId: providerId,
+      status: "ACTIVE",
+    },
+  });
+  return count > 0;
+}
+
 async function getRouteForChannelWithKey(
   model: string,
   channel: {
@@ -337,6 +462,7 @@ async function getRouteForChannelWithKey(
     upstreamProvider: string;
   },
   preferredKeyId?: string | null,
+  dryRun?: boolean,
 ) {
   const route = await getRouteForChannel(model, channel);
 
@@ -344,7 +470,7 @@ async function getRouteForChannelWithKey(
     return null;
   }
 
-  const preparedRoute = await prepareRoute(route, preferredKeyId);
+  const preparedRoute = await prepareRoute(route, preferredKeyId, dryRun);
   if (!preparedRoute) {
     return null;
   }
@@ -362,10 +488,12 @@ async function prepareRoute(
     release?: ReleaseModelPoolReservation;
   },
   preferredKeyId?: string | null,
-) {
+  dryRun?: boolean,
+): Promise<PreparedModelRoute | null> {
   const keyReservation = await reserveKeyForProvider(
     route.provider,
     preferredKeyId,
+    dryRun,
   );
 
   if (!keyReservation) {
@@ -383,6 +511,7 @@ async function prepareRoute(
     price: route.price,
     channelId: route.channelId,
     upstreamProviderKeyId: keyReservation.key.id,
+    keyDecisionTrace: keyReservation.decisionTrace,
     release: composeReleases(route.release, keyReservation.release),
   };
 }
@@ -390,6 +519,7 @@ async function prepareRoute(
 async function reserveKeyForProvider(
   provider: Provider,
   preferredKeyId?: string | null,
+  dryRun?: boolean,
 ): Promise<UpstreamKeyReservation | null> {
   if (provider.id === "env") {
     return {
@@ -415,7 +545,7 @@ async function reserveKeyForProvider(
     };
   }
 
-  return reserveProviderKey(provider, preferredKeyId);
+  return reserveProviderKey(provider, preferredKeyId, { dryRun });
 }
 
 function composeReleases(

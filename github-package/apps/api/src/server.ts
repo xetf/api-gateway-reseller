@@ -18,6 +18,7 @@ import {
   cleanupStalePendingRequests,
   startPendingRequestCleanupScheduler,
 } from "./services/pending-request-cleanup.js";
+import { startExternalAlertScheduler } from "./services/operational-alerts.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -51,6 +52,7 @@ const app = Fastify({
 });
 let stopModelPoolHealthScheduler: (() => void) | undefined;
 let stopPendingRequestCleanupScheduler: (() => void) | undefined;
+let stopExternalAlertScheduler: (() => void) | undefined;
 
 app.decorate("redis", redis);
 
@@ -132,6 +134,7 @@ await app.register(publicRoutes);
 app.addHook("onClose", async () => {
   stopModelPoolHealthScheduler?.();
   stopPendingRequestCleanupScheduler?.();
+  stopExternalAlertScheduler?.();
 });
 
 async function start() {
@@ -149,6 +152,7 @@ async function start() {
     }
     stopPendingRequestCleanupScheduler = startPendingRequestCleanupScheduler(app.log);
     stopModelPoolHealthScheduler = startModelPoolHealthScheduler(app.log);
+    stopExternalAlertScheduler = startExternalAlertScheduler(app, app.log);
   } catch (error) {
     app.log.error(error);
     process.exit(1);

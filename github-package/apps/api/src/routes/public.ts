@@ -7,7 +7,7 @@ import { onPublicStatusChanged } from "../services/public-status-events.js";
 import { readUnifiedPriceSettings } from "../services/unified-pricing.js";
 
 type CharityRequestRow = {
-  day: Date;
+  day: string;
   requests: bigint;
   success_requests: bigint;
   failed_requests: bigint;
@@ -40,7 +40,7 @@ type CharityModelRow = {
 };
 
 type CharityPriceUsageRow = {
-  day: Date;
+  day: string;
   model: string;
   upstream_provider: string;
   input_tokens: bigint | null;
@@ -214,7 +214,10 @@ async function getCharityDashboard() {
       }),
       prisma.$queryRaw<CharityRequestRow[]>(Prisma.sql`
         SELECT
-          date_trunc('day', r."createdAt" AT TIME ZONE 'Asia/Shanghai') AS day,
+          to_char(
+            date_trunc('day', r."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'),
+            'YYYY-MM-DD'
+          ) AS day,
           count(*) AS requests,
           count(*) FILTER (WHERE r.status = 'SUCCESS') AS success_requests,
           count(*) FILTER (WHERE r.status = 'FAILED') AS failed_requests,
@@ -265,7 +268,10 @@ async function getCharityDashboard() {
       `),
       prisma.$queryRaw<CharityPriceUsageRow[]>(Prisma.sql`
         SELECT
-          date_trunc('day', r."createdAt" AT TIME ZONE 'Asia/Shanghai') AS day,
+          to_char(
+            date_trunc('day', r."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'),
+            'YYYY-MM-DD'
+          ) AS day,
           r.model AS model,
           r."upstreamProvider" AS upstream_provider,
           sum(r."inputTokens") AS input_tokens,
@@ -350,7 +356,8 @@ async function getCharityDashboard() {
 
 async function getPublicModelPoolStatus() {
   const now = new Date();
-  const [readyChannelRows, totalChannels] = await Promise.all([
+  const [settings, readyChannelRows, totalChannels] = await Promise.all([
+    readCharityAnnouncementSettings(),
     prisma.$queryRaw<PublicReadyChannelRow[]>(Prisma.sql`
       SELECT count(*) AS count
       FROM "ModelPoolChannel" c
@@ -381,6 +388,15 @@ async function getPublicModelPoolStatus() {
     }),
   ]);
   const readyChannels = Number(readyChannelRows[0]?.count ?? 0);
+  if (!settings.serviceEnabled) {
+    return {
+      available: false,
+      readyChannels,
+      totalChannels,
+      checkedAt: now.toISOString(),
+      message: settings.serviceDisabledMessage,
+    };
+  }
 
   return {
     available: readyChannels > 0,
@@ -403,7 +419,7 @@ function buildTrend(
   sinceDayKey: string,
   displayChargesByDay: Map<string, Decimal>,
 ) {
-  const byDay = new Map(rows.map((row) => [formatShanghaiDay(row.day), row]));
+  const byDay = new Map(rows.map((row) => [row.day, row]));
   const days: Array<{
     date: string;
     requests: number;
@@ -488,7 +504,7 @@ function calculateCharityDisplayCharges(
           .mul(outputPrice),
       )
       .toDecimalPlaces(8);
-    const day = formatShanghaiDay(row.day);
+    const day = row.day;
     byDay.set(day, (byDay.get(day) ?? new Decimal(0)).plus(charge));
     total = total.plus(charge);
   }
