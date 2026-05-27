@@ -18,12 +18,17 @@ mkdir -p backups
 timestamp="$(date +%Y%m%d-%H%M%S)"
 output="backups/api-gateway-${timestamp}.dump"
 
+docker_postgres_running() {
+  command -v docker >/dev/null 2>&1 &&
+    docker compose ps --status running postgres >/dev/null 2>&1
+}
+
 if command -v pg_dump >/dev/null 2>&1; then
   pg_dump "$DATABASE_URL" --format=custom --file "$output"
-elif command -v docker >/dev/null 2>&1 && docker compose ps postgres >/dev/null 2>&1; then
+elif docker_postgres_running; then
   docker compose exec -T postgres pg_dump -U gateway -d api_gateway --format=custom > "$output"
 else
-  echo "pg_dump or Docker Compose is required for backup." >&2
+  echo "pg_dump or a running Docker Compose postgres service is required for backup." >&2
   exit 1
 fi
 

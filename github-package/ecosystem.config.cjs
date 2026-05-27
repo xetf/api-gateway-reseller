@@ -1,10 +1,10 @@
 const projectRoot = process.env.PROJECT_ROOT || __dirname;
 
 const commonAppOptions = {
-  max_restarts: 5,
-  min_uptime: "10s",
-  restart_delay: 5000,
-  kill_timeout: 10000
+  max_restarts: 10,
+  min_uptime: "30s",
+  restart_delay: 10000,
+  kill_timeout: 15000
 };
 
 module.exports = {
@@ -16,7 +16,8 @@ module.exports = {
       script: "npm",
       args: "run start --workspace apps/api",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        NODE_OPTIONS: "--max-old-space-size=768"
       }
     },
     {
@@ -26,7 +27,8 @@ module.exports = {
       script: "npm",
       args: "run start --workspace apps/web",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        NODE_OPTIONS: "--max-old-space-size=384"
       }
     }
   ]

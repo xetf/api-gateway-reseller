@@ -6,7 +6,7 @@ cd "$PROJECT_ROOT"
 
 MODE="install"
 SKIP_DOCKER="false"
-SKIP_BACKUP="false"
+RUN_BACKUP="false"
 PM2_BIN=""
 
 for arg in "$@"; do
@@ -17,16 +17,16 @@ for arg in "$@"; do
     --skip-docker)
       SKIP_DOCKER="true"
       ;;
-    --skip-backup)
-      SKIP_BACKUP="true"
+    --backup)
+      RUN_BACKUP="true"
       ;;
     -h|--help)
       cat <<'USAGE'
 Usage:
   bash deploy.sh            First deployment or idempotent redeploy
-  bash deploy.sh --update   Pull-safe rebuild/migrate/restart flow
+  bash deploy.sh --update   Pull-safe rebuild/migrate/restart flow without database backup
   bash deploy.sh --skip-docker  Do not start bundled Postgres/Redis
-  bash deploy.sh --update --skip-backup  Update without migration backup
+  bash deploy.sh --update --backup  Create a database backup before migrations
 USAGE
       exit 0
       ;;
@@ -310,8 +310,8 @@ backup_before_migrate() {
     return
   fi
 
-  if [ "$SKIP_BACKUP" = "true" ]; then
-    warn "Skipping migration backup because --skip-backup was provided."
+  if [ "$RUN_BACKUP" != "true" ]; then
+    warn "Skipping migration backup by default. Pass --backup to create one."
     return
   fi
 

@@ -1181,36 +1181,26 @@ const adminNav = [
 const adminNavGroups = [
   {
     label: "工作台",
-    items: adminNav.filter((item) =>
-      [
-        "admin-overview",
-      ].includes(item.id),
-    ),
+    items: adminNav.filter((item) => ["admin-overview"].includes(item.id)),
   },
   {
     label: "用户与商业",
     items: adminNav.filter((item) =>
-      [
-        "admin-users",
-        "admin-charity",
-        "admin-redeem",
-      ].includes(item.id),
+      ["admin-users", "admin-charity", "admin-redeem"].includes(item.id),
     ),
   },
   {
     label: "网关",
     items: adminNav.filter((item) =>
-      ["admin-upstreams", "admin-model-pools", "admin-routing"].includes(item.id),
+      ["admin-upstreams", "admin-model-pools", "admin-routing"].includes(
+        item.id,
+      ),
     ),
   },
   {
     label: "调用与风控",
     items: adminNav.filter((item) =>
-      [
-        "admin-requests",
-        "admin-risk",
-        "admin-notices",
-      ].includes(item.id),
+      ["admin-requests", "admin-risk", "admin-notices"].includes(item.id),
     ),
   },
   {
@@ -1260,7 +1250,12 @@ const adminWorkspaces = [
     label: "系统与审计",
     description: "登录、报表、操作和登录日志",
     icon: Settings,
-    tabs: ["admin-settings", "admin-reports", "admin-audit-logs", "admin-login-logs"],
+    tabs: [
+      "admin-settings",
+      "admin-reports",
+      "admin-audit-logs",
+      "admin-login-logs",
+    ],
   },
 ] as const satisfies readonly {
   id: string;
@@ -1314,8 +1309,7 @@ function adminWorkspaceForTab(tab: AdminTab) {
   return (
     adminWorkspaces.find((workspace) =>
       (workspace.tabs as readonly AdminTab[]).includes(tab),
-    ) ??
-    adminWorkspaces[0]
+    ) ?? adminWorkspaces[0]
   );
 }
 
@@ -1456,7 +1450,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     useState<AdminReportSummary | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [packageTemplates, setPackageTemplates] = useState<PackageTemplate[]>([]);
+  const [packageTemplates, setPackageTemplates] = useState<PackageTemplate[]>(
+    [],
+  );
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [adminRequests, setAdminRequests] = useState<ApiRequest[]>([]);
   const [adminRequestsSummary, setAdminRequestsSummary] =
@@ -1544,10 +1540,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   function toggleSidebarCompact() {
     setSidebarCompact((current) => {
       const next = !current;
-      window.localStorage.setItem(
-        adminSidebarCompactStorageKey,
-        String(next),
-      );
+      window.localStorage.setItem(adminSidebarCompactStorageKey, String(next));
       return next;
     });
   }
@@ -2351,7 +2344,9 @@ function AdminDashboardContent({
   onError: (error: string | null) => void;
   onRefreshModelPools: () => Promise<void>;
   onRefreshRouting: () => Promise<void>;
-  onGatewayNoticeSettingsChanged: (settings: GatewayNoticeSettings | null) => void;
+  onGatewayNoticeSettingsChanged: (
+    settings: GatewayNoticeSettings | null,
+  ) => void;
   onIpBanRulesChanged: (rules: IpBanRule[]) => void;
   onPendingAutoTerminateSettingsChanged: (
     settings: PendingAutoTerminateSettings | null,
@@ -2445,7 +2440,9 @@ function AdminDashboardContent({
           invoices={invoices}
           charityOnly={activeTab === "admin-charity"}
           charityAnnouncementSettings={
-            activeTab === "admin-charity" ? charityAnnouncementSettings : undefined
+            activeTab === "admin-charity"
+              ? charityAnnouncementSettings
+              : undefined
           }
           onChanged={refreshAll}
           onError={onError}
@@ -2547,7 +2544,9 @@ function AdminDashboardContent({
           success={loginLogSuccess}
           onQueryChange={onLoginLogQueryChange}
           onSuccessChange={onLoginLogSuccessChange}
-          onSearch={(query, success) => onRefreshLoginLogs(token, query, success)}
+          onSearch={(query, success) =>
+            onRefreshLoginLogs(token, query, success)
+          }
         />
       );
   }
@@ -2567,7 +2566,11 @@ function AdminWorkspaceTabs({
   }
 
   return (
-    <div className="admin-workspace-tabs" role="tablist" aria-label="后台子功能">
+    <div
+      className="admin-workspace-tabs"
+      role="tablist"
+      aria-label="后台子功能"
+    >
       {tabs.map((tab) => {
         const item = adminNav.find((nav) => nav.id === tab);
         if (!item) {
@@ -2608,24 +2611,35 @@ function AdminFoldout({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <section className={open ? "admin-foldout open" : "admin-foldout"}>
-      <button
-        aria-expanded={open}
-        className="admin-foldout-trigger"
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span>
+    <>
+      <section className="admin-action-card">
+        <div>
           <strong>{title}</strong>
           {description ? <small>{description}</small> : null}
-        </span>
-        <span className="admin-foldout-side">
+        </div>
+        <div className="admin-action-card-side">
           {badge}
-          <span className="admin-foldout-chevron">{open ? "收起" : "展开"}</span>
-        </span>
-      </button>
-      {open ? <div className="admin-foldout-body">{children}</div> : null}
-    </section>
+          <button
+            className="button secondary compact"
+            onClick={() => setOpen(true)}
+            type="button"
+          >
+            <SlidersHorizontal size={16} />
+            配置
+          </button>
+        </div>
+      </section>
+      {open ? (
+        <ModalShell
+          description={description}
+          onClose={() => setOpen(false)}
+          title={title}
+          wide
+        >
+          <div className="modal-body">{children}</div>
+        </ModalShell>
+      ) : null}
+    </>
   );
 }
 
@@ -6255,9 +6269,7 @@ function AdminRequests({
               <div className="temporary-ip-ban-head">
                 <div>
                   <strong>自动公告封禁</strong>
-                  <p>
-                    连续 2 次自动终止会临时封禁 IP，并按下方文案返回。
-                  </p>
+                  <p>连续 2 次自动终止会临时封禁 IP，并按下方文案返回。</p>
                 </div>
                 <button
                   className="button secondary"
@@ -6280,8 +6292,7 @@ function AdminRequests({
                   <input
                     className="input"
                     disabled={
-                      !temporaryIpNoticeBanSettings ||
-                      temporaryIpNoticeBanBusy
+                      !temporaryIpNoticeBanSettings || temporaryIpNoticeBanBusy
                     }
                     inputMode="numeric"
                     max={temporaryIpNoticeBanSettings?.maxBanSeconds ?? 3600}
@@ -6298,8 +6309,7 @@ function AdminRequests({
                   <input
                     className="input"
                     disabled={
-                      !temporaryIpNoticeBanSettings ||
-                      temporaryIpNoticeBanBusy
+                      !temporaryIpNoticeBanSettings || temporaryIpNoticeBanBusy
                     }
                     onChange={(event) =>
                       setTemporaryIpNoticeBanMessage(event.target.value)
@@ -6967,7 +6977,9 @@ function AdminAuditLogs({
                 <tr key={log.id}>
                   <td>
                     <strong>{dateTime(log.createdAt)}</strong>
-                    <span className="muted">{log.method} {log.path}</span>
+                    <span className="muted">
+                      {log.method} {log.path}
+                    </span>
                   </td>
                   <td>
                     <strong>{log.adminEmail ?? "-"}</strong>
@@ -6975,7 +6987,9 @@ function AdminAuditLogs({
                   </td>
                   <td>
                     <StatusPill status={log.action} />
-                    <span className="muted">HTTP {log.responseStatus ?? "-"}</span>
+                    <span className="muted">
+                      HTTP {log.responseStatus ?? "-"}
+                    </span>
                   </td>
                   <td>
                     <StatusPill status={log.outcome ?? "unknown"} />
@@ -6989,7 +7003,9 @@ function AdminAuditLogs({
                   </td>
                   <td>
                     <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">{log.userAgent ?? "-"}</span>
+                    <span className="muted truncate">
+                      {log.userAgent ?? "-"}
+                    </span>
                   </td>
                   <td>
                     <pre className="json-snippet">
@@ -7088,7 +7104,9 @@ function AdminLoginLogs({
                   <td>{dateTime(log.createdAt)}</td>
                   <td>
                     <strong>{log.email ?? log.user?.email ?? "-"}</strong>
-                    <span className="muted">{log.username ?? log.userId ?? "-"}</span>
+                    <span className="muted">
+                      {log.username ?? log.userId ?? "-"}
+                    </span>
                   </td>
                   <td>
                     <StatusPill status={log.method} />
@@ -7101,7 +7119,9 @@ function AdminLoginLogs({
                   </td>
                   <td>
                     <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">{log.userAgent ?? "-"}</span>
+                    <span className="muted truncate">
+                      {log.userAgent ?? "-"}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -7479,13 +7499,41 @@ const gatewayNoticeFields: Array<{
 }> = [
   { key: "userConcurrencyMessage", label: "用户并发限制", hint: "{limit}" },
   { key: "keyConcurrencyMessage", label: "Key 并发限制", hint: "{limit}" },
-  { key: "userRateLimitMessage", label: "用户速率限制", hint: "{limit} {seconds}" },
-  { key: "keyRateLimitMessage", label: "Key 速率限制", hint: "{limit} {seconds}" },
-  { key: "charityIpRateLimitMessage", label: "公益单 IP 速率限制", hint: "{limit} {seconds}" },
-  { key: "modelUnavailableMessage", label: "模型池不可用", hint: "模型池空、无可用渠道或未定价" },
-  { key: "missingUsageMessage", label: "上游缺少计费用量", hint: "缺 usage 时返回" },
-  { key: "staleResponsesContextMessage", label: "Responses 上下文失效", hint: "previous_response_id 不可用" },
-  { key: "invalidEncryptedContentMessage", label: "加密上下文失效", hint: "encrypted content 不可用" },
+  {
+    key: "userRateLimitMessage",
+    label: "用户速率限制",
+    hint: "{limit} {seconds}",
+  },
+  {
+    key: "keyRateLimitMessage",
+    label: "Key 速率限制",
+    hint: "{limit} {seconds}",
+  },
+  {
+    key: "charityIpRateLimitMessage",
+    label: "公益单 IP 速率限制",
+    hint: "{limit} {seconds}",
+  },
+  {
+    key: "modelUnavailableMessage",
+    label: "模型池不可用",
+    hint: "模型池空、无可用渠道或未定价",
+  },
+  {
+    key: "missingUsageMessage",
+    label: "上游缺少计费用量",
+    hint: "缺 usage 时返回",
+  },
+  {
+    key: "staleResponsesContextMessage",
+    label: "Responses 上下文失效",
+    hint: "previous_response_id 不可用",
+  },
+  {
+    key: "invalidEncryptedContentMessage",
+    label: "加密上下文失效",
+    hint: "encrypted content 不可用",
+  },
 ];
 
 function AdminRiskCenter({
@@ -7517,8 +7565,15 @@ function AdminRiskCenter({
   const [redisError, setRedisError] = useState<string | null>(null);
   const [circuitSaved, setCircuitSaved] = useState<string | null>(null);
   const [circuitError, setCircuitError] = useState<string | null>(null);
-  const [externalAlertSaved, setExternalAlertSaved] = useState<string | null>(null);
-  const [externalAlertError, setExternalAlertError] = useState<string | null>(null);
+  const [externalAlertSaved, setExternalAlertSaved] = useState<string | null>(
+    null,
+  );
+  const [externalAlertError, setExternalAlertError] = useState<string | null>(
+    null,
+  );
+  const [riskModal, setRiskModal] = useState<
+    "circuit" | "redis" | "external-alert" | null
+  >(null);
 
   useEffect(() => {
     setRedisDraft(riskCenter?.redisFailurePolicySettings ?? null);
@@ -7631,7 +7686,11 @@ function AdminRiskCenter({
               更新于 {riskCenter ? dateTime(riskCenter.checkedAt) : "-"}
             </p>
           </div>
-          <button className="button secondary" onClick={onRefresh} type="button">
+          <button
+            className="button secondary"
+            onClick={onRefresh}
+            type="button"
+          >
             <RefreshCw size={17} />
             刷新
           </button>
@@ -7691,12 +7750,20 @@ function AdminRiskCenter({
           />
           <StatusTile
             label="Redis 失败策略"
-            ok={riskCenter?.redisFailurePolicySettings.policy === "fail-open" ? undefined : true}
+            ok={
+              riskCenter?.redisFailurePolicySettings.policy === "fail-open"
+                ? undefined
+                : true
+            }
             value={riskCenter?.redisFailurePolicySettings.policy ?? "-"}
           />
           <StatusTile
             label="全局熔断"
-            ok={riskCenter?.globalCircuitBreakerSettings.enabled ? true : undefined}
+            ok={
+              riskCenter?.globalCircuitBreakerSettings.enabled
+                ? true
+                : undefined
+            }
             value={
               riskCenter?.globalCircuitBreakerSettings.enabled
                 ? "已开启"
@@ -7723,289 +7790,426 @@ function AdminRiskCenter({
       <section className="card">
         <div className="section-head">
           <div>
-            <h2 className="section-title">全局熔断</h2>
+            <h2 className="section-title">运维策略</h2>
             <p className="section-subtitle">
-              暂停普通用户调用，只允许管理员或白名单用户继续通过。
+              高风险配置统一收进弹窗，页面保留状态和入口。
             </p>
           </div>
         </div>
-        {circuitDraft ? (
-          <form className="form" onSubmit={saveGlobalCircuitBreaker}>
-            <div className="grid cols-2">
-              <label className="field checkbox-field">
-                <input
-                  checked={circuitDraft.enabled}
-                  onChange={(event) =>
-                    setCircuitDraft({
-                      ...circuitDraft,
-                      enabled: event.target.checked,
-                    })
-                  }
-                  type="checkbox"
-                />
-                <span>开启全局熔断</span>
-              </label>
-              <label className="field checkbox-field">
-                <input
-                  checked={circuitDraft.allowAdmins}
-                  onChange={(event) =>
-                    setCircuitDraft({
-                      ...circuitDraft,
-                      allowAdmins: event.target.checked,
-                    })
-                  }
-                  type="checkbox"
-                />
-                <span>允许管理员绕过</span>
-              </label>
-              <label className="field">
-                <span>用户白名单</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) =>
-                    setCircuitDraft({
-                      ...circuitDraft,
-                      allowedUserIds: splitList(event.target.value),
-                    })
-                  }
-                  placeholder="每行或逗号分隔 userId"
-                  value={circuitDraft.allowedUserIds.join("\n")}
-                />
-              </label>
-              <label className="field">
-                <span>熔断文案</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  maxLength={1000}
-                  onChange={(event) =>
-                    setCircuitDraft({
-                      ...circuitDraft,
-                      message: event.target.value,
-                    })
-                  }
-                  value={circuitDraft.message}
-                />
-              </label>
+        <div className="admin-settings-stack">
+          <section className="admin-action-card">
+            <div>
+              <strong>全局熔断</strong>
+              <small>
+                暂停普通用户调用，只允许管理员或白名单用户继续通过。
+              </small>
             </div>
-            {circuitSaved ? (
-              <div className="success compact-success">{circuitSaved}</div>
-            ) : null}
-            {circuitError ? (
-              <div className="error compact-error">{circuitError}</div>
-            ) : null}
-            <div className="button-row">
-              <button className="button" disabled={circuitBusy} type="submit">
-                <Save size={17} />
-                {circuitBusy ? "保存中..." : "保存熔断策略"}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p className="muted">熔断策略加载中...</p>
-        )}
-      </section>
-
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">Redis 异常策略</h2>
-            <p className="section-subtitle">
-              控制限流和并发依赖 Redis 失败时的网关行为。
-            </p>
-          </div>
-        </div>
-        {redisDraft ? (
-          <form className="form" onSubmit={saveRedisFailurePolicy}>
-            <div className="grid cols-2">
-              <label className="field">
-                <span>策略</span>
-                <select
-                  className="input"
-                  onChange={(event) =>
-                    setRedisDraft({
-                      ...redisDraft,
-                      policy: event.target.value as RedisFailurePolicySettings["policy"],
-                    })
-                  }
-                  value={redisDraft.policy}
-                >
-                  <option value="fail-open">fail-open：Redis 异常时放行</option>
-                  <option value="fail-closed">fail-closed：Redis 异常时拒绝</option>
-                  <option value="degraded">degraded：只允许管理员/白名单</option>
-                </select>
-              </label>
-              <label className="field checkbox-field">
-                <input
-                  checked={redisDraft.degradedAdminBypassEnabled}
-                  onChange={(event) =>
-                    setRedisDraft({
-                      ...redisDraft,
-                      degradedAdminBypassEnabled: event.target.checked,
-                    })
-                  }
-                  type="checkbox"
-                />
-                <span>degraded 时允许管理员账号调用</span>
-              </label>
-              <label className="field">
-                <span>degraded 用户白名单</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) =>
-                    setRedisDraft({
-                      ...redisDraft,
-                      degradedUserIds: event.target.value
-                        .split(/\s|,|，/)
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  placeholder="每行或逗号分隔 userId"
-                  value={redisDraft.degradedUserIds.join("\n")}
-                />
-              </label>
-              <label className="field">
-                <span>拒绝文案</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  maxLength={1000}
-                  onChange={(event) =>
-                    setRedisDraft({ ...redisDraft, message: event.target.value })
-                  }
-                  value={redisDraft.message}
-                />
-              </label>
-            </div>
-            {redisSaved ? <div className="success compact-success">{redisSaved}</div> : null}
-            {redisError ? <div className="error compact-error">{redisError}</div> : null}
-            <div className="button-row">
-              <button className="button" disabled={redisBusy} type="submit">
-                <Save size={17} />
-                {redisBusy ? "保存中..." : "保存 Redis 策略"}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p className="muted">Redis 策略加载中...</p>
-        )}
-      </section>
-
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">外部告警推送</h2>
-            <p className="section-subtitle">
-              将运维告警通过通用 webhook 推送到企业微信、飞书或自建通知服务。
-            </p>
-          </div>
-        </div>
-        {externalAlertDraft ? (
-          <form className="form" onSubmit={saveExternalAlertSettings}>
-            <div className="grid cols-2">
-              <label className="field checkbox-field">
-                <input
-                  checked={externalAlertDraft.enabled}
-                  onChange={(event) =>
-                    setExternalAlertDraft({
-                      ...externalAlertDraft,
-                      enabled: event.target.checked,
-                    })
-                  }
-                  type="checkbox"
-                />
-                <span>开启外部告警</span>
-              </label>
-              <label className="field">
-                <span>最低推送级别</span>
-                <select
-                  className="input"
-                  onChange={(event) =>
-                    setExternalAlertDraft({
-                      ...externalAlertDraft,
-                      minSeverity:
-                        event.target.value as ExternalAlertSettings["minSeverity"],
-                    })
-                  }
-                  value={externalAlertDraft.minSeverity}
-                >
-                  <option value="warning">warning 及以上</option>
-                  <option value="critical">critical 仅严重告警</option>
-                  <option value="info">info 全部状态</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Webhook URL</span>
-                <input
-                  className="input"
-                  maxLength={2000}
-                  onChange={(event) =>
-                    setExternalAlertDraft({
-                      ...externalAlertDraft,
-                      webhookUrl: event.target.value,
-                    })
-                  }
-                  placeholder="https://..."
-                  value={externalAlertDraft.webhookUrl}
-                />
-              </label>
-              <label className="field">
-                <span>推送间隔秒</span>
-                <input
-                  className="input"
-                  min={60}
-                  max={86400}
-                  onChange={(event) =>
-                    setExternalAlertDraft({
-                      ...externalAlertDraft,
-                      intervalSeconds: Number(event.target.value) || 60,
-                    })
-                  }
-                  type="number"
-                  value={externalAlertDraft.intervalSeconds}
-                />
-              </label>
-              <label className="field">
-                <span>附加提醒文本</span>
-                <input
-                  className="input"
-                  maxLength={500}
-                  onChange={(event) =>
-                    setExternalAlertDraft({
-                      ...externalAlertDraft,
-                      mentionText: event.target.value,
-                    })
-                  }
-                  placeholder="@all 或值班人"
-                  value={externalAlertDraft.mentionText}
-                />
-              </label>
-            </div>
-            {externalAlertSaved ? (
-              <div className="success compact-success">{externalAlertSaved}</div>
-            ) : null}
-            {externalAlertError ? (
-              <div className="error compact-error">{externalAlertError}</div>
-            ) : null}
-            <div className="button-row">
-              <button className="button" disabled={externalAlertBusy} type="submit">
-                <Save size={17} />
-                {externalAlertBusy ? "保存中..." : "保存告警设置"}
-              </button>
+            <div className="admin-action-card-side">
+              <span className={circuitDraft?.enabled ? "pill warn" : "pill ok"}>
+                {circuitDraft?.enabled ? "已开启" : "未开启"}
+              </span>
               <button
-                className="button secondary"
-                disabled={externalAlertBusy || !externalAlertDraft.webhookUrl.trim()}
-                onClick={testExternalAlertSettings}
+                className="button secondary compact"
+                disabled={!circuitDraft}
+                onClick={() => setRiskModal("circuit")}
                 type="button"
               >
-                <Send size={17} />
-                测试推送
+                <SlidersHorizontal size={16} />
+                配置
               </button>
             </div>
-          </form>
-        ) : (
-          <p className="muted">外部告警设置加载中...</p>
-        )}
+          </section>
+
+          <section className="admin-action-card">
+            <div>
+              <strong>Redis 异常策略</strong>
+              <small>控制限流和并发依赖 Redis 失败时的网关行为。</small>
+            </div>
+            <div className="admin-action-card-side">
+              <span
+                className={
+                  redisDraft?.policy === "fail-closed" ? "pill warn" : "pill"
+                }
+              >
+                {redisDraft?.policy ?? "加载中"}
+              </span>
+              <button
+                className="button secondary compact"
+                disabled={!redisDraft}
+                onClick={() => setRiskModal("redis")}
+                type="button"
+              >
+                <SlidersHorizontal size={16} />
+                配置
+              </button>
+            </div>
+          </section>
+
+          <section className="admin-action-card">
+            <div>
+              <strong>外部告警推送</strong>
+              <small>通过 webhook 推送到企业微信、飞书或自建通知服务。</small>
+            </div>
+            <div className="admin-action-card-side">
+              <span
+                className={externalAlertDraft?.enabled ? "pill ok" : "pill"}
+              >
+                {externalAlertDraft?.enabled ? "已开启" : "未开启"}
+              </span>
+              <button
+                className="button secondary compact"
+                disabled={!externalAlertDraft}
+                onClick={() => setRiskModal("external-alert")}
+                type="button"
+              >
+                <SlidersHorizontal size={16} />
+                配置
+              </button>
+            </div>
+          </section>
+        </div>
       </section>
+
+      {riskModal === "circuit" ? (
+        <ModalShell
+          description="暂停普通用户调用，只允许管理员或白名单用户继续通过。"
+          onClose={() => setRiskModal(null)}
+          title="全局熔断"
+          wide
+        >
+          {circuitDraft ? (
+            <form className="form" onSubmit={saveGlobalCircuitBreaker}>
+              <div className="modal-body">
+                <div className="grid cols-2">
+                  <label className="field checkbox-field">
+                    <input
+                      checked={circuitDraft.enabled}
+                      onChange={(event) =>
+                        setCircuitDraft({
+                          ...circuitDraft,
+                          enabled: event.target.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <span>开启全局熔断</span>
+                  </label>
+                  <label className="field checkbox-field">
+                    <input
+                      checked={circuitDraft.allowAdmins}
+                      onChange={(event) =>
+                        setCircuitDraft({
+                          ...circuitDraft,
+                          allowAdmins: event.target.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <span>允许管理员绕过</span>
+                  </label>
+                  <label className="field">
+                    <span>用户白名单</span>
+                    <textarea
+                      className="input textarea compact-textarea"
+                      onChange={(event) =>
+                        setCircuitDraft({
+                          ...circuitDraft,
+                          allowedUserIds: splitList(event.target.value),
+                        })
+                      }
+                      placeholder="每行或逗号分隔 userId"
+                      value={circuitDraft.allowedUserIds.join("\n")}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>熔断文案</span>
+                    <textarea
+                      className="input textarea compact-textarea"
+                      maxLength={1000}
+                      onChange={(event) =>
+                        setCircuitDraft({
+                          ...circuitDraft,
+                          message: event.target.value,
+                        })
+                      }
+                      value={circuitDraft.message}
+                    />
+                  </label>
+                </div>
+                {circuitSaved ? (
+                  <div className="success compact-success">{circuitSaved}</div>
+                ) : null}
+                {circuitError ? (
+                  <div className="error compact-error">{circuitError}</div>
+                ) : null}
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="button secondary"
+                  onClick={() => setRiskModal(null)}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button className="button" disabled={circuitBusy} type="submit">
+                  <Save size={17} />
+                  {circuitBusy ? "保存中..." : "保存熔断策略"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="modal-body">
+              <p className="muted">熔断策略加载中...</p>
+            </div>
+          )}
+        </ModalShell>
+      ) : null}
+
+      {riskModal === "redis" ? (
+        <ModalShell
+          description="控制限流和并发依赖 Redis 失败时的网关行为。"
+          onClose={() => setRiskModal(null)}
+          title="Redis 异常策略"
+          wide
+        >
+          {redisDraft ? (
+            <form className="form" onSubmit={saveRedisFailurePolicy}>
+              <div className="modal-body">
+                <div className="grid cols-2">
+                  <label className="field">
+                    <span>策略</span>
+                    <select
+                      className="input"
+                      onChange={(event) =>
+                        setRedisDraft({
+                          ...redisDraft,
+                          policy: event.target
+                            .value as RedisFailurePolicySettings["policy"],
+                        })
+                      }
+                      value={redisDraft.policy}
+                    >
+                      <option value="fail-open">
+                        fail-open：Redis 异常时放行
+                      </option>
+                      <option value="fail-closed">
+                        fail-closed：Redis 异常时拒绝
+                      </option>
+                      <option value="degraded">
+                        degraded：只允许管理员/白名单
+                      </option>
+                    </select>
+                  </label>
+                  <label className="field checkbox-field">
+                    <input
+                      checked={redisDraft.degradedAdminBypassEnabled}
+                      onChange={(event) =>
+                        setRedisDraft({
+                          ...redisDraft,
+                          degradedAdminBypassEnabled: event.target.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <span>degraded 时允许管理员账号调用</span>
+                  </label>
+                  <label className="field">
+                    <span>degraded 用户白名单</span>
+                    <textarea
+                      className="input textarea compact-textarea"
+                      onChange={(event) =>
+                        setRedisDraft({
+                          ...redisDraft,
+                          degradedUserIds: event.target.value
+                            .split(/\s|,|，/)
+                            .map((item) => item.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="每行或逗号分隔 userId"
+                      value={redisDraft.degradedUserIds.join("\n")}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>拒绝文案</span>
+                    <textarea
+                      className="input textarea compact-textarea"
+                      maxLength={1000}
+                      onChange={(event) =>
+                        setRedisDraft({
+                          ...redisDraft,
+                          message: event.target.value,
+                        })
+                      }
+                      value={redisDraft.message}
+                    />
+                  </label>
+                </div>
+                {redisSaved ? (
+                  <div className="success compact-success">{redisSaved}</div>
+                ) : null}
+                {redisError ? (
+                  <div className="error compact-error">{redisError}</div>
+                ) : null}
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="button secondary"
+                  onClick={() => setRiskModal(null)}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button className="button" disabled={redisBusy} type="submit">
+                  <Save size={17} />
+                  {redisBusy ? "保存中..." : "保存 Redis 策略"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="modal-body">
+              <p className="muted">Redis 策略加载中...</p>
+            </div>
+          )}
+        </ModalShell>
+      ) : null}
+
+      {riskModal === "external-alert" ? (
+        <ModalShell
+          description="将运维告警通过通用 webhook 推送到企业微信、飞书或自建通知服务。"
+          onClose={() => setRiskModal(null)}
+          title="外部告警推送"
+          wide
+        >
+          {externalAlertDraft ? (
+            <form className="form" onSubmit={saveExternalAlertSettings}>
+              <div className="modal-body">
+                <div className="grid cols-2">
+                  <label className="field checkbox-field">
+                    <input
+                      checked={externalAlertDraft.enabled}
+                      onChange={(event) =>
+                        setExternalAlertDraft({
+                          ...externalAlertDraft,
+                          enabled: event.target.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <span>开启外部告警</span>
+                  </label>
+                  <label className="field">
+                    <span>最低推送级别</span>
+                    <select
+                      className="input"
+                      onChange={(event) =>
+                        setExternalAlertDraft({
+                          ...externalAlertDraft,
+                          minSeverity: event.target
+                            .value as ExternalAlertSettings["minSeverity"],
+                        })
+                      }
+                      value={externalAlertDraft.minSeverity}
+                    >
+                      <option value="warning">warning 及以上</option>
+                      <option value="critical">critical 仅严重告警</option>
+                      <option value="info">info 全部状态</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Webhook URL</span>
+                    <input
+                      className="input"
+                      maxLength={2000}
+                      onChange={(event) =>
+                        setExternalAlertDraft({
+                          ...externalAlertDraft,
+                          webhookUrl: event.target.value,
+                        })
+                      }
+                      placeholder="https://..."
+                      value={externalAlertDraft.webhookUrl}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>推送间隔秒</span>
+                    <input
+                      className="input"
+                      min={60}
+                      max={86400}
+                      onChange={(event) =>
+                        setExternalAlertDraft({
+                          ...externalAlertDraft,
+                          intervalSeconds: Number(event.target.value) || 60,
+                        })
+                      }
+                      type="number"
+                      value={externalAlertDraft.intervalSeconds}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>附加提醒文本</span>
+                    <input
+                      className="input"
+                      maxLength={500}
+                      onChange={(event) =>
+                        setExternalAlertDraft({
+                          ...externalAlertDraft,
+                          mentionText: event.target.value,
+                        })
+                      }
+                      placeholder="@all 或值班人"
+                      value={externalAlertDraft.mentionText}
+                    />
+                  </label>
+                </div>
+                {externalAlertSaved ? (
+                  <div className="success compact-success">
+                    {externalAlertSaved}
+                  </div>
+                ) : null}
+                {externalAlertError ? (
+                  <div className="error compact-error">
+                    {externalAlertError}
+                  </div>
+                ) : null}
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="button secondary"
+                  onClick={() => setRiskModal(null)}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button
+                  className="button"
+                  disabled={externalAlertBusy}
+                  type="submit"
+                >
+                  <Save size={17} />
+                  {externalAlertBusy ? "保存中..." : "保存告警设置"}
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={
+                    externalAlertBusy || !externalAlertDraft.webhookUrl.trim()
+                  }
+                  onClick={testExternalAlertSettings}
+                  type="button"
+                >
+                  <Send size={17} />
+                  测试推送
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="modal-body">
+              <p className="muted">外部告警设置加载中...</p>
+            </div>
+          )}
+        </ModalShell>
+      ) : null}
 
       <section className="card">
         <div className="section-head">
@@ -8075,9 +8279,12 @@ function AdminReports({
     setExporting(true);
     setExportError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/admin/reports/summary/export`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(
+        `${apiBaseUrl}/admin/reports/summary/export`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (!response.ok) {
         throw new Error(await response.text());
       }
@@ -8119,13 +8326,19 @@ function AdminReports({
               <Save size={17} />
               {exporting ? "导出中..." : "导出 CSV"}
             </button>
-            <button className="button secondary" onClick={onRefresh} type="button">
+            <button
+              className="button secondary"
+              onClick={onRefresh}
+              type="button"
+            >
               <RefreshCw size={17} />
               刷新
             </button>
           </div>
         </div>
-        {exportError ? <div className="error compact-error">{exportError}</div> : null}
+        {exportError ? (
+          <div className="error compact-error">{exportError}</div>
+        ) : null}
         <div className="metric-grid">
           <Metric
             label="请求数"
@@ -8147,10 +8360,22 @@ function AdminReports({
       </section>
 
       <div className="split-grid">
-        <ReportDimensionTable title="用户收入排行" rows={report?.dimensions.users ?? []} />
-        <ReportDimensionTable title="模型收入排行" rows={report?.dimensions.models ?? []} />
-        <ReportDimensionTable title="上游收入排行" rows={report?.dimensions.upstreams ?? []} />
-        <ReportDimensionTable title="等级收入排行" rows={report?.dimensions.tiers ?? []} />
+        <ReportDimensionTable
+          title="用户收入排行"
+          rows={report?.dimensions.users ?? []}
+        />
+        <ReportDimensionTable
+          title="模型收入排行"
+          rows={report?.dimensions.models ?? []}
+        />
+        <ReportDimensionTable
+          title="上游收入排行"
+          rows={report?.dimensions.upstreams ?? []}
+        />
+        <ReportDimensionTable
+          title="等级收入排行"
+          rows={report?.dimensions.tiers ?? []}
+        />
         <ReportDimensionTable
           title="专线收入排行"
           rows={report?.dimensions.dedicatedRoutes ?? []}
@@ -8185,7 +8410,9 @@ function ReportDimensionTable({
               <tr key={`${title}:${row.id ?? row.label}`}>
                 <td>
                   <strong>{row.label}</strong>
-                  <div className="muted">{formatNumber(row.totalTokens)} tokens</div>
+                  <div className="muted">
+                    {formatNumber(row.totalTokens)} tokens
+                  </div>
                 </td>
                 <td>{formatNumber(row.requestCount)}</td>
                 <td>${money(row.chargedAmountUsd)}</td>
@@ -8219,16 +8446,24 @@ function AdminGatewayNotices({
   pendingAutoTerminateSettings: PendingAutoTerminateSettings | null;
   ipBanRules: IpBanRule[];
   onGatewayNoticeSettingsChanged: (settings: GatewayNoticeSettings) => void;
-  onCharityAnnouncementSettingsChanged: (settings: CharityAnnouncementSettings) => void;
-  onPendingAutoTerminateSettingsChanged: (settings: PendingAutoTerminateSettings) => void;
+  onCharityAnnouncementSettingsChanged: (
+    settings: CharityAnnouncementSettings,
+  ) => void;
+  onPendingAutoTerminateSettingsChanged: (
+    settings: PendingAutoTerminateSettings,
+  ) => void;
   onIpBanRulesChanged: (rules: IpBanRule[]) => void;
   onChanged: () => void;
   onError: (error: string | null) => void;
 }) {
-  const [gatewayDraft, setGatewayDraft] = useState<GatewayNoticeSettings | null>(gatewayNoticeSettings);
-  const [charityDraft, setCharityDraft] = useState<CharityAnnouncementSettings | null>(charityAnnouncementSettings);
-  const [autoDraft, setAutoDraft] = useState<PendingAutoTerminateSettings | null>(pendingAutoTerminateSettings);
-  const [tempSettings, setTempSettings] = useState<TemporaryIpNoticeBanSettings | null>(null);
+  const [gatewayDraft, setGatewayDraft] =
+    useState<GatewayNoticeSettings | null>(gatewayNoticeSettings);
+  const [charityDraft, setCharityDraft] =
+    useState<CharityAnnouncementSettings | null>(charityAnnouncementSettings);
+  const [autoDraft, setAutoDraft] =
+    useState<PendingAutoTerminateSettings | null>(pendingAutoTerminateSettings);
+  const [tempSettings, setTempSettings] =
+    useState<TemporaryIpNoticeBanSettings | null>(null);
   const [tempBans, setTempBans] = useState<TemporaryIpNoticeBan[]>([]);
   const [ipInput, setIpInput] = useState("");
   const [ipMode, setIpMode] = useState<IpBanMode>("notice");
@@ -8241,9 +8476,18 @@ function AdminGatewayNotices({
     "copy" | "charity" | "auto" | "ip"
   >("copy");
 
-  useEffect(() => setGatewayDraft(gatewayNoticeSettings), [gatewayNoticeSettings]);
-  useEffect(() => setCharityDraft(charityAnnouncementSettings), [charityAnnouncementSettings]);
-  useEffect(() => setAutoDraft(pendingAutoTerminateSettings), [pendingAutoTerminateSettings]);
+  useEffect(
+    () => setGatewayDraft(gatewayNoticeSettings),
+    [gatewayNoticeSettings],
+  );
+  useEffect(
+    () => setCharityDraft(charityAnnouncementSettings),
+    [charityAnnouncementSettings],
+  );
+  useEffect(
+    () => setAutoDraft(pendingAutoTerminateSettings),
+    [pendingAutoTerminateSettings],
+  );
   useEffect(() => {
     void loadTemporaryBans();
   }, []);
@@ -8370,15 +8614,18 @@ function AdminGatewayNotices({
     setBusy("ip");
     setLocalError(null);
     try {
-      const result = await apiFetch<{ rules: IpBanRule[] }>("/admin/ip-ban-rules", {
-        method: "POST",
-        body: JSON.stringify({
-          ip: ipInput.trim(),
-          mode: ipMode,
-          message: ipMessage.trim() || defaultIpBanMessage,
-          reason: ipReason.trim() || null,
-        }),
-      });
+      const result = await apiFetch<{ rules: IpBanRule[] }>(
+        "/admin/ip-ban-rules",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ip: ipInput.trim(),
+            mode: ipMode,
+            message: ipMessage.trim() || defaultIpBanMessage,
+            reason: ipReason.trim() || null,
+          }),
+        },
+      );
       onIpBanRulesChanged(result.rules);
       setIpInput("");
       setIpReason("");
@@ -8448,7 +8695,9 @@ function AdminGatewayNotices({
       id: "auto" as const,
       label: "自动封禁",
       description: "超时终止和临时 IP 封禁",
-      status: tempSettings?.enabled ? `${tempSettings.threshold} 次触发` : "关闭",
+      status: tempSettings?.enabled
+        ? `${tempSettings.threshold} 次触发`
+        : "关闭",
       icon: CircleStop,
     },
     {
@@ -8488,7 +8737,9 @@ function AdminGatewayNotices({
       </section>
 
       {saved ? <div className="success compact-success">{saved}</div> : null}
-      {pageError ? <div className="error compact-error">{pageError}</div> : null}
+      {pageError ? (
+        <div className="error compact-error">{pageError}</div>
+      ) : null}
 
       <div className="notice-console-shell">
         <aside className="notice-console-nav">
@@ -8518,384 +8769,483 @@ function AdminGatewayNotices({
 
         <div className="notice-console-content">
           {activePanel === "copy" ? (
-      <section className="card notice-console-panel">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">网关统一返回文案</h2>
-            <p className="section-subtitle">限流、并发、模型不可用、上下文恢复和缺少计费数据都会走这里。</p>
-          </div>
-          <button
-            className="button secondary"
-            disabled={!gatewayNoticeDefaults}
-            onClick={() => gatewayNoticeDefaults && setGatewayDraft(gatewayNoticeDefaults)}
-            type="button"
-          >
-            恢复默认
-          </button>
-        </div>
-        {gatewayDraft ? (
-          <form className="form" onSubmit={saveGateway}>
-            <div className="grid cols-2">
-              {gatewayNoticeFields.map((field) => (
-                <label className="field" key={field.key}>
-                  <span>{field.label}</span>
-                  <textarea
-                    className="input textarea compact-textarea"
-                    maxLength={8000}
-                    onChange={(event) =>
-                      setGatewayDraft({ ...gatewayDraft, [field.key]: event.target.value })
-                    }
-                    placeholder={gatewayNoticeDefaults?.[field.key] ?? ""}
-                    value={gatewayDraft[field.key]}
-                  />
-                  <small className="muted">{field.hint}</small>
-                </label>
-              ))}
-            </div>
-            <div className="button-row">
-              <button className="button" disabled={busy === "gateway"} type="submit">
-                <Save size={17} />
-                保存网关文案
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p className="muted">网关文案加载中...</p>
-        )}
-      </section>
+            <section className="card notice-console-panel">
+              <div className="section-head">
+                <div>
+                  <h2 className="section-title">网关统一返回文案</h2>
+                  <p className="section-subtitle">
+                    限流、并发、模型不可用、上下文恢复和缺少计费数据都会走这里。
+                  </p>
+                </div>
+                <button
+                  className="button secondary"
+                  disabled={!gatewayNoticeDefaults}
+                  onClick={() =>
+                    gatewayNoticeDefaults &&
+                    setGatewayDraft(gatewayNoticeDefaults)
+                  }
+                  type="button"
+                >
+                  恢复默认
+                </button>
+              </div>
+              {gatewayDraft ? (
+                <form className="form" onSubmit={saveGateway}>
+                  <div className="grid cols-2">
+                    {gatewayNoticeFields.map((field) => (
+                      <label className="field" key={field.key}>
+                        <span>{field.label}</span>
+                        <textarea
+                          className="input textarea compact-textarea"
+                          maxLength={8000}
+                          onChange={(event) =>
+                            setGatewayDraft({
+                              ...gatewayDraft,
+                              [field.key]: event.target.value,
+                            })
+                          }
+                          placeholder={gatewayNoticeDefaults?.[field.key] ?? ""}
+                          value={gatewayDraft[field.key]}
+                        />
+                        <small className="muted">{field.hint}</small>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="button-row">
+                    <button
+                      className="button"
+                      disabled={busy === "gateway"}
+                      type="submit"
+                    >
+                      <Save size={17} />
+                      保存网关文案
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <p className="muted">网关文案加载中...</p>
+              )}
+            </section>
           ) : null}
 
           {activePanel === "charity" ? (
-      <section className="card notice-console-panel">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">公益服务与公益页公告</h2>
-            <p className="section-subtitle">总开关关闭后，公益 Key 调用直接返回这里的文案。</p>
-          </div>
-          <span className={charityDraft?.serviceEnabled ? "pill ok" : "pill warn"}>
-            {charityDraft?.serviceEnabled ? "服务可用" : "服务关闭"}
-          </span>
-        </div>
-        {charityDraft ? (
-          <form className="form" onSubmit={saveCharity}>
-            <div className="grid cols-2">
-              <label className="checkbox-row">
-                <input
-                  checked={charityDraft.serviceEnabled}
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, serviceEnabled: event.target.checked })
+            <section className="card notice-console-panel">
+              <div className="section-head">
+                <div>
+                  <h2 className="section-title">公益服务与公益页公告</h2>
+                  <p className="section-subtitle">
+                    总开关关闭后，公益 Key 调用直接返回这里的文案。
+                  </p>
+                </div>
+                <span
+                  className={
+                    charityDraft?.serviceEnabled ? "pill ok" : "pill warn"
                   }
-                  type="checkbox"
-                />
-                <span>启用公益服务</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  checked={charityDraft.enabled}
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, enabled: event.target.checked })
-                  }
-                  type="checkbox"
-                />
-                <span>启用公益页弹窗</span>
-              </label>
-              <label className="field">
-                <span>关闭时返回文案</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, serviceDisabledMessage: event.target.value })
-                  }
-                  value={charityDraft.serviceDisabledMessage}
-                />
-              </label>
-              <label className="field">
-                <span>弹窗标题</span>
-                <input
-                  className="input"
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, title: event.target.value })
-                  }
-                  value={charityDraft.title}
-                />
-              </label>
-              <label className="field">
-                <span>弹窗频率</span>
-                <select
-                  className="input"
-                  onChange={(event) =>
-                    setCharityDraft({
-                      ...charityDraft,
-                      frequency: event.target.value === "interval" ? "interval" : "every_visit",
-                    })
-                  }
-                  value={charityDraft.frequency}
                 >
-                  <option value="every_visit">每次打开</option>
-                  <option value="interval">按间隔</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>间隔小时</span>
-                <input
-                  className="input"
-                  max={charityDraft.maxIntervalHours ?? 720}
-                  min={charityDraft.minIntervalHours ?? 1}
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, intervalHours: Number(event.target.value) })
-                  }
-                  type="number"
-                  value={charityDraft.intervalHours}
-                />
-              </label>
-              <label className="field">
-                <span>弹窗内容</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) =>
-                    setCharityDraft({ ...charityDraft, content: event.target.value })
-                  }
-                  value={charityDraft.content}
-                />
-              </label>
-            </div>
-            <div className="button-row">
-              <button className="button" disabled={busy === "charity"} type="submit">
-                <Save size={17} />
-                保存公益设置
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p className="muted">公益设置加载中...</p>
-        )}
-      </section>
+                  {charityDraft?.serviceEnabled ? "服务可用" : "服务关闭"}
+                </span>
+              </div>
+              {charityDraft ? (
+                <form className="form" onSubmit={saveCharity}>
+                  <div className="grid cols-2">
+                    <label className="checkbox-row">
+                      <input
+                        checked={charityDraft.serviceEnabled}
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            serviceEnabled: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>启用公益服务</span>
+                    </label>
+                    <label className="checkbox-row">
+                      <input
+                        checked={charityDraft.enabled}
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            enabled: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>启用公益页弹窗</span>
+                    </label>
+                    <label className="field">
+                      <span>关闭时返回文案</span>
+                      <textarea
+                        className="input textarea compact-textarea"
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            serviceDisabledMessage: event.target.value,
+                          })
+                        }
+                        value={charityDraft.serviceDisabledMessage}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>弹窗标题</span>
+                      <input
+                        className="input"
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            title: event.target.value,
+                          })
+                        }
+                        value={charityDraft.title}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>弹窗频率</span>
+                      <select
+                        className="input"
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            frequency:
+                              event.target.value === "interval"
+                                ? "interval"
+                                : "every_visit",
+                          })
+                        }
+                        value={charityDraft.frequency}
+                      >
+                        <option value="every_visit">每次打开</option>
+                        <option value="interval">按间隔</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>间隔小时</span>
+                      <input
+                        className="input"
+                        max={charityDraft.maxIntervalHours ?? 720}
+                        min={charityDraft.minIntervalHours ?? 1}
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            intervalHours: Number(event.target.value),
+                          })
+                        }
+                        type="number"
+                        value={charityDraft.intervalHours}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>弹窗内容</span>
+                      <textarea
+                        className="input textarea compact-textarea"
+                        onChange={(event) =>
+                          setCharityDraft({
+                            ...charityDraft,
+                            content: event.target.value,
+                          })
+                        }
+                        value={charityDraft.content}
+                      />
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <button
+                      className="button"
+                      disabled={busy === "charity"}
+                      type="submit"
+                    >
+                      <Save size={17} />
+                      保存公益设置
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <p className="muted">公益设置加载中...</p>
+              )}
+            </section>
           ) : null}
 
           {activePanel === "auto" ? (
-      <section className="card notice-console-panel">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">自动终止与自动公告封禁</h2>
-            <p className="section-subtitle">Pending 超时终止后，同一 IP 连续命中会临时公告封禁。</p>
-          </div>
-          <button className="button secondary" onClick={() => void loadTemporaryBans()} type="button">
-            <RefreshCw size={16} />
-            刷新
-          </button>
-        </div>
-        <div className="grid cols-2">
-          {autoDraft ? (
-            <form className="form" onSubmit={saveAutoTerminate}>
-              <label className="checkbox-row">
-                <input
-                  checked={autoDraft.enabled}
-                  onChange={(event) =>
-                    setAutoDraft({ ...autoDraft, enabled: event.target.checked })
-                  }
-                  type="checkbox"
-                />
-                <span>启用 Pending 自动终止</span>
-              </label>
-              <label className="field">
-                <span>超时秒数</span>
-                <input
-                  className="input"
-                  max={autoDraft.maxTimeoutSeconds ?? 3600}
-                  min={autoDraft.minTimeoutSeconds ?? 5}
-                  onChange={(event) =>
-                    setAutoDraft({ ...autoDraft, timeoutSeconds: Number(event.target.value) })
-                  }
-                  type="number"
-                  value={autoDraft.timeoutSeconds}
-                />
-              </label>
-              <label className="field">
-                <span>终止记录文案</span>
-                <input
-                  className="input"
-                  onChange={(event) =>
-                    setAutoDraft({ ...autoDraft, message: event.target.value })
-                  }
-                  value={autoDraft.message}
-                />
-              </label>
-              <button className="button" disabled={busy === "auto"} type="submit">
-                <Save size={17} />
-                保存自动终止
-              </button>
-            </form>
-          ) : null}
-          {tempSettings ? (
-            <form className="form" onSubmit={saveTemporarySettings}>
-              <label className="checkbox-row">
-                <input
-                  checked={tempSettings.enabled}
-                  onChange={(event) =>
-                    setTempSettings({ ...tempSettings, enabled: event.target.checked })
-                  }
-                  type="checkbox"
-                />
-                <span>启用连续终止自动封禁</span>
-              </label>
-              <div className="grid cols-3">
-                <label className="field">
-                  <span>连续次数</span>
-                  <input
-                    className="input"
-                    max={tempSettings.maxThreshold ?? 20}
-                    min={tempSettings.minThreshold ?? 2}
-                    onChange={(event) =>
-                      setTempSettings({ ...tempSettings, threshold: Number(event.target.value) })
-                    }
-                    type="number"
-                    value={tempSettings.threshold}
-                  />
-                </label>
-                <label className="field">
-                  <span>统计窗口秒</span>
-                  <input
-                    className="input"
-                    max={tempSettings.maxWindowSeconds ?? 86400}
-                    min={tempSettings.minWindowSeconds ?? 60}
-                    onChange={(event) =>
-                      setTempSettings({ ...tempSettings, windowSeconds: Number(event.target.value) })
-                    }
-                    type="number"
-                    value={tempSettings.windowSeconds}
-                  />
-                </label>
-                <label className="field">
-                  <span>封禁秒数</span>
-                  <input
-                    className="input"
-                    max={tempSettings.maxBanSeconds ?? 3600}
-                    min={tempSettings.minBanSeconds ?? 10}
-                    onChange={(event) =>
-                      setTempSettings({ ...tempSettings, banSeconds: Number(event.target.value) })
-                    }
-                    type="number"
-                    value={tempSettings.banSeconds}
-                  />
-                </label>
+            <section className="card notice-console-panel">
+              <div className="section-head">
+                <div>
+                  <h2 className="section-title">自动终止与自动公告封禁</h2>
+                  <p className="section-subtitle">
+                    Pending 超时终止后，同一 IP 连续命中会临时公告封禁。
+                  </p>
+                </div>
+                <button
+                  className="button secondary"
+                  onClick={() => void loadTemporaryBans()}
+                  type="button"
+                >
+                  <RefreshCw size={16} />
+                  刷新
+                </button>
               </div>
-              <label className="field">
-                <span>自动封禁返回文案</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) =>
-                    setTempSettings({ ...tempSettings, message: event.target.value })
-                  }
-                  value={tempSettings.message}
-                />
-              </label>
-              <button className="button" disabled={busy === "temporary"} type="submit">
-                <Save size={17} />
-                保存自动封禁
-              </button>
-            </form>
-          ) : null}
-        </div>
-        <div className="ip-ban-rule-list">
-          {tempBans.map((ban) => (
-            <div className="ip-ban-rule" key={ban.ip}>
-              <div>
-                <strong>{ban.ip}</strong>
-                <p>剩余 {formatDuration(ban.ttlSeconds)} · {ban.message}</p>
+              <div className="grid cols-2">
+                {autoDraft ? (
+                  <form className="form" onSubmit={saveAutoTerminate}>
+                    <label className="checkbox-row">
+                      <input
+                        checked={autoDraft.enabled}
+                        onChange={(event) =>
+                          setAutoDraft({
+                            ...autoDraft,
+                            enabled: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>启用 Pending 自动终止</span>
+                    </label>
+                    <label className="field">
+                      <span>超时秒数</span>
+                      <input
+                        className="input"
+                        max={autoDraft.maxTimeoutSeconds ?? 3600}
+                        min={autoDraft.minTimeoutSeconds ?? 5}
+                        onChange={(event) =>
+                          setAutoDraft({
+                            ...autoDraft,
+                            timeoutSeconds: Number(event.target.value),
+                          })
+                        }
+                        type="number"
+                        value={autoDraft.timeoutSeconds}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>终止记录文案</span>
+                      <input
+                        className="input"
+                        onChange={(event) =>
+                          setAutoDraft({
+                            ...autoDraft,
+                            message: event.target.value,
+                          })
+                        }
+                        value={autoDraft.message}
+                      />
+                    </label>
+                    <button
+                      className="button"
+                      disabled={busy === "auto"}
+                      type="submit"
+                    >
+                      <Save size={17} />
+                      保存自动终止
+                    </button>
+                  </form>
+                ) : null}
+                {tempSettings ? (
+                  <form className="form" onSubmit={saveTemporarySettings}>
+                    <label className="checkbox-row">
+                      <input
+                        checked={tempSettings.enabled}
+                        onChange={(event) =>
+                          setTempSettings({
+                            ...tempSettings,
+                            enabled: event.target.checked,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>启用连续终止自动封禁</span>
+                    </label>
+                    <div className="grid cols-3">
+                      <label className="field">
+                        <span>连续次数</span>
+                        <input
+                          className="input"
+                          max={tempSettings.maxThreshold ?? 20}
+                          min={tempSettings.minThreshold ?? 2}
+                          onChange={(event) =>
+                            setTempSettings({
+                              ...tempSettings,
+                              threshold: Number(event.target.value),
+                            })
+                          }
+                          type="number"
+                          value={tempSettings.threshold}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>统计窗口秒</span>
+                        <input
+                          className="input"
+                          max={tempSettings.maxWindowSeconds ?? 86400}
+                          min={tempSettings.minWindowSeconds ?? 60}
+                          onChange={(event) =>
+                            setTempSettings({
+                              ...tempSettings,
+                              windowSeconds: Number(event.target.value),
+                            })
+                          }
+                          type="number"
+                          value={tempSettings.windowSeconds}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>封禁秒数</span>
+                        <input
+                          className="input"
+                          max={tempSettings.maxBanSeconds ?? 3600}
+                          min={tempSettings.minBanSeconds ?? 10}
+                          onChange={(event) =>
+                            setTempSettings({
+                              ...tempSettings,
+                              banSeconds: Number(event.target.value),
+                            })
+                          }
+                          type="number"
+                          value={tempSettings.banSeconds}
+                        />
+                      </label>
+                    </div>
+                    <label className="field">
+                      <span>自动封禁返回文案</span>
+                      <textarea
+                        className="input textarea compact-textarea"
+                        onChange={(event) =>
+                          setTempSettings({
+                            ...tempSettings,
+                            message: event.target.value,
+                          })
+                        }
+                        value={tempSettings.message}
+                      />
+                    </label>
+                    <button
+                      className="button"
+                      disabled={busy === "temporary"}
+                      type="submit"
+                    >
+                      <Save size={17} />
+                      保存自动封禁
+                    </button>
+                  </form>
+                ) : null}
               </div>
-              <button
-                className="button secondary"
-                disabled={busy === `temp:${ban.ip}`}
-                onClick={() => void deleteTemporaryBan(ban.ip)}
-                type="button"
-              >
-                解封
-              </button>
-            </div>
-          ))}
-          {tempBans.length === 0 ? <div className="empty-state compact">暂无自动封禁 IP</div> : null}
-        </div>
-      </section>
+              <div className="ip-ban-rule-list">
+                {tempBans.map((ban) => (
+                  <div className="ip-ban-rule" key={ban.ip}>
+                    <div>
+                      <strong>{ban.ip}</strong>
+                      <p>
+                        剩余 {formatDuration(ban.ttlSeconds)} · {ban.message}
+                      </p>
+                    </div>
+                    <button
+                      className="button secondary"
+                      disabled={busy === `temp:${ban.ip}`}
+                      onClick={() => void deleteTemporaryBan(ban.ip)}
+                      type="button"
+                    >
+                      解封
+                    </button>
+                  </div>
+                ))}
+                {tempBans.length === 0 ? (
+                  <div className="empty-state compact">暂无自动封禁 IP</div>
+                ) : null}
+              </div>
+            </section>
           ) : null}
 
           {activePanel === "ip" ? (
-      <section className="card notice-console-panel">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">手动 IP 封禁</h2>
-            <p className="section-subtitle">支持普通错误返回，也支持文本接口以公告形式返回。</p>
-          </div>
-          <span className="pill">{ipBanRules.length} 条</span>
-        </div>
-        <form className="form" onSubmit={saveIpRule}>
-          <div className="grid cols-2">
-            <label className="field">
-              <span>IP</span>
-              <input
-                className="input"
-                onChange={(event) => setIpInput(event.target.value)}
-                placeholder="203.0.113.10"
-                value={ipInput}
-              />
-            </label>
-            <label className="field">
-              <span>返回方式</span>
-              <select
-                className="input"
-                onChange={(event) => setIpMode(event.target.value as IpBanMode)}
-                value={ipMode}
-              >
-                <option value="notice">公告返回</option>
-                <option value="error">错误返回</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>返回文案</span>
-              <input
-                className="input"
-                onChange={(event) => setIpMessage(event.target.value)}
-                placeholder={defaultIpBanMessage}
-                value={ipMessage}
-              />
-            </label>
-            <label className="field">
-              <span>备注</span>
-              <input
-                className="input"
-                onChange={(event) => setIpReason(event.target.value)}
-                placeholder="可选"
-                value={ipReason}
-              />
-            </label>
-          </div>
-          <button className="button" disabled={busy === "ip"} type="submit">
-            <Shield size={17} />
-            保存 IP 规则
-          </button>
-        </form>
-        <div className="ip-ban-rule-list">
-          {ipBanRules.map((rule) => (
-            <div className="ip-ban-rule" key={rule.ip}>
-              <div>
-                <strong>{rule.ip}</strong>
-                <p>{rule.reason || rule.message}</p>
+            <section className="card notice-console-panel">
+              <div className="section-head">
+                <div>
+                  <h2 className="section-title">手动 IP 封禁</h2>
+                  <p className="section-subtitle">
+                    支持普通错误返回，也支持文本接口以公告形式返回。
+                  </p>
+                </div>
+                <span className="pill">{ipBanRules.length} 条</span>
               </div>
-              <span className={rule.mode === "notice" ? "pill ok" : "pill warn"}>
-                {rule.mode === "notice" ? "公告返回" : "错误返回"}
-              </span>
-              <button
-                className="button secondary"
-                disabled={busy === `ip:${rule.ip}`}
-                onClick={() => void deleteIpRule(rule.ip)}
-                type="button"
-              >
-                解封
-              </button>
-            </div>
-          ))}
-          {ipBanRules.length === 0 ? <div className="empty-state compact">暂无手动封禁 IP</div> : null}
-        </div>
-      </section>
+              <form className="form" onSubmit={saveIpRule}>
+                <div className="grid cols-2">
+                  <label className="field">
+                    <span>IP</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setIpInput(event.target.value)}
+                      placeholder="203.0.113.10"
+                      value={ipInput}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>返回方式</span>
+                    <select
+                      className="input"
+                      onChange={(event) =>
+                        setIpMode(event.target.value as IpBanMode)
+                      }
+                      value={ipMode}
+                    >
+                      <option value="notice">公告返回</option>
+                      <option value="error">错误返回</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>返回文案</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setIpMessage(event.target.value)}
+                      placeholder={defaultIpBanMessage}
+                      value={ipMessage}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>备注</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setIpReason(event.target.value)}
+                      placeholder="可选"
+                      value={ipReason}
+                    />
+                  </label>
+                </div>
+                <button
+                  className="button"
+                  disabled={busy === "ip"}
+                  type="submit"
+                >
+                  <Shield size={17} />
+                  保存 IP 规则
+                </button>
+              </form>
+              <div className="ip-ban-rule-list">
+                {ipBanRules.map((rule) => (
+                  <div className="ip-ban-rule" key={rule.ip}>
+                    <div>
+                      <strong>{rule.ip}</strong>
+                      <p>{rule.reason || rule.message}</p>
+                    </div>
+                    <span
+                      className={
+                        rule.mode === "notice" ? "pill ok" : "pill warn"
+                      }
+                    >
+                      {rule.mode === "notice" ? "公告返回" : "错误返回"}
+                    </span>
+                    <button
+                      className="button secondary"
+                      disabled={busy === `ip:${rule.ip}`}
+                      onClick={() => void deleteIpRule(rule.ip)}
+                      type="button"
+                    >
+                      解封
+                    </button>
+                  </div>
+                ))}
+                {ipBanRules.length === 0 ? (
+                  <div className="empty-state compact">暂无手动封禁 IP</div>
+                ) : null}
+              </div>
+            </section>
           ) : null}
         </div>
       </div>
@@ -8971,13 +9321,17 @@ function AdminUsers({
   const [editCharityIpRateLimitPerMinute, setEditCharityIpRateLimitPerMinute] =
     useState(0);
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
-  const [announcementFrequency, setAnnouncementFrequency] =
-    useState<"every_visit" | "interval">("every_visit");
-  const [announcementIntervalHours, setAnnouncementIntervalHours] = useState("24");
+  const [announcementFrequency, setAnnouncementFrequency] = useState<
+    "every_visit" | "interval"
+  >("every_visit");
+  const [announcementIntervalHours, setAnnouncementIntervalHours] =
+    useState("24");
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementContent, setAnnouncementContent] = useState("");
   const [announcementSaving, setAnnouncementSaving] = useState(false);
-  const [announcementSaved, setAnnouncementSaved] = useState<string | null>(null);
+  const [announcementSaved, setAnnouncementSaved] = useState<string | null>(
+    null,
+  );
   const [charityServiceEnabled, setCharityServiceEnabled] = useState(true);
   const [charityServiceDisabledMessage, setCharityServiceDisabledMessage] =
     useState("公益 API 当前暂不可用，请稍后再试。");
@@ -9016,7 +9370,9 @@ function AdminUsers({
     );
     setAnnouncementEnabled(charityAnnouncementSettings.enabled);
     setAnnouncementFrequency(charityAnnouncementSettings.frequency);
-    setAnnouncementIntervalHours(String(charityAnnouncementSettings.intervalHours));
+    setAnnouncementIntervalHours(
+      String(charityAnnouncementSettings.intervalHours),
+    );
     setAnnouncementTitle(charityAnnouncementSettings.title);
     setAnnouncementContent(charityAnnouncementSettings.content);
   }, [charityAnnouncementSettings]);
@@ -9036,12 +9392,8 @@ function AdminUsers({
     setEditCharityEnabled(Boolean(item.charityEnabled));
     setEditCharityDisplayName(item.charityDisplayName ?? "");
     setEditCharityKey(item.charityKey ?? "");
-    setEditCharityIpRateLimitEnabled(
-      Boolean(item.charityIpRateLimitEnabled),
-    );
-    setEditCharityIpRateLimitPerMinute(
-      item.charityIpRateLimitPerMinute ?? 0,
-    );
+    setEditCharityIpRateLimitEnabled(Boolean(item.charityIpRateLimitEnabled));
+    setEditCharityIpRateLimitPerMinute(item.charityIpRateLimitPerMinute ?? 0);
   }
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
@@ -9072,8 +9424,7 @@ function AdminUsers({
               ? "APIshare Free"
               : charityDisplayName,
           charityKey,
-          charityIpRateLimitEnabled:
-            charityOnly && charityIpRateLimitEnabled,
+          charityIpRateLimitEnabled: charityOnly && charityIpRateLimitEnabled,
           charityIpRateLimitPerMinute: charityOnly
             ? Number(charityIpRateLimitPerMinute)
             : 0,
@@ -9180,9 +9531,7 @@ function AdminUsers({
           charityKey: editCharityKey,
           charityIpRateLimitEnabled:
             editCharityEnabled && editCharityIpRateLimitEnabled,
-          charityIpRateLimitPerMinute: Number(
-            editCharityIpRateLimitPerMinute,
-          ),
+          charityIpRateLimitPerMinute: Number(editCharityIpRateLimitPerMinute),
         }),
       });
       setEditingUser(null);
@@ -9256,15 +9605,21 @@ function AdminUsers({
     }
   }
 
-  async function applyPackageTemplate(item: AdminUser, templateIdValue: string) {
+  async function applyPackageTemplate(
+    item: AdminUser,
+    templateIdValue: string,
+  ) {
     if (!templateIdValue) {
       return;
     }
     onError(null);
     try {
-      await apiFetch(`/admin/users/${item.id}/package-template/${templateIdValue}/apply`, {
-        method: "POST",
-      });
+      await apiFetch(
+        `/admin/users/${item.id}/package-template/${templateIdValue}/apply`,
+        {
+          method: "POST",
+        },
+      );
       onChanged();
     } catch (error) {
       onError(errorToText(error));
@@ -9280,7 +9635,8 @@ function AdminUsers({
               <div>
                 <h2 className="section-title">公益总开关与公告</h2>
                 <p className="section-subtitle">
-                  关闭后公益页状态会变为不可用，公益 Key 调用会返回自定义公告封禁文案。
+                  关闭后公益页状态会变为不可用，公益 Key
+                  调用会返回自定义公告封禁文案。
                 </p>
               </div>
               <span className={charityServiceEnabled ? "pill ok" : "pill warn"}>
@@ -10196,7 +10552,10 @@ function AdminUsers({
                     <select
                       className="input"
                       onChange={(event) =>
-                        void applyPackageTemplate(editingUser, event.target.value)
+                        void applyPackageTemplate(
+                          editingUser,
+                          event.target.value,
+                        )
                       }
                       value=""
                     >
@@ -10374,7 +10733,8 @@ function AdminUserKeysModal({
     new Set(modelPools.map((pool) => pool.model)),
   ).sort();
   const activeTiers = accessTiers.filter((tier) => tier.status === "ACTIVE");
-  const defaultTierId = user.tierId ?? activeTiers[0]?.id ?? accessTiers[0]?.id ?? "";
+  const defaultTierId =
+    user.tierId ?? activeTiers[0]?.id ?? accessTiers[0]?.id ?? "";
   const userApiKeys = user.apiKeys ?? [];
   const selectedKeySet = new Set(selectedKeyIds);
   const allKeysSelected =
@@ -11165,7 +11525,9 @@ function AdminUserKeysModal({
                   <textarea
                     className="input textarea compact-textarea"
                     value={editIpWhitelistText}
-                    onChange={(event) => setEditIpWhitelistText(event.target.value)}
+                    onChange={(event) =>
+                      setEditIpWhitelistText(event.target.value)
+                    }
                     placeholder="每行一个 IP 或 IPv4 CIDR，留空不限制"
                   />
                 </label>
@@ -11175,7 +11537,9 @@ function AdminUserKeysModal({
                 <input
                   className="input"
                   value={editDisabledReason}
-                  onChange={(event) => setEditDisabledReason(event.target.value)}
+                  onChange={(event) =>
+                    setEditDisabledReason(event.target.value)
+                  }
                   placeholder="可选，停用或风控时记录"
                 />
               </label>
@@ -11263,7 +11627,9 @@ function AdminCommercialOps({
   const [templateCreditLimit, setTemplateCreditLimit] = useState("0");
   const [templateModels, setTemplateModels] = useState("");
   const [invoiceUserId, setInvoiceUserId] = useState(users[0]?.id ?? "");
-  const [invoiceNo, setInvoiceNo] = useState(`INV-${Date.now().toString(36).toUpperCase()}`);
+  const [invoiceNo, setInvoiceNo] = useState(
+    `INV-${Date.now().toString(36).toUpperCase()}`,
+  );
   const [invoiceAmount, setInvoiceAmount] = useState("0");
   const [invoiceStatus, setInvoiceStatus] =
     useState<Invoice["status"]>("DRAFT");
@@ -11356,9 +11722,16 @@ function AdminCommercialOps({
         <div className="commercial-summary-card">
           <div>
             <h3>租户/代理商</h3>
-            <p>{tenants.length} 个租户 · {tenants.filter((tenant) => tenant.reseller).length} 个代理商</p>
+            <p>
+              {tenants.length} 个租户 ·{" "}
+              {tenants.filter((tenant) => tenant.reseller).length} 个代理商
+            </p>
           </div>
-          <button className="button" onClick={() => setCommercialModal("tenant")} type="button">
+          <button
+            className="button"
+            onClick={() => setCommercialModal("tenant")}
+            type="button"
+          >
             <Plus size={17} />
             新增租户
           </button>
@@ -11378,7 +11751,11 @@ function AdminCommercialOps({
             <h3>套餐模板</h3>
             <p>{packageTemplates.length} 个模板 · 用于批量初始化用户权限</p>
           </div>
-          <button className="button" onClick={() => setCommercialModal("template")} type="button">
+          <button
+            className="button"
+            onClick={() => setCommercialModal("template")}
+            type="button"
+          >
             <Save size={17} />
             新增模板
           </button>
@@ -11398,7 +11775,11 @@ function AdminCommercialOps({
             <h3>发票/月结</h3>
             <p>{invoices.length} 张发票 · 记录月结和信用账单</p>
           </div>
-          <button className="button" onClick={() => setCommercialModal("invoice")} type="button">
+          <button
+            className="button"
+            onClick={() => setCommercialModal("invoice")}
+            type="button"
+          >
             <Plus size={17} />
             新增发票
           </button>
@@ -11422,34 +11803,38 @@ function AdminCommercialOps({
         >
           <form className="form" onSubmit={createTenant}>
             <div className="modal-body">
-          <label className="field">
-            <span>名称</span>
-            <input
-              className="input"
-              onChange={(event) => setTenantName(event.target.value)}
-              value={tenantName}
-            />
-          </label>
-          <label className="field">
-            <span>代码</span>
-            <input
-              className="input"
-              onChange={(event) => setTenantCode(event.target.value)}
-              placeholder="reseller_a"
-              value={tenantCode}
-            />
-          </label>
-          <label className="checkbox-row">
-            <input
-              checked={tenantReseller}
-              onChange={(event) => setTenantReseller(event.target.checked)}
-              type="checkbox"
-            />
-            <span>代理商租户</span>
-          </label>
+              <label className="field">
+                <span>名称</span>
+                <input
+                  className="input"
+                  onChange={(event) => setTenantName(event.target.value)}
+                  value={tenantName}
+                />
+              </label>
+              <label className="field">
+                <span>代码</span>
+                <input
+                  className="input"
+                  onChange={(event) => setTenantCode(event.target.value)}
+                  placeholder="reseller_a"
+                  value={tenantCode}
+                />
+              </label>
+              <label className="checkbox-row">
+                <input
+                  checked={tenantReseller}
+                  onChange={(event) => setTenantReseller(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>代理商租户</span>
+              </label>
             </div>
             <div className="modal-footer">
-              <button className="button secondary" onClick={() => setCommercialModal(null)} type="button">
+              <button
+                className="button secondary"
+                onClick={() => setCommercialModal(null)}
+                type="button"
+              >
                 取消
               </button>
               <button className="button" type="submit">
@@ -11468,102 +11853,112 @@ function AdminCommercialOps({
           onClose={() => setCommercialModal(null)}
           wide
         >
-        <form className="form" onSubmit={createPackageTemplate}>
-          <div className="modal-body">
-          <div className="grid cols-2">
-            <label className="field">
-              <span>名称</span>
-              <input
-                className="input"
-                onChange={(event) => setTemplateName(event.target.value)}
-                value={templateName}
-              />
-            </label>
-            <label className="field">
-              <span>代码</span>
-              <input
-                className="input"
-                onChange={(event) => setTemplateCode(event.target.value)}
-                placeholder="pro_monthly"
-                value={templateCode}
-              />
-            </label>
-          </div>
-          <div className="grid cols-2">
-            <label className="field">
-              <span>默认等级</span>
-              <select
-                className="input"
-                onChange={(event) => setTemplateTierId(event.target.value)}
-                value={templateTierId}
+          <form className="form" onSubmit={createPackageTemplate}>
+            <div className="modal-body">
+              <div className="grid cols-2">
+                <label className="field">
+                  <span>名称</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setTemplateName(event.target.value)}
+                    value={templateName}
+                  />
+                </label>
+                <label className="field">
+                  <span>代码</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setTemplateCode(event.target.value)}
+                    placeholder="pro_monthly"
+                    value={templateCode}
+                  />
+                </label>
+              </div>
+              <div className="grid cols-2">
+                <label className="field">
+                  <span>默认等级</span>
+                  <select
+                    className="input"
+                    onChange={(event) => setTemplateTierId(event.target.value)}
+                    value={templateTierId}
+                  >
+                    <option value="">不指定</option>
+                    {accessTiers.map((tier) => (
+                      <option key={tier.id} value={tier.id}>
+                        {tier.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>赠送余额</span>
+                  <input
+                    className="input"
+                    onChange={(event) =>
+                      setTemplateInitialBalance(event.target.value)
+                    }
+                    value={templateInitialBalance}
+                  />
+                </label>
+                <label className="field">
+                  <span>每分钟限流</span>
+                  <input
+                    className="input"
+                    min={0}
+                    onChange={(event) =>
+                      setTemplateRateLimit(Number(event.target.value))
+                    }
+                    type="number"
+                    value={templateRateLimit}
+                  />
+                </label>
+                <label className="field">
+                  <span>并发限制</span>
+                  <input
+                    className="input"
+                    min={0}
+                    onChange={(event) =>
+                      setTemplateConcurrency(Number(event.target.value))
+                    }
+                    type="number"
+                    value={templateConcurrency}
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span>月结信用额度</span>
+                <input
+                  className="input"
+                  onChange={(event) =>
+                    setTemplateCreditLimit(event.target.value)
+                  }
+                  value={templateCreditLimit}
+                />
+              </label>
+              <label className="field">
+                <span>模型白名单</span>
+                <textarea
+                  className="input textarea compact-textarea"
+                  onChange={(event) => setTemplateModels(event.target.value)}
+                  placeholder="留空表示不限"
+                  value={templateModels}
+                />
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="button secondary"
+                onClick={() => setCommercialModal(null)}
+                type="button"
               >
-                <option value="">不指定</option>
-                {accessTiers.map((tier) => (
-                  <option key={tier.id} value={tier.id}>
-                    {tier.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>赠送余额</span>
-              <input
-                className="input"
-                onChange={(event) => setTemplateInitialBalance(event.target.value)}
-                value={templateInitialBalance}
-              />
-            </label>
-            <label className="field">
-              <span>每分钟限流</span>
-              <input
-                className="input"
-                min={0}
-                onChange={(event) => setTemplateRateLimit(Number(event.target.value))}
-                type="number"
-                value={templateRateLimit}
-              />
-            </label>
-            <label className="field">
-              <span>并发限制</span>
-              <input
-                className="input"
-                min={0}
-                onChange={(event) =>
-                  setTemplateConcurrency(Number(event.target.value))
-                }
-                type="number"
-                value={templateConcurrency}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span>月结信用额度</span>
-            <input
-              className="input"
-              onChange={(event) => setTemplateCreditLimit(event.target.value)}
-              value={templateCreditLimit}
-            />
-          </label>
-          <label className="field">
-            <span>模型白名单</span>
-            <textarea
-              className="input textarea compact-textarea"
-              onChange={(event) => setTemplateModels(event.target.value)}
-              placeholder="留空表示不限"
-              value={templateModels}
-            />
-          </label>
-          </div>
-          <div className="modal-footer">
-            <button className="button secondary" onClick={() => setCommercialModal(null)} type="button">
-              取消
-            </button>
-            <button className="button" type="submit">
-              <Save size={17} />
-              新增模板
-            </button>
-          </div>
-        </form>
+                取消
+              </button>
+              <button className="button" type="submit">
+                <Save size={17} />
+                新增模板
+              </button>
+            </div>
+          </form>
         </ModalShell>
       ) : null}
 
@@ -11573,64 +11968,68 @@ function AdminCommercialOps({
           description="为用户创建发票或月结账单记录。"
           onClose={() => setCommercialModal(null)}
         >
-        <form className="form" onSubmit={createInvoice}>
-          <div className="modal-body">
-          <label className="field">
-            <span>用户</span>
-            <select
-              className="input"
-              onChange={(event) => setInvoiceUserId(event.target.value)}
-              value={invoiceUserId}
-            >
-              {users.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="grid cols-2">
-            <label className="field">
-              <span>发票号</span>
-              <input
-                className="input"
-                onChange={(event) => setInvoiceNo(event.target.value)}
-                value={invoiceNo}
-              />
-            </label>
-            <label className="field">
-              <span>金额 USD</span>
-              <input
-                className="input"
-                onChange={(event) => setInvoiceAmount(event.target.value)}
-                value={invoiceAmount}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span>状态</span>
-            <select
-              className="input"
-              onChange={(event) => setInvoiceStatus(event.target.value)}
-              value={invoiceStatus}
-            >
-              <option value="DRAFT">DRAFT</option>
-              <option value="ISSUED">ISSUED</option>
-              <option value="PAID">PAID</option>
-              <option value="VOID">VOID</option>
-            </select>
-          </label>
-          </div>
-          <div className="modal-footer">
-            <button className="button secondary" onClick={() => setCommercialModal(null)} type="button">
-              取消
-            </button>
-            <button className="button" type="submit">
-              <Plus size={17} />
-              新增发票
-            </button>
-          </div>
-        </form>
+          <form className="form" onSubmit={createInvoice}>
+            <div className="modal-body">
+              <label className="field">
+                <span>用户</span>
+                <select
+                  className="input"
+                  onChange={(event) => setInvoiceUserId(event.target.value)}
+                  value={invoiceUserId}
+                >
+                  {users.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="grid cols-2">
+                <label className="field">
+                  <span>发票号</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setInvoiceNo(event.target.value)}
+                    value={invoiceNo}
+                  />
+                </label>
+                <label className="field">
+                  <span>金额 USD</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setInvoiceAmount(event.target.value)}
+                    value={invoiceAmount}
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span>状态</span>
+                <select
+                  className="input"
+                  onChange={(event) => setInvoiceStatus(event.target.value)}
+                  value={invoiceStatus}
+                >
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="ISSUED">ISSUED</option>
+                  <option value="PAID">PAID</option>
+                  <option value="VOID">VOID</option>
+                </select>
+              </label>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="button secondary"
+                onClick={() => setCommercialModal(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button className="button" type="submit">
+                <Plus size={17} />
+                新增发票
+              </button>
+            </div>
+          </form>
         </ModalShell>
       ) : null}
     </section>
@@ -11664,7 +12063,9 @@ function BillingAccountModal({
   const [billingDay, setBillingDay] = useState(account?.billingDay ?? 1);
   const [invoiceTitle, setInvoiceTitle] = useState(account?.invoiceTitle ?? "");
   const [taxNumber, setTaxNumber] = useState(account?.taxNumber ?? "");
-  const [billingEmail, setBillingEmail] = useState(account?.billingEmail ?? user.email);
+  const [billingEmail, setBillingEmail] = useState(
+    account?.billingEmail ?? user.email,
+  );
   const [remark, setRemark] = useState(account?.remark ?? "");
 
   async function saveBillingAccount(event: FormEvent<HTMLFormElement>) {
@@ -11693,7 +12094,12 @@ function BillingAccountModal({
   }
 
   return (
-    <ModalShell title="月结与信用额度" description={user.email} onClose={onClose} wide>
+    <ModalShell
+      title="月结与信用额度"
+      description={user.email}
+      onClose={onClose}
+      wide
+    >
       <form className="form" onSubmit={saveBillingAccount}>
         <div className="modal-body">
           <div className="grid cols-3">
@@ -12664,7 +13070,9 @@ function AdminModelPools({
                   className="input"
                   disabled={accessTiers.length === 0}
                   value={selectedBulkProviderTierId}
-                  onChange={(event) => setBulkProviderTierId(event.target.value)}
+                  onChange={(event) =>
+                    setBulkProviderTierId(event.target.value)
+                  }
                 >
                   {accessTiers.map((tier) => (
                     <option key={tier.id} value={tier.id}>
@@ -12814,8 +13222,8 @@ function AdminModelPools({
                       {modelPoolHealthCheckEndpointLabel(
                         pool.healthCheckEndpoint,
                       )}
-                      · 等级 {pool.tier?.name ?? "Standard"}
-                      · 惩罚期 {healthCheck?.penaltySeconds ?? 60} 秒 · 自动检测
+                      · 等级 {pool.tier?.name ?? "Standard"}· 惩罚期{" "}
+                      {healthCheck?.penaltySeconds ?? 60} 秒 · 自动检测
                       {pool.autoHealthCheckEnabled ? "已开启" : "已关闭"}
                     </p>
                   </div>
@@ -13206,7 +13614,8 @@ function AdminRouting({
 
   const selectedProviderKeys = providerKeys.filter(
     (key) =>
-      !ruleDraft.upstreamProvider || key.providerName === ruleDraft.upstreamProvider,
+      !ruleDraft.upstreamProvider ||
+      key.providerName === ruleDraft.upstreamProvider,
   );
   const selectedSimulationUser = users.find(
     (item) => item.id === simulationDraft.userId,
@@ -13388,10 +13797,13 @@ function AdminRouting({
           <div>
             <h2 className="section-title">路由模拟器</h2>
             <p className="section-subtitle">
-              不发真实请求、不扣费，只按当前配置推演用户最终会走哪个等级、模型池、上游和 Key。
+              不发真实请求、不扣费，只按当前配置推演用户最终会走哪个等级、模型池、上游和
+              Key。
             </p>
           </div>
-          <StatusPill status={simulation?.route.selectedCandidate ? "READY" : "WAITING"} />
+          <StatusPill
+            status={simulation?.route.selectedCandidate ? "READY" : "WAITING"}
+          />
         </div>
         <form className="grid-form" onSubmit={runSimulation}>
           <label>
@@ -13486,9 +13898,7 @@ function AdminRouting({
               <Metric label="最终等级" value={simulation.policy.tierCode} />
               <Metric
                 label="命中专线"
-                value={
-                  simulation.policy.dedicatedRouteRuleId ? "是" : "否"
-                }
+                value={simulation.policy.dedicatedRouteRuleId ? "是" : "否"}
               />
               <Metric
                 label="首选上游"
@@ -13511,7 +13921,9 @@ function AdminRouting({
                 <tbody>
                   {simulation.steps.map((step, index) => (
                     <tr key={`${step}:${index}`}>
-                      <td>{index + 1}. {step}</td>
+                      <td>
+                        {index + 1}. {step}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -13576,7 +13988,9 @@ function AdminRouting({
               用户、API Key 和专线规则都会解析到一个访问等级。
             </p>
           </div>
-          <StatusPill status={activeTiers.length > 0 ? "ACTIVE" : "UNAVAILABLE"} />
+          <StatusPill
+            status={activeTiers.length > 0 ? "ACTIVE" : "UNAVAILABLE"}
+          />
         </div>
         <form className="grid-form" onSubmit={createTier}>
           <label>
@@ -13687,7 +14101,9 @@ function AdminRouting({
                       </button>
                       <button
                         className="icon-button danger"
-                        disabled={tier.code === "standard" || busyId === tier.id}
+                        disabled={
+                          tier.code === "standard" || busyId === tier.id
+                        }
                         onClick={() => deleteTier(tier)}
                         title="删除等级"
                         type="button"
@@ -13713,7 +14129,11 @@ function AdminRouting({
             </p>
           </div>
           <StatusPill
-            status={dedicatedRouteRules.some((rule) => rule.status === "ACTIVE") ? "ACTIVE" : "DISABLED"}
+            status={
+              dedicatedRouteRules.some((rule) => rule.status === "ACTIVE")
+                ? "ACTIVE"
+                : "DISABLED"
+            }
           />
         </div>
         <form className="grid-form" onSubmit={createRule}>
@@ -14025,7 +14445,7 @@ function formatDedicatedRouteTarget(rule: DedicatedRouteRule) {
   if (rule.targetType === "API_KEY") {
     return rule.apiKey
       ? `${rule.apiKey.name} (${rule.apiKey.keyPrefix})`
-      : rule.apiKeyId ?? "-";
+      : (rule.apiKeyId ?? "-");
   }
 
   return rule.ipPattern ?? "-";
@@ -14543,7 +14963,10 @@ function UpstreamProviders({
       return;
     }
 
-    if (!selectedProviderId || !providers.some((item) => item.id === selectedProviderId)) {
+    if (
+      !selectedProviderId ||
+      !providers.some((item) => item.id === selectedProviderId)
+    ) {
       setSelectedProviderId(providers[0]?.id ?? null);
     }
   }, [providers, selectedProviderId]);
@@ -15173,7 +15596,8 @@ function UpstreamProviders({
                 <h2 className="section-title">上游渠道</h2>
                 <p className="section-subtitle">
                   {activeProviderCount} 个启用 / {providers.length} 个渠道 ·{" "}
-                  {totalProviderKeyCount} 个 Key · {enabledPriceCount} 条启用价格
+                  {totalProviderKeyCount} 个 Key · {enabledPriceCount}{" "}
+                  条启用价格
                 </p>
               </div>
             </div>
@@ -15217,472 +15641,480 @@ function UpstreamProviders({
             </div>
           </aside>
 
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">渠道详情与模型价格</h2>
-              <p className="section-subtitle">
-                当前只展开选中的上游，切换渠道不会再把所有表格堆在一起。
-              </p>
+          <section className="card">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">渠道详情与模型价格</h2>
+                <p className="section-subtitle">
+                  当前只展开选中的上游，切换渠道不会再把所有表格堆在一起。
+                </p>
+              </div>
+              <div className="button-row">
+                <button
+                  className="button secondary"
+                  onClick={() => exportModelPrices("json")}
+                  type="button"
+                >
+                  导出 JSON
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => exportModelPrices("csv")}
+                  type="button"
+                >
+                  导出 CSV
+                </button>
+              </div>
             </div>
-            <div className="button-row">
-              <button
-                className="button secondary"
-                onClick={() => exportModelPrices("json")}
-                type="button"
-              >
-                导出 JSON
-              </button>
-              <button
-                className="button secondary"
-                onClick={() => exportModelPrices("csv")}
-                type="button"
-              >
-                导出 CSV
-              </button>
-            </div>
-          </div>
-          <div className="provider-stack stack-top">
-            {(selectedProvider ? [selectedProvider] : []).map((provider) => {
-              const providerPrices = pricesForProvider(provider.name);
+            <div className="provider-stack stack-top">
+              {(selectedProvider ? [selectedProvider] : []).map((provider) => {
+                const providerPrices = pricesForProvider(provider.name);
 
-              return (
-                <section className="provider-panel" key={provider.id}>
-                  <div className="provider-head">
-                    <div>
-                      <div className="provider-title">
-                        <strong>{provider.name}</strong>
-                        <StatusPill status={provider.status} />
-                        <span className="pill">
-                          Key{" "}
-                          {provider.keys?.filter(
-                            (key) => key.status === "ACTIVE",
-                          ).length ?? 0}
-                          /{provider.keys?.length ?? 0}
-                        </span>
+                return (
+                  <section className="provider-panel" key={provider.id}>
+                    <div className="provider-head">
+                      <div>
+                        <div className="provider-title">
+                          <strong>{provider.name}</strong>
+                          <StatusPill status={provider.status} />
+                          <span className="pill">
+                            Key{" "}
+                            {provider.keys?.filter(
+                              (key) => key.status === "ACTIVE",
+                            ).length ?? 0}
+                            /{provider.keys?.length ?? 0}
+                          </span>
+                        </div>
+                        <p>
+                          优先级 {provider.priority} · 超时{" "}
+                          {seconds(provider.timeoutMs)} · Compact{" "}
+                          {displayCompactItemType(provider.compactItemType)} ·{" "}
+                          {provider.baseUrl}
+                        </p>
                       </div>
-                      <p>
-                        优先级 {provider.priority} · 超时{" "}
-                        {seconds(provider.timeoutMs)} · Compact{" "}
-                        {displayCompactItemType(provider.compactItemType)} ·{" "}
-                        {provider.baseUrl}
-                      </p>
-                    </div>
-                    <div className="button-row">
-                      <button
-                        className="button secondary"
-                        onClick={() => editProvider(provider)}
-                        type="button"
-                      >
-                        编辑渠道
-                      </button>
-                      <button
-                        className="button secondary"
-                        onClick={() => openCreateProviderKey(provider)}
-                        type="button"
-                      >
-                        <Plus size={15} />
-                        新增 Key
-                      </button>
-                      {provider.status === "ACTIVE" ? (
+                      <div className="button-row">
                         <button
                           className="button secondary"
-                          disabled={busyProviderId === provider.id}
-                          onClick={() =>
-                            setProviderStatus(provider, "DISABLED")
-                          }
+                          onClick={() => editProvider(provider)}
                           type="button"
                         >
-                          停用
+                          编辑渠道
                         </button>
-                      ) : (
                         <button
-                          className="button"
-                          disabled={busyProviderId === provider.id}
-                          onClick={() => setProviderStatus(provider, "ACTIVE")}
+                          className="button secondary"
+                          onClick={() => openCreateProviderKey(provider)}
                           type="button"
                         >
-                          启用
+                          <Plus size={15} />
+                          新增 Key
                         </button>
-                      )}
+                        {provider.status === "ACTIVE" ? (
+                          <button
+                            className="button secondary"
+                            disabled={busyProviderId === provider.id}
+                            onClick={() =>
+                              setProviderStatus(provider, "DISABLED")
+                            }
+                            type="button"
+                          >
+                            停用
+                          </button>
+                        ) : (
+                          <button
+                            className="button"
+                            disabled={busyProviderId === provider.id}
+                            onClick={() =>
+                              setProviderStatus(provider, "ACTIVE")
+                            }
+                            type="button"
+                          >
+                            启用
+                          </button>
+                        )}
+                        <button
+                          className="button danger"
+                          disabled={busyProviderId === provider.id}
+                          onClick={() => deleteProvider(provider)}
+                          type="button"
+                        >
+                          <Trash2 size={15} />
+                          删除
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="section-head compact-head">
+                      <div>
+                        <h3 className="section-title">Key 池</h3>
+                        <p className="section-subtitle">
+                          调度会在 ACTIVE Key 中按进行中请求数均摊。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>名称</th>
+                            <th>前缀</th>
+                            <th>状态</th>
+                            <th>优先级</th>
+                            <th>额度/限流</th>
+                            <th>最近检测</th>
+                            <th>最近使用</th>
+                            <th>错误</th>
+                            <th>操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(provider.keys ?? []).map((key) => (
+                            <tr key={key.id}>
+                              <td>
+                                {displayUpstreamProviderKeyName(key.name)}
+                              </td>
+                              <td>
+                                <code>{key.keyPrefix || key.key}</code>
+                              </td>
+                              <td>
+                                <StatusPill status={key.status} />
+                              </td>
+                              <td>{key.priority}</td>
+                              <td>
+                                <strong>
+                                  日 ${money(key.dailyLimitUsd)} / 月{" "}
+                                  {money(key.monthlyLimitUsd)}
+                                </strong>
+                                <span className="muted">
+                                  {key.providerRateLimit
+                                    ? `${key.providerRateLimit}/min`
+                                    : "不限速"}
+                                </span>
+                              </td>
+                              <td>
+                                {key.lastCheckedAt
+                                  ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
+                                  : "-"}
+                              </td>
+                              <td>
+                                {key.lastUsedAt
+                                  ? dateTime(key.lastUsedAt)
+                                  : "-"}
+                              </td>
+                              <td className="muted-cell">
+                                {key.lastError ?? "-"}
+                              </td>
+                              <td>
+                                <div className="button-row compact">
+                                  {key.status === "ACTIVE" ? (
+                                    <button
+                                      className="button secondary"
+                                      disabled={busyKeyId === key.id}
+                                      onClick={() =>
+                                        setProviderKeyStatus(key, "DISABLED")
+                                      }
+                                      type="button"
+                                    >
+                                      停用
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="button"
+                                      disabled={busyKeyId === key.id}
+                                      onClick={() =>
+                                        setProviderKeyStatus(key, "ACTIVE")
+                                      }
+                                      type="button"
+                                    >
+                                      启用
+                                    </button>
+                                  )}
+                                  <button
+                                    className="button danger"
+                                    disabled={busyKeyId === key.id}
+                                    onClick={() => deleteProviderKey(key)}
+                                    type="button"
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                          {(provider.keys ?? []).length === 0 ? (
+                            <EmptyRow colSpan={9} />
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mobile-record-list">
+                      {(provider.keys ?? []).map((key) => (
+                        <MobileRecord
+                          key={key.id}
+                          title={displayUpstreamProviderKeyName(key.name)}
+                          meta={key.keyPrefix || key.key}
+                          badges={<StatusPill status={key.status} />}
+                          actions={
+                            <>
+                              {key.status === "ACTIVE" ? (
+                                <button
+                                  className="button secondary"
+                                  disabled={busyKeyId === key.id}
+                                  onClick={() =>
+                                    setProviderKeyStatus(key, "DISABLED")
+                                  }
+                                  type="button"
+                                >
+                                  停用
+                                </button>
+                              ) : (
+                                <button
+                                  className="button"
+                                  disabled={busyKeyId === key.id}
+                                  onClick={() =>
+                                    setProviderKeyStatus(key, "ACTIVE")
+                                  }
+                                  type="button"
+                                >
+                                  启用
+                                </button>
+                              )}
+                              <button
+                                className="button danger"
+                                disabled={busyKeyId === key.id}
+                                onClick={() => deleteProviderKey(key)}
+                                type="button"
+                              >
+                                删除
+                              </button>
+                            </>
+                          }
+                        >
+                          <MobileField label="优先级">
+                            {key.priority}
+                          </MobileField>
+                          <MobileField label="额度/限流" wide>
+                            日 ${money(key.dailyLimitUsd)} / 月 $
+                            {money(key.monthlyLimitUsd)} ·{" "}
+                            {key.providerRateLimit
+                              ? `${key.providerRateLimit}/min`
+                              : "不限速"}
+                          </MobileField>
+                          <MobileField label="错误分类">
+                            {key.lastErrorCategory ?? "-"}
+                          </MobileField>
+                          <MobileField label="最近检测" wide>
+                            {key.lastCheckedAt
+                              ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
+                              : "-"}
+                          </MobileField>
+                          <MobileField label="最近使用">
+                            {key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}
+                          </MobileField>
+                          <MobileField label="错误" wide>
+                            {key.lastError ?? "-"}
+                          </MobileField>
+                        </MobileRecord>
+                      ))}
+                      {(provider.keys ?? []).length === 0 ? (
+                        <MobileEmpty>暂无 Key</MobileEmpty>
+                      ) : null}
+                    </div>
+
+                    <div className="section-head compact-head">
+                      <div>
+                        <h3 className="section-title">模型价格</h3>
+                        <p className="section-subtitle">
+                          输入 / 缓存输入 / 输出分别计价，再乘以倍率。
+                        </p>
+                      </div>
                       <button
-                        className="button danger"
-                        disabled={busyProviderId === provider.id}
-                        onClick={() => deleteProvider(provider)}
+                        className="button secondary"
+                        onClick={() => openCreatePrice(provider.name)}
                         type="button"
                       >
-                        <Trash2 size={15} />
-                        删除
+                        <Plus size={17} />
+                        新增价格
                       </button>
                     </div>
-                  </div>
 
-                  <div className="section-head compact-head">
-                    <div>
-                      <h3 className="section-title">Key 池</h3>
-                      <p className="section-subtitle">
-                        调度会在 ACTIVE Key 中按进行中请求数均摊。
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>名称</th>
-                          <th>前缀</th>
-                          <th>状态</th>
-                          <th>优先级</th>
-                          <th>额度/限流</th>
-                          <th>最近检测</th>
-                          <th>最近使用</th>
-                          <th>错误</th>
-                          <th>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(provider.keys ?? []).map((key) => (
-                          <tr key={key.id}>
-                            <td>{displayUpstreamProviderKeyName(key.name)}</td>
-                            <td>
-                              <code>{key.keyPrefix || key.key}</code>
-                            </td>
-                            <td>
-                              <StatusPill status={key.status} />
-                            </td>
-                            <td>{key.priority}</td>
-                            <td>
-                              <strong>
-                                日 ${money(key.dailyLimitUsd)} / 月{" "}
-                                {money(key.monthlyLimitUsd)}
-                              </strong>
-                              <span className="muted">
-                                {key.providerRateLimit
-                                  ? `${key.providerRateLimit}/min`
-                                  : "不限速"}
-                              </span>
-                            </td>
-                            <td>
-                              {key.lastCheckedAt
-                                ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
-                                : "-"}
-                            </td>
-                            <td>
-                              {key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}
-                            </td>
-                            <td className="muted-cell">
-                              {key.lastError ?? "-"}
-                            </td>
-                            <td>
-                              <div className="button-row compact">
-                                {key.status === "ACTIVE" ? (
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>模型</th>
+                            <th>状态</th>
+                            <th>上游原价 输入/缓存/输出</th>
+                            <th>上游实价</th>
+                            <th>站点售价</th>
+                            <th>毛利风险</th>
+                            <th>版本/有效期</th>
+                            <th>操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {providerPrices.map((price) => (
+                            <tr key={price.id}>
+                              <td>{price.model}</td>
+                              <td>
+                                <StatusPill
+                                  status={price.enabled ? "ACTIVE" : "DISABLED"}
+                                />
+                              </td>
+                              <td>
+                                {priceTriplet(
+                                  price.upstreamInputPer1MTok,
+                                  price.upstreamCachedInputPer1MTok,
+                                  price.upstreamOutputPer1MTok,
+                                )}
+                              </td>
+                              <td>
+                                x{price.upstreamPriceMultiplier}:{" "}
+                                {priceTriplet(
+                                  multiplied(
+                                    price.upstreamInputPer1MTok,
+                                    price.upstreamPriceMultiplier,
+                                  ),
+                                  multiplied(
+                                    price.upstreamCachedInputPer1MTok,
+                                    price.upstreamPriceMultiplier,
+                                  ),
+                                  multiplied(
+                                    price.upstreamOutputPer1MTok,
+                                    price.upstreamPriceMultiplier,
+                                  ),
+                                )}
+                              </td>
+                              <td>{renderCustomerPrice(price)}</td>
+                              <td>{renderMarginRisk(price)}</td>
+                              <td>
+                                {price.priceVersion || "v1"}
+                                <br />
+                                <span className="muted-cell">
+                                  {formatPriceValidity(price)}
+                                </span>
+                              </td>
+                              <td>
+                                <div className="button-row compact">
                                   <button
                                     className="button secondary"
-                                    disabled={busyKeyId === key.id}
-                                    onClick={() =>
-                                      setProviderKeyStatus(key, "DISABLED")
-                                    }
+                                    onClick={() => editPrice(price)}
                                     type="button"
                                   >
-                                    停用
+                                    编辑
                                   </button>
-                                ) : (
                                   <button
-                                    className="button"
-                                    disabled={busyKeyId === key.id}
-                                    onClick={() =>
-                                      setProviderKeyStatus(key, "ACTIVE")
-                                    }
+                                    className="button secondary"
+                                    onClick={() => togglePrice(price)}
                                     type="button"
                                   >
-                                    启用
+                                    {price.enabled ? "停用" : "启用"}
                                   </button>
-                                )}
-                                <button
-                                  className="button danger"
-                                  disabled={busyKeyId === key.id}
-                                  onClick={() => deleteProviderKey(key)}
-                                  type="button"
-                                >
-                                  删除
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {(provider.keys ?? []).length === 0 ? (
-                          <EmptyRow colSpan={9} />
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mobile-record-list">
-                    {(provider.keys ?? []).map((key) => (
-                      <MobileRecord
-                        key={key.id}
-                        title={displayUpstreamProviderKeyName(key.name)}
-                        meta={key.keyPrefix || key.key}
-                        badges={<StatusPill status={key.status} />}
-                        actions={
-                          <>
-                            {key.status === "ACTIVE" ? (
+                                  <button
+                                    className="button danger"
+                                    disabled={busyPriceId === price.id}
+                                    onClick={() => deletePrice(price)}
+                                    type="button"
+                                  >
+                                    <Trash2 size={15} />
+                                    删除
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                          {providerPrices.length === 0 ? (
+                            <EmptyRow colSpan={8} />
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mobile-record-list">
+                      {providerPrices.map((price) => (
+                        <MobileRecord
+                          key={price.id}
+                          title={price.model}
+                          meta={`上游渠道：${price.upstreamProvider}`}
+                          badges={
+                            <StatusPill
+                              status={price.enabled ? "ACTIVE" : "DISABLED"}
+                            />
+                          }
+                          actions={
+                            <>
                               <button
                                 className="button secondary"
-                                disabled={busyKeyId === key.id}
-                                onClick={() =>
-                                  setProviderKeyStatus(key, "DISABLED")
-                                }
+                                onClick={() => editPrice(price)}
                                 type="button"
                               >
-                                停用
+                                编辑
                               </button>
-                            ) : (
                               <button
-                                className="button"
-                                disabled={busyKeyId === key.id}
-                                onClick={() =>
-                                  setProviderKeyStatus(key, "ACTIVE")
-                                }
+                                className="button secondary"
+                                onClick={() => togglePrice(price)}
                                 type="button"
                               >
-                                启用
+                                {price.enabled ? "停用" : "启用"}
                               </button>
-                            )}
-                            <button
-                              className="button danger"
-                              disabled={busyKeyId === key.id}
-                              onClick={() => deleteProviderKey(key)}
-                              type="button"
-                            >
-                              删除
-                            </button>
-                          </>
-                        }
-                      >
-                        <MobileField label="优先级">{key.priority}</MobileField>
-                        <MobileField label="额度/限流" wide>
-                          日 ${money(key.dailyLimitUsd)} / 月 $
-                          {money(key.monthlyLimitUsd)} ·{" "}
-                          {key.providerRateLimit
-                            ? `${key.providerRateLimit}/min`
-                            : "不限速"}
-                        </MobileField>
-                        <MobileField label="错误分类">
-                          {key.lastErrorCategory ?? "-"}
-                        </MobileField>
-                        <MobileField label="最近检测" wide>
-                          {key.lastCheckedAt
-                            ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
-                            : "-"}
-                        </MobileField>
-                        <MobileField label="最近使用">
-                          {key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}
-                        </MobileField>
-                        <MobileField label="错误" wide>
-                          {key.lastError ?? "-"}
-                        </MobileField>
-                      </MobileRecord>
-                    ))}
-                    {(provider.keys ?? []).length === 0 ? (
-                      <MobileEmpty>暂无 Key</MobileEmpty>
-                    ) : null}
-                  </div>
-
-                  <div className="section-head compact-head">
-                    <div>
-                      <h3 className="section-title">模型价格</h3>
-                      <p className="section-subtitle">
-                        输入 / 缓存输入 / 输出分别计价，再乘以倍率。
-                      </p>
-                    </div>
-                    <button
-                      className="button secondary"
-                      onClick={() => openCreatePrice(provider.name)}
-                      type="button"
-                    >
-                      <Plus size={17} />
-                      新增价格
-                    </button>
-                  </div>
-
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>模型</th>
-                          <th>状态</th>
-                          <th>上游原价 输入/缓存/输出</th>
-                          <th>上游实价</th>
-                          <th>站点售价</th>
-                          <th>毛利风险</th>
-                          <th>版本/有效期</th>
-                          <th>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {providerPrices.map((price) => (
-                          <tr key={price.id}>
-                            <td>{price.model}</td>
-                            <td>
-                              <StatusPill
-                                status={price.enabled ? "ACTIVE" : "DISABLED"}
-                              />
-                            </td>
-                            <td>
-                              {priceTriplet(
-                                price.upstreamInputPer1MTok,
-                                price.upstreamCachedInputPer1MTok,
-                                price.upstreamOutputPer1MTok,
-                              )}
-                            </td>
-                            <td>
-                              x{price.upstreamPriceMultiplier}:{" "}
-                              {priceTriplet(
-                                multiplied(
-                                  price.upstreamInputPer1MTok,
-                                  price.upstreamPriceMultiplier,
-                                ),
-                                multiplied(
-                                  price.upstreamCachedInputPer1MTok,
-                                  price.upstreamPriceMultiplier,
-                                ),
-                                multiplied(
-                                  price.upstreamOutputPer1MTok,
-                                  price.upstreamPriceMultiplier,
-                                ),
-                              )}
-                            </td>
-                            <td>{renderCustomerPrice(price)}</td>
-                            <td>{renderMarginRisk(price)}</td>
-                            <td>
-                              {price.priceVersion || "v1"}
-                              <br />
-                              <span className="muted-cell">
-                                {formatPriceValidity(price)}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="button-row compact">
-                                <button
-                                  className="button secondary"
-                                  onClick={() => editPrice(price)}
-                                  type="button"
-                                >
-                                  编辑
-                                </button>
-                                <button
-                                  className="button secondary"
-                                  onClick={() => togglePrice(price)}
-                                  type="button"
-                                >
-                                  {price.enabled ? "停用" : "启用"}
-                                </button>
-                                <button
-                                  className="button danger"
-                                  disabled={busyPriceId === price.id}
-                                  onClick={() => deletePrice(price)}
-                                  type="button"
-                                >
-                                  <Trash2 size={15} />
-                                  删除
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {providerPrices.length === 0 ? (
-                          <EmptyRow colSpan={8} />
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mobile-record-list">
-                    {providerPrices.map((price) => (
-                      <MobileRecord
-                        key={price.id}
-                        title={price.model}
-                        meta={`上游渠道：${price.upstreamProvider}`}
-                        badges={
-                          <StatusPill
-                            status={price.enabled ? "ACTIVE" : "DISABLED"}
-                          />
-                        }
-                        actions={
-                          <>
-                            <button
-                              className="button secondary"
-                              onClick={() => editPrice(price)}
-                              type="button"
-                            >
-                              编辑
-                            </button>
-                            <button
-                              className="button secondary"
-                              onClick={() => togglePrice(price)}
-                              type="button"
-                            >
-                              {price.enabled ? "停用" : "启用"}
-                            </button>
-                            <button
-                              className="button danger"
-                              disabled={busyPriceId === price.id}
-                              onClick={() => deletePrice(price)}
-                              type="button"
-                            >
-                              删除
-                            </button>
-                          </>
-                        }
-                      >
-                        <MobileField label="上游原价" wide>
-                          {priceTriplet(
-                            price.upstreamInputPer1MTok,
-                            price.upstreamCachedInputPer1MTok,
-                            price.upstreamOutputPer1MTok,
-                          )}
-                        </MobileField>
-                        <MobileField label="上游实价" wide>
-                          x{price.upstreamPriceMultiplier}:{" "}
-                          {priceTriplet(
-                            multiplied(
+                              <button
+                                className="button danger"
+                                disabled={busyPriceId === price.id}
+                                onClick={() => deletePrice(price)}
+                                type="button"
+                              >
+                                删除
+                              </button>
+                            </>
+                          }
+                        >
+                          <MobileField label="上游原价" wide>
+                            {priceTriplet(
                               price.upstreamInputPer1MTok,
-                              price.upstreamPriceMultiplier,
-                            ),
-                            multiplied(
                               price.upstreamCachedInputPer1MTok,
-                              price.upstreamPriceMultiplier,
-                            ),
-                            multiplied(
                               price.upstreamOutputPer1MTok,
-                              price.upstreamPriceMultiplier,
-                            ),
-                          )}
-                        </MobileField>
-                        <MobileField label="站点售价" wide>
-                          {renderCustomerPrice(price)}
-                        </MobileField>
-                        <MobileField label="毛利风险" wide>
-                          {renderMarginRisk(price)}
-                        </MobileField>
-                        <MobileField label="版本/有效期" wide>
-                          {price.priceVersion || "v1"} ·{" "}
-                          {formatPriceValidity(price)}
-                        </MobileField>
-                      </MobileRecord>
-                    ))}
-                    {providerPrices.length === 0 ? (
-                      <MobileEmpty>暂无模型价格</MobileEmpty>
-                    ) : null}
-                  </div>
-                </section>
-              );
-            })}
-            {providers.length === 0 ? (
-              <div className="empty-cell">暂无上游渠道</div>
-            ) : null}
-          </div>
-        </section>
+                            )}
+                          </MobileField>
+                          <MobileField label="上游实价" wide>
+                            x{price.upstreamPriceMultiplier}:{" "}
+                            {priceTriplet(
+                              multiplied(
+                                price.upstreamInputPer1MTok,
+                                price.upstreamPriceMultiplier,
+                              ),
+                              multiplied(
+                                price.upstreamCachedInputPer1MTok,
+                                price.upstreamPriceMultiplier,
+                              ),
+                              multiplied(
+                                price.upstreamOutputPer1MTok,
+                                price.upstreamPriceMultiplier,
+                              ),
+                            )}
+                          </MobileField>
+                          <MobileField label="站点售价" wide>
+                            {renderCustomerPrice(price)}
+                          </MobileField>
+                          <MobileField label="毛利风险" wide>
+                            {renderMarginRisk(price)}
+                          </MobileField>
+                          <MobileField label="版本/有效期" wide>
+                            {price.priceVersion || "v1"} ·{" "}
+                            {formatPriceValidity(price)}
+                          </MobileField>
+                        </MobileRecord>
+                      ))}
+                      {providerPrices.length === 0 ? (
+                        <MobileEmpty>暂无模型价格</MobileEmpty>
+                      ) : null}
+                    </div>
+                  </section>
+                );
+              })}
+              {providers.length === 0 ? (
+                <div className="empty-cell">暂无上游渠道</div>
+              ) : null}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -15765,9 +16197,7 @@ function UpstreamProviders({
                   value={compactItemType}
                 >
                   <option value="compaction">compaction</option>
-                  <option value="compaction_summary">
-                    compaction_summary
-                  </option>
+                  <option value="compaction_summary">compaction_summary</option>
                 </select>
               </label>
             </div>
@@ -15836,7 +16266,9 @@ function UpstreamProviders({
                   <input
                     className="input"
                     min={0}
-                    onChange={(event) => setKeyDailyLimitUsd(event.target.value)}
+                    onChange={(event) =>
+                      setKeyDailyLimitUsd(event.target.value)
+                    }
                     placeholder="留空不限"
                     step="0.00000001"
                     type="number"
@@ -15848,7 +16280,9 @@ function UpstreamProviders({
                   <input
                     className="input"
                     min={0}
-                    onChange={(event) => setKeyMonthlyLimitUsd(event.target.value)}
+                    onChange={(event) =>
+                      setKeyMonthlyLimitUsd(event.target.value)
+                    }
                     placeholder="留空不限"
                     step="0.00000001"
                     type="number"
@@ -17282,7 +17716,10 @@ function calculateModelPriceMarginRisk(
     multiplied(price.upstreamOutputPer1MTok, price.upstreamPriceMultiplier),
   ];
   const customerValues = [
-    multiplied(customer.customerInputPer1MTok, customer.customerPriceMultiplier),
+    multiplied(
+      customer.customerInputPer1MTok,
+      customer.customerPriceMultiplier,
+    ),
     multiplied(
       customer.customerCachedInputPer1MTok,
       customer.customerPriceMultiplier,
