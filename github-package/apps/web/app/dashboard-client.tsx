@@ -5292,7 +5292,7 @@ function AdminRequests({
   const [autoTerminateModalOpen, setAutoTerminateModalOpen] = useState(false);
   const [reasoningTransformModalOpen, setReasoningTransformModalOpen] =
     useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
   const [autoTerminateBusy, setAutoTerminateBusy] = useState(false);
   const [autoTerminateError, setAutoTerminateError] = useState<string | null>(
     null,
@@ -5725,7 +5725,6 @@ function AdminRequests({
             </button>
           </div>
         </div>
-        <RequestSummaryCards summary={summary} />
         <form className="admin-request-filter-form" onSubmit={submit}>
           <div className="filter-bar request-common-filter-bar">
             <label className="field">
@@ -5951,6 +5950,7 @@ function AdminRequests({
             </div>
           ) : null}
         </form>
+        <RequestSummaryCards summary={summary} />
       </section>
       <section className="admin-data-workbench">
         <Requests
@@ -7337,7 +7337,6 @@ function AdminAuthSettings({
     <form className="form" onSubmit={saveSettings}>
       <div className="admin-settings-stack">
         <AdminFoldout
-          defaultOpen
           title="邮箱验证码"
           description={
             emailCodeLoginEnabled
