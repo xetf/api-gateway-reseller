@@ -3415,6 +3415,68 @@ function Keys({
     setEditTags((key.tags ?? []).join(", "));
     setEditIpWhitelist((key.ipWhitelist ?? []).join("\n"));
   }
+  const apiKeyRows = apiKeys.map((key) => ({
+    id: key.id,
+    name: key.name,
+    secret: (
+      <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
+    ),
+    status: <StatusPill status={key.status} />,
+    rateLimit: `${key.rateLimitPerMinute}/min`,
+    quota: formatApiKeyLimitSummary(key),
+    concurrency: formatConcurrencyLimit(key.concurrencyLimit),
+    expiresAt: key.expiresAt ? dateTime(key.expiresAt) : "永不过期",
+    createdAt: dateTime(key.createdAt),
+    tags: (key.tags ?? []).length > 0 ? (key.tags ?? []).join(", ") : "-",
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          disabled={!key.keySecret}
+          onClick={() => setConfigKey(key)}
+          type="button"
+        >
+          使用 / 配置
+        </button>
+        <button
+          className="button secondary"
+          disabled={busyKeyId === key.id}
+          onClick={() => beginEditKey(key)}
+          type="button"
+        >
+          编辑
+        </button>
+        {key.status === "ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : null}
+        {key.status === "DISABLED" ? (
+          <button
+            className="button"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "ACTIVE")}
+            type="button"
+          >
+            启用
+          </button>
+        ) : null}
+        <button
+          className="button danger"
+          disabled={busyKeyId === key.id}
+          onClick={() => deleteKey(key)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   async function saveEditingKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3583,100 +3645,22 @@ function Keys({
         </section>
         <section className="card wide-card">
           <h2 className="section-title">API Key 列表</h2>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>API Key</th>
-                  <th>状态</th>
-                  <th>限流</th>
-                  <th>限额</th>
-                  <th>并发</th>
-                  <th>过期</th>
-                  <th>创建时间</th>
-                  <th>标签</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiKeys.map((key) => (
-                  <tr key={key.id}>
-                    <td>{key.name}</td>
-                    <td>
-                      <code className="inline-secret">
-                        {key.keySecret ?? key.keyPrefix}
-                      </code>
-                    </td>
-                    <td>
-                      <StatusPill status={key.status} />
-                    </td>
-                    <td>{key.rateLimitPerMinute}/min</td>
-                    <td>{formatApiKeyLimitSummary(key)}</td>
-                    <td>{formatConcurrencyLimit(key.concurrencyLimit)}</td>
-                    <td>
-                      {key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}
-                    </td>
-                    <td>{dateTime(key.createdAt)}</td>
-                    <td>
-                      {(key.tags ?? []).length > 0
-                        ? (key.tags ?? []).join(", ")
-                        : "-"}
-                    </td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          disabled={!key.keySecret}
-                          onClick={() => setConfigKey(key)}
-                          type="button"
-                        >
-                          使用 / 配置
-                        </button>
-                        <button
-                          className="button secondary"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => beginEditKey(key)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {key.status === "ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : null}
-                        {key.status === "DISABLED" ? (
-                          <button
-                            className="button"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "ACTIVE")}
-                            type="button"
-                          >
-                            启用
-                          </button>
-                        ) : null}
-                        <button
-                          className="button danger"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => deleteKey(key)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {apiKeys.length === 0 ? <EmptyRow colSpan={10} /> : null}
-              </tbody>
-            </table>
-          </div>
+          <AdminDataTable
+            columns={[
+              { accessorKey: "name", header: "名称" },
+              { accessorKey: "secret", header: "API Key" },
+              { accessorKey: "status", header: "状态" },
+              { accessorKey: "rateLimit", header: "限流" },
+              { accessorKey: "quota", header: "限额" },
+              { accessorKey: "concurrency", header: "并发" },
+              { accessorKey: "expiresAt", header: "过期" },
+              { accessorKey: "createdAt", header: "创建时间" },
+              { accessorKey: "tags", header: "标签" },
+              { accessorKey: "actions", header: "操作" },
+            ]}
+            data={apiKeyRows}
+            empty="暂无 API Key"
+          />
           <div className="mobile-record-list">
             {apiKeys.map((key) => (
               <MobileRecord
@@ -4082,36 +4066,30 @@ function WalletView({
 }
 
 function Transactions({ transactions }: { transactions: Transaction[] }) {
+  const transactionRows = transactions.map((item) => ({
+    id: item.id,
+    type: item.type,
+    amount: money(item.amount),
+    balanceBefore: money(item.balanceBefore),
+    balanceAfter: money(item.balanceAfter),
+    remark: item.remark,
+    createdAt: dateTime(item.createdAt),
+  }));
+
   return (
-    <section className="card">
-      <h2 className="section-title">账本流水</h2>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>类型</th>
-              <th>金额</th>
-              <th>之前</th>
-              <th>之后</th>
-              <th>备注</th>
-              <th>时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((item) => (
-              <tr key={item.id}>
-                <td>{item.type}</td>
-                <td>{money(item.amount)}</td>
-                <td>{money(item.balanceBefore)}</td>
-                <td>{money(item.balanceAfter)}</td>
-                <td>{item.remark}</td>
-                <td>{dateTime(item.createdAt)}</td>
-              </tr>
-            ))}
-            {transactions.length === 0 ? <EmptyRow colSpan={6} /> : null}
-          </tbody>
-        </table>
-      </div>
+    <AdminPanel title="账本流水">
+      <AdminDataTable
+        columns={[
+          { accessorKey: "type", header: "类型" },
+          { accessorKey: "amount", header: "金额" },
+          { accessorKey: "balanceBefore", header: "之前" },
+          { accessorKey: "balanceAfter", header: "之后" },
+          { accessorKey: "remark", header: "备注" },
+          { accessorKey: "createdAt", header: "时间" },
+        ]}
+        data={transactionRows}
+        empty="暂无账本流水"
+      />
       <div className="mobile-record-list">
         {transactions.map((item) => (
           <MobileRecord
@@ -4131,7 +4109,7 @@ function Transactions({ transactions }: { transactions: Transaction[] }) {
           <MobileEmpty>暂无账本流水</MobileEmpty>
         ) : null}
       </div>
-    </section>
+    </AdminPanel>
   );
 }
 
@@ -4243,6 +4221,163 @@ function Requests({
       setTerminatingRequestId(null);
     }
   }
+  const auditRequestRows = requests.map((item) => ({
+    id: item.id,
+    trace: (
+      <strong className="request-trace-code">
+        {formatRequestTraceCode(item)}
+      </strong>
+    ),
+    identity: (
+      <div className="audit-stack">
+        <strong>{item.user?.email ?? "-"}</strong>
+        <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
+        <IpCell
+          ip={item.clientIp}
+          banned={Boolean(
+            item.clientIp &&
+              bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
+          )}
+        />
+      </div>
+    ),
+    request: (
+      <div className="audit-stack">
+        <strong>{item.model}</strong>
+        <span>上游：{item.upstreamProvider ?? "-"}</span>
+        <span>上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}</span>
+        <span>
+          推理：
+          {formatReasoningEffortCell(
+            item.reasoningEffort,
+            item.reasoningEffortActual,
+          )}
+        </span>
+      </div>
+    ),
+    status: (
+      <div className="request-status-cell">
+        <StatusPill status={getRequestStatusPillStatus(item)} />
+        {getCompactRequestLabel(item) ? (
+          <span className="request-compact-fallback-pill">
+            {getCompactRequestLabel(item)}
+          </span>
+        ) : null}
+        {getReturnedNoticeText(item) ? (
+          <span className="request-notice-pill">已提示</span>
+        ) : null}
+        {hasRequestError(item) ? (
+          <button
+            className="request-detail-button"
+            onClick={() => void openRequestDetail(item)}
+            title="查看详细报错原因和过程"
+            type="button"
+          >
+            <FileSearch size={13} />
+            详情
+          </button>
+        ) : null}
+      </div>
+    ),
+    tokens: (
+      <div className="audit-metric-grid">
+        <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
+        <AuditMetric label="缓存" value={formatNumber(item.cachedInputTokens)} />
+        <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
+        <AuditMetric label="总计" value={formatNumber(item.totalTokens)} strong />
+      </div>
+    ),
+    cost: (
+      <div className="audit-metric-grid">
+        <AuditMetric
+          label="扣费"
+          value={`$${money(item.chargedAmountUsd)}`}
+          strong
+        />
+        <AuditMetric
+          label="成本"
+          value={`$${money(item.upstreamCostUsd ?? "0")}`}
+        />
+        <AuditMetric
+          label="毛利"
+          value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
+        />
+      </div>
+    ),
+    latency: (
+      <div className="audit-stack">
+        <span>总：{seconds(item.latencyMs)}</span>
+        <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
+        <span>{dateTime(item.createdAt)}</span>
+      </div>
+    ),
+    actions:
+      item.status === "PENDING" ? (
+        <button
+          className="request-terminate-button"
+          disabled={
+            terminatingRequestId === item.id || isProtectedCompactRequest(item)
+          }
+          onClick={() => void terminateRequest(item)}
+          title={
+            isProtectedCompactRequest(item)
+              ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
+              : "终止这条仍在处理中的调用"
+          }
+          type="button"
+        >
+          <CircleStop size={13} />
+          {isProtectedCompactRequest(item) ? "保护中" : "终止"}
+        </button>
+      ) : (
+        "-"
+      ),
+  }));
+  const requestRows = requests.map((item) => ({
+    id: item.id,
+    trace: (
+      <strong className="request-trace-code">
+        {formatRequestTraceCode(item)}
+      </strong>
+    ),
+    apiKey: formatRequestApiKey(item.apiKey),
+    ip: (
+      <IpCell
+        ip={item.clientIp}
+        banned={Boolean(
+          item.clientIp && bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
+        )}
+      />
+    ),
+    model: item.model,
+    status: (
+      <div className="request-status-cell">
+        <StatusPill status={getRequestStatusPillStatus(item)} />
+        {getReturnedNoticeText(item) ? (
+          <span className="request-notice-pill">已提示</span>
+        ) : null}
+        {hasRequestError(item) ? (
+          <button
+            className="request-detail-button"
+            onClick={() => void openRequestDetail(item)}
+            title="查看详细报错原因和过程"
+            type="button"
+          >
+            <FileSearch size={13} />
+            详情
+          </button>
+        ) : null}
+      </div>
+    ),
+    inputTokens: formatNumber(item.inputTokens),
+    cachedInputTokens: formatNumber(item.cachedInputTokens),
+    outputTokens: formatNumber(item.outputTokens),
+    totalTokens: formatNumber(item.totalTokens),
+    chargedAmount: `$${money(item.chargedAmountUsd)}`,
+    latency: seconds(item.latencyMs),
+    firstTokenLatency: seconds(item.firstTokenLatencyMs),
+    createdAt: dateTime(item.createdAt),
+  }));
 
   return (
     <>
@@ -4263,114 +4398,45 @@ function Requests({
           ) : null}
         </div>
         <div
-          className={showCost ? "table-wrap audit-table-wrap" : "table-wrap"}
+          className={showCost ? "audit-table-wrap" : undefined}
           onScroll={handleScroll}
         >
-          <table className={showCost ? "audit-table" : undefined}>
-            {showCost ? (
-              <>
-                <thead>
-                  <tr>
-                    <th>追踪编码</th>
-                    <th>标识</th>
-                    <th>调用</th>
-                    <th>状态</th>
-                    <th>Token</th>
-                    <th>费用</th>
-                    <th>耗时</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {requests.map((item) => (
-                    <AuditRequestRow
-                      bannedIpSet={bannedIpSet}
-                      item={item}
-                      key={item.id}
-                      onOpenDetail={openRequestDetail}
-                      onTerminate={terminateRequest}
-                      terminatingRequestId={terminatingRequestId}
-                    />
-                  ))}
-                  {requests.length === 0 ? <EmptyRow colSpan={8} /> : null}
-                </tbody>
-              </>
-            ) : (
-              <>
-                <thead>
-                  <tr>
-                    <th>编码</th>
-                    <th>API Key</th>
-                    <th>IP</th>
-                    <th>模型</th>
-                    <th>状态</th>
-                    <th>输入</th>
-                    <th>缓存</th>
-                    <th>输出</th>
-                    <th>总 token</th>
-                    <th>扣费</th>
-                    <th>总时间</th>
-                    <th>首 token</th>
-                    <th>时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {requests.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        <strong className="request-trace-code">
-                          {formatRequestTraceCode(item)}
-                        </strong>
-                      </td>
-                      <td>{formatRequestApiKey(item.apiKey)}</td>
-                      <td>
-                        <IpCell
-                          ip={item.clientIp}
-                          banned={Boolean(
-                            item.clientIp &&
-                            bannedIpSet.has(
-                              normalizeIpForCompare(item.clientIp),
-                            ),
-                          )}
-                        />
-                      </td>
-                      <td>{item.model}</td>
-                      <td>
-                        <div className="request-status-cell">
-                          <StatusPill
-                            status={getRequestStatusPillStatus(item)}
-                          />
-                          {getReturnedNoticeText(item) ? (
-                            <span className="request-notice-pill">已提示</span>
-                          ) : null}
-                          {hasRequestError(item) ? (
-                            <button
-                              className="request-detail-button"
-                              onClick={() => void openRequestDetail(item)}
-                              title="查看详细报错原因和过程"
-                              type="button"
-                            >
-                              <FileSearch size={13} />
-                              详情
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td>{formatNumber(item.inputTokens)}</td>
-                      <td>{formatNumber(item.cachedInputTokens)}</td>
-                      <td>{formatNumber(item.outputTokens)}</td>
-                      <td>{formatNumber(item.totalTokens)}</td>
-                      <td>${money(item.chargedAmountUsd)}</td>
-                      <td>{seconds(item.latencyMs)}</td>
-                      <td>{seconds(item.firstTokenLatencyMs)}</td>
-                      <td>{dateTime(item.createdAt)}</td>
-                    </tr>
-                  ))}
-                  {requests.length === 0 ? <EmptyRow colSpan={13} /> : null}
-                </tbody>
-              </>
-            )}
-          </table>
+          {showCost ? (
+            <AdminDataTable
+              columns={[
+                { accessorKey: "trace", header: "追踪编码" },
+                { accessorKey: "identity", header: "标识" },
+                { accessorKey: "request", header: "调用" },
+                { accessorKey: "status", header: "状态" },
+                { accessorKey: "tokens", header: "Token" },
+                { accessorKey: "cost", header: "费用" },
+                { accessorKey: "latency", header: "耗时" },
+                { accessorKey: "actions", header: "操作" },
+              ]}
+              data={auditRequestRows}
+              empty="暂无调用记录"
+            />
+          ) : (
+            <AdminDataTable
+              columns={[
+                { accessorKey: "trace", header: "编码" },
+                { accessorKey: "apiKey", header: "API Key" },
+                { accessorKey: "ip", header: "IP" },
+                { accessorKey: "model", header: "模型" },
+                { accessorKey: "status", header: "状态" },
+                { accessorKey: "inputTokens", header: "输入" },
+                { accessorKey: "cachedInputTokens", header: "缓存" },
+                { accessorKey: "outputTokens", header: "输出" },
+                { accessorKey: "totalTokens", header: "总 token" },
+                { accessorKey: "chargedAmount", header: "扣费" },
+                { accessorKey: "latency", header: "总时间" },
+                { accessorKey: "firstTokenLatency", header: "首 token" },
+                { accessorKey: "createdAt", header: "时间" },
+              ]}
+              data={requestRows}
+              empty="暂无调用记录"
+            />
+          )}
         </div>
         <div
           className={
@@ -4558,145 +4624,6 @@ function IpCell({ ip, banned }: { ip?: string | null; banned: boolean }) {
       <span>{ip}</span>
       {banned ? <span className="ip-ban-pill">已封禁</span> : null}
     </div>
-  );
-}
-
-function AuditRequestRow({
-  item,
-  bannedIpSet,
-  terminatingRequestId,
-  onOpenDetail,
-  onTerminate,
-}: {
-  item: ApiRequest;
-  bannedIpSet: Set<string>;
-  terminatingRequestId: string | null;
-  onOpenDetail: (request: ApiRequest) => Promise<void>;
-  onTerminate: (request: ApiRequest) => Promise<void>;
-}) {
-  return (
-    <tr>
-      <td>
-        <strong className="request-trace-code">
-          {formatRequestTraceCode(item)}
-        </strong>
-      </td>
-      <td>
-        <div className="audit-stack">
-          <strong>{item.user?.email ?? "-"}</strong>
-          <span>API Key：{formatRequestApiKey(item.apiKey)}</span>
-          <IpCell
-            ip={item.clientIp}
-            banned={Boolean(
-              item.clientIp &&
-              bannedIpSet.has(normalizeIpForCompare(item.clientIp)),
-            )}
-          />
-        </div>
-      </td>
-      <td>
-        <div className="audit-stack">
-          <strong>{item.model}</strong>
-          <span>上游：{item.upstreamProvider ?? "-"}</span>
-          <span>
-            上游 Key：{formatRequestUpstreamKey(item.upstreamProviderKey)}
-          </span>
-          <span>
-            推理：
-            {formatReasoningEffortCell(
-              item.reasoningEffort,
-              item.reasoningEffortActual,
-            )}
-          </span>
-        </div>
-      </td>
-      <td>
-        <div className="request-status-cell">
-          <StatusPill status={getRequestStatusPillStatus(item)} />
-          {getCompactRequestLabel(item) ? (
-            <span className="request-compact-fallback-pill">
-              {getCompactRequestLabel(item)}
-            </span>
-          ) : null}
-          {getReturnedNoticeText(item) ? (
-            <span className="request-notice-pill">已提示</span>
-          ) : null}
-          {hasRequestError(item) ? (
-            <button
-              className="request-detail-button"
-              onClick={() => void onOpenDetail(item)}
-              title="查看详细报错原因和过程"
-              type="button"
-            >
-              <FileSearch size={13} />
-              详情
-            </button>
-          ) : null}
-        </div>
-      </td>
-      <td>
-        <div className="audit-metric-grid">
-          <AuditMetric label="输入" value={formatNumber(item.inputTokens)} />
-          <AuditMetric
-            label="缓存"
-            value={formatNumber(item.cachedInputTokens)}
-          />
-          <AuditMetric label="输出" value={formatNumber(item.outputTokens)} />
-          <AuditMetric
-            label="总计"
-            value={formatNumber(item.totalTokens)}
-            strong
-          />
-        </div>
-      </td>
-      <td>
-        <div className="audit-metric-grid">
-          <AuditMetric
-            label="扣费"
-            value={`$${money(item.chargedAmountUsd)}`}
-            strong
-          />
-          <AuditMetric
-            label="成本"
-            value={`$${money(item.upstreamCostUsd ?? "0")}`}
-          />
-          <AuditMetric
-            label="毛利"
-            value={`$${money(Number(item.chargedAmountUsd) - Number(item.upstreamCostUsd ?? 0))}`}
-          />
-        </div>
-      </td>
-      <td>
-        <div className="audit-stack">
-          <span>总：{seconds(item.latencyMs)}</span>
-          <span>首 token：{seconds(item.firstTokenLatencyMs)}</span>
-          <span>{dateTime(item.createdAt)}</span>
-        </div>
-      </td>
-      <td>
-        {item.status === "PENDING" ? (
-          <button
-            className="request-terminate-button"
-            disabled={
-              terminatingRequestId === item.id ||
-              isProtectedCompactRequest(item)
-            }
-            onClick={() => void onTerminate(item)}
-            title={
-              isProtectedCompactRequest(item)
-                ? "这条 compact 调用不受自动倒计时终止限制，也不允许手动终止"
-                : "终止这条仍在处理中的调用"
-            }
-            type="button"
-          >
-            <CircleStop size={13} />
-            {isProtectedCompactRequest(item) ? "保护中" : "终止"}
-          </button>
-        ) : (
-          "-"
-        )}
-      </td>
-    </tr>
   );
 }
 
@@ -9991,6 +9918,108 @@ function AdminUsers({
       onError(errorToText(error));
     }
   }
+  const userDirectoryColumns = [
+    { accessorKey: "email", header: "邮箱" },
+    { accessorKey: "role", header: "角色" },
+    { accessorKey: "status", header: "状态" },
+    { accessorKey: "balance", header: "余额" },
+    ...(!charityOnly
+      ? [{ accessorKey: "tenantPackage", header: "租户/套餐" }]
+      : []),
+    { accessorKey: "charity", header: "公益" },
+    ...(charityOnly ? [{ accessorKey: "charityKey", header: "公开 Key" }] : []),
+    { accessorKey: "allowedModels", header: "模型白名单" },
+    { accessorKey: "accountLimits", header: "账号限制" },
+    ...(charityOnly ? [{ accessorKey: "ipLimit", header: "IP 限流" }] : []),
+    { accessorKey: "keyCount", header: "Key" },
+    { accessorKey: "requestCount", header: "请求" },
+    { accessorKey: "createdAt", header: "创建时间" },
+    { accessorKey: "actions", header: "操作" },
+  ];
+  const userDirectoryRows = filteredUsers.map((item) => ({
+    id: item.id,
+    email: item.email,
+    role: item.role,
+    status: <StatusPill status={item.status} />,
+    balance: `$${money(item.wallet?.balance ?? "0")}`,
+    tenantPackage: (
+      <>
+        <strong>{item.tenant?.name ?? "未分配"}</strong>
+        <div className="muted">{item.packageTemplate?.name ?? "无套餐"}</div>
+      </>
+    ),
+    charity: item.charityEnabled ? (
+      <span className="pill ok">{item.charityDisplayName || "已公开"}</span>
+    ) : (
+      <span className="pill">未公开</span>
+    ),
+    charityKey: (
+      <code className="inline-secret">{item.charityKey || "未填写"}</code>
+    ),
+    allowedModels:
+      item.allowedModels.length > 0 ? item.allowedModels.join(", ") : "不限",
+    accountLimits: `${formatRateLimit(item.rateLimitPerMinute)} · 并发 ${formatConcurrencyLimit(item.concurrencyLimit)}`,
+    ipLimit: item.charityIpRateLimitEnabled ? (
+      <span className="pill ok">
+        {formatRateLimit(item.charityIpRateLimitPerMinute ?? 0)}
+      </span>
+    ) : (
+      <span className="pill">未启用</span>
+    ),
+    keyCount: item._count.apiKeys,
+    requestCount: item._count.apiRequests,
+    createdAt: dateTime(item.createdAt),
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          onClick={() => beginEditUser(item)}
+          type="button"
+        >
+          编辑
+        </button>
+        {charityOnly ? (
+          <button
+            className="button secondary"
+            onClick={() => beginEditUser(item)}
+            type="button"
+          >
+            设置公开 Key
+          </button>
+        ) : null}
+        <button
+          className="button secondary"
+          onClick={() => setKeyModalUserId(item.id)}
+          type="button"
+        >
+          Key 管理
+        </button>
+        {!charityOnly ? (
+          <button
+            className="button secondary"
+            onClick={() => setBillingUser(item)}
+            type="button"
+          >
+            月结
+          </button>
+        ) : null}
+        <button
+          className="button secondary"
+          onClick={() => toggleUserStatus(item)}
+          type="button"
+        >
+          {item.status === "ACTIVE" ? "停用" : "启用"}
+        </button>
+        <button
+          className="button danger"
+          onClick={() => deleteUser(item)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   return (
     <>
@@ -10258,142 +10287,11 @@ function AdminUsers({
               <span className="pill">{filteredUsers.length} 条</span>
             </div>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>邮箱</th>
-                  <th>角色</th>
-                  <th>状态</th>
-                  <th>余额</th>
-                  {!charityOnly ? <th>租户/套餐</th> : null}
-                  <th>公益</th>
-                  {charityOnly ? <th>公开 Key</th> : null}
-                  <th>模型白名单</th>
-                  <th>账号限制</th>
-                  {charityOnly ? <th>IP 限流</th> : null}
-                  <th>Key</th>
-                  <th>请求</th>
-                  <th>创建时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredUsers.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.email}</td>
-                    <td>{item.role}</td>
-                    <td>
-                      <StatusPill status={item.status} />
-                    </td>
-                    <td>${money(item.wallet?.balance ?? "0")}</td>
-                    {!charityOnly ? (
-                      <td>
-                        <strong>{item.tenant?.name ?? "未分配"}</strong>
-                        <div className="muted">
-                          {item.packageTemplate?.name ?? "无套餐"}
-                        </div>
-                      </td>
-                    ) : null}
-                    <td>
-                      {item.charityEnabled ? (
-                        <span className="pill ok">
-                          {item.charityDisplayName || "已公开"}
-                        </span>
-                      ) : (
-                        <span className="pill">未公开</span>
-                      )}
-                    </td>
-                    {charityOnly ? (
-                      <td>
-                        <code className="inline-secret">
-                          {item.charityKey || "未填写"}
-                        </code>
-                      </td>
-                    ) : null}
-                    <td>
-                      {item.allowedModels.length > 0
-                        ? item.allowedModels.join(", ")
-                        : "不限"}
-                    </td>
-                    <td>
-                      {formatRateLimit(item.rateLimitPerMinute)} · 并发{" "}
-                      {formatConcurrencyLimit(item.concurrencyLimit)}
-                    </td>
-                    {charityOnly ? (
-                      <td>
-                        {item.charityIpRateLimitEnabled ? (
-                          <span className="pill ok">
-                            {formatRateLimit(
-                              item.charityIpRateLimitPerMinute ?? 0,
-                            )}
-                          </span>
-                        ) : (
-                          <span className="pill">未启用</span>
-                        )}
-                      </td>
-                    ) : null}
-                    <td>{item._count.apiKeys}</td>
-                    <td>{item._count.apiRequests}</td>
-                    <td>{dateTime(item.createdAt)}</td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          onClick={() => beginEditUser(item)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {charityOnly ? (
-                          <button
-                            className="button secondary"
-                            onClick={() => beginEditUser(item)}
-                            type="button"
-                          >
-                            设置公开 Key
-                          </button>
-                        ) : null}
-                        <button
-                          className="button secondary"
-                          onClick={() => setKeyModalUserId(item.id)}
-                          type="button"
-                        >
-                          Key 管理
-                        </button>
-                        {!charityOnly ? (
-                          <button
-                            className="button secondary"
-                            onClick={() => setBillingUser(item)}
-                            type="button"
-                          >
-                            月结
-                          </button>
-                        ) : null}
-                        <button
-                          className="button secondary"
-                          onClick={() => toggleUserStatus(item)}
-                          type="button"
-                        >
-                          {item.status === "ACTIVE" ? "停用" : "启用"}
-                        </button>
-                        <button
-                          className="button danger"
-                          onClick={() => deleteUser(item)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {filteredUsers.length === 0 ? (
-                  <EmptyRow colSpan={charityOnly ? 13 : 11} />
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <AdminDataTable
+            columns={userDirectoryColumns}
+            data={userDirectoryRows}
+            empty={charityOnly ? "暂无公益用户" : "暂无用户"}
+          />
           <div className="mobile-record-list">
             {filteredUsers.map((item) => (
               <MobileRecord
@@ -11377,6 +11275,82 @@ function AdminUserKeysModal({
       setBusyKeyId(null);
     }
   }
+  const userApiKeyRows = userApiKeys.map((key) => ({
+    id: key.id,
+    selected: (
+      <input
+        checked={selectedKeySet.has(key.id)}
+        onChange={() => toggleKeySelection(key.id)}
+        type="checkbox"
+      />
+    ),
+    name: key.name,
+    secret: (
+      <code className="inline-secret">
+        {key.keySecret ?? "未保存完整 Key"}
+      </code>
+    ),
+    status: <StatusPill status={key.status} />,
+    limits: `${key.rateLimitPerMinute}/min · 并发 ${formatConcurrencyLimit(key.concurrencyLimit)}`,
+    quota: formatApiKeyLimitSummary(key),
+    tagsAndIp: (
+      <>
+        <strong>{(key.tags ?? []).join(", ") || "-"}</strong>
+        <span className="muted truncate">
+          {(key.ipWhitelist ?? []).join(", ") || "不限 IP"}
+        </span>
+      </>
+    ),
+    notice: (
+      <>
+        <span className={key.noticeEnabled ? "pill ok" : "pill"}>
+          {key.noticeEnabled ? "公告中" : "未开启"}
+        </span>
+        {key.noticeText ? (
+          <div className="notice-preview">{key.noticeText}</div>
+        ) : null}
+      </>
+    ),
+    lastUsedAt: key.lastUsedAt ? dateTime(key.lastUsedAt) : "-",
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          onClick={() => beginEditKey(key)}
+          type="button"
+        >
+          编辑
+        </button>
+        {key.status === "ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : (
+          <button
+            className="button"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "ACTIVE")}
+            type="button"
+          >
+            启用
+          </button>
+        )}
+        <button
+          className="button danger"
+          disabled={busyKeyId === key.id}
+          onClick={() => deleteKey(key)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   return (
     <>
@@ -11612,104 +11586,23 @@ function AdminUserKeysModal({
             </div>
           </form>
 
-          <div className="table-wrap admin-key-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>选择</th>
-                  <th>名称</th>
-                  <th>完整 Key</th>
-                  <th>状态</th>
-                  <th>限制</th>
-                  <th>限额</th>
-                  <th>标签/IP</th>
-                  <th>公告</th>
-                  <th>上次使用</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {userApiKeys.map((key) => (
-                  <tr key={key.id}>
-                    <td>
-                      <input
-                        checked={selectedKeySet.has(key.id)}
-                        onChange={() => toggleKeySelection(key.id)}
-                        type="checkbox"
-                      />
-                    </td>
-                    <td>{key.name}</td>
-                    <td>
-                      <code className="inline-secret">
-                        {key.keySecret ?? "未保存完整 Key"}
-                      </code>
-                    </td>
-                    <td>
-                      <StatusPill status={key.status} />
-                    </td>
-                    <td>
-                      {key.rateLimitPerMinute}/min · 并发{" "}
-                      {formatConcurrencyLimit(key.concurrencyLimit)}
-                    </td>
-                    <td>{formatApiKeyLimitSummary(key)}</td>
-                    <td>
-                      <strong>{(key.tags ?? []).join(", ") || "-"}</strong>
-                      <span className="muted truncate">
-                        {(key.ipWhitelist ?? []).join(", ") || "不限 IP"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={key.noticeEnabled ? "pill ok" : "pill"}>
-                        {key.noticeEnabled ? "公告中" : "未开启"}
-                      </span>
-                      {key.noticeText ? (
-                        <div className="notice-preview">{key.noticeText}</div>
-                      ) : null}
-                    </td>
-                    <td>{key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}</td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          onClick={() => beginEditKey(key)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {key.status === "ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : (
-                          <button
-                            className="button"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "ACTIVE")}
-                            type="button"
-                          >
-                            启用
-                          </button>
-                        )}
-                        <button
-                          className="button danger"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => deleteKey(key)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {userApiKeys.length === 0 ? <EmptyRow colSpan={10} /> : null}
-              </tbody>
-            </table>
+          <div className="admin-key-table">
+            <AdminDataTable
+              columns={[
+                { accessorKey: "selected", header: "选择" },
+                { accessorKey: "name", header: "名称" },
+                { accessorKey: "secret", header: "完整 Key" },
+                { accessorKey: "status", header: "状态" },
+                { accessorKey: "limits", header: "限制" },
+                { accessorKey: "quota", header: "限额" },
+                { accessorKey: "tagsAndIp", header: "标签/IP" },
+                { accessorKey: "notice", header: "公告" },
+                { accessorKey: "lastUsedAt", header: "上次使用" },
+                { accessorKey: "actions", header: "操作" },
+              ]}
+              data={userApiKeyRows}
+              empty="暂无 API Key"
+            />
           </div>
 
           <div className="mobile-record-list">
@@ -14610,66 +14503,16 @@ function AdminRouting({
             </button>
           </div>
         </form>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>等级</th>
-                <th>状态</th>
-                <th>引用</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accessTiers.map((tier) => (
-                <tr key={tier.id}>
-                  <td>
-                    <strong>{tier.name}</strong>
-                    <div className="muted">{tier.code}</div>
-                  </td>
-                  <td>
-                    <StatusPill status={tier.status} />
-                  </td>
-                  <td className="muted">
-                    用户 {tier._count?.users ?? 0} · Key{" "}
-                    {tier._count?.apiKeys ?? 0} · 池{" "}
-                    {tier._count?.modelPools ?? 0} · 专线{" "}
-                    {tier._count?.dedicatedRouteRules ?? 0}
-                  </td>
-                  <td>
-                    <div className="button-row">
-                      <button
-                        className="button secondary"
-                        disabled={busyId === tier.id}
-                        onClick={() =>
-                          updateTier(
-                            tier,
-                            tier.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
-                          )
-                        }
-                        type="button"
-                      >
-                        {tier.status === "ACTIVE" ? "禁用" : "启用"}
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        disabled={
-                          tier.code === "standard" || busyId === tier.id
-                        }
-                        onClick={() => deleteTier(tier)}
-                        title="删除等级"
-                        type="button"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {accessTiers.length === 0 ? <EmptyRow colSpan={4} /> : null}
-            </tbody>
-          </table>
-        </div>
+        <AdminDataTable
+          columns={[
+            { accessorKey: "tier", header: "等级" },
+            { accessorKey: "status", header: "状态" },
+            { accessorKey: "references", header: "引用" },
+            { accessorKey: "actions", header: "操作" },
+          ]}
+          data={accessTierRows}
+          empty="暂无访问等级"
+        />
       </section>
 
       <section className="card">
@@ -14907,83 +14750,18 @@ function AdminRouting({
             </button>
           </div>
         </form>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>规则</th>
-                <th>目标</th>
-                <th>等级</th>
-                <th>专线</th>
-                <th>状态</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dedicatedRouteRules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>
-                    <strong>{rule.name}</strong>
-                    <div className="muted">优先级 {rule.priority}</div>
-                    <div className="muted">
-                      {formatDedicatedRouteValidity(rule)}
-                    </div>
-                    {rule.conflictWarnings?.length ? (
-                      <div className="inline-warning">
-                        {rule.conflictWarnings.join("；")}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td>{formatDedicatedRouteTarget(rule)}</td>
-                  <td>
-                    {rule.accessTier?.name ?? "-"}
-                    <div className="muted">{rule.accessTier?.code ?? ""}</div>
-                  </td>
-                  <td>
-                    {rule.upstreamProvider || "不限制"}
-                    <div className="muted">
-                      {rule.upstreamProviderKey
-                        ? `${rule.upstreamProviderKey.name} (${rule.upstreamProviderKey.keyPrefix})`
-                        : "任意 Key"}
-                    </div>
-                  </td>
-                  <td>
-                    <StatusPill status={rule.status} />
-                  </td>
-                  <td>
-                    <div className="button-row">
-                      <button
-                        className="button secondary"
-                        disabled={busyId === rule.id}
-                        onClick={() =>
-                          updateRule(
-                            rule,
-                            rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
-                          )
-                        }
-                        type="button"
-                      >
-                        {rule.status === "ACTIVE" ? "禁用" : "启用"}
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        disabled={busyId === rule.id}
-                        onClick={() => deleteRule(rule)}
-                        title="删除专线"
-                        type="button"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {dedicatedRouteRules.length === 0 ? (
-                <EmptyRow colSpan={6} />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+        <AdminDataTable
+          columns={[
+            { accessorKey: "rule", header: "规则" },
+            { accessorKey: "target", header: "目标" },
+            { accessorKey: "tier", header: "等级" },
+            { accessorKey: "route", header: "专线" },
+            { accessorKey: "status", header: "状态" },
+            { accessorKey: "actions", header: "操作" },
+          ]}
+          data={dedicatedRouteRows}
+          empty="暂无专线规则"
+        />
       </section>
     </div>
   );
@@ -16097,6 +15875,136 @@ function UpstreamProviders({
   const selectedProviderPrices = selectedProvider
     ? pricesForProvider(selectedProvider.name)
     : [];
+  const selectedProviderKeyRows = (selectedProvider?.keys ?? []).map((key) => ({
+    id: key.id,
+    name: displayUpstreamProviderKeyName(key.name),
+    prefix: <code>{key.keyPrefix || key.key}</code>,
+    status: <StatusPill status={key.status} />,
+    priority: key.priority,
+    quota: (
+      <>
+        <strong>
+          日 ${money(key.dailyLimitUsd)} / 月 {money(key.monthlyLimitUsd)}
+        </strong>
+        <span className="muted">
+          {key.providerRateLimit ? `${key.providerRateLimit}/min` : "不限速"}
+        </span>
+      </>
+    ),
+    checkedAt: key.lastCheckedAt
+      ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
+      : "-",
+    usedAt: key.lastUsedAt ? dateTime(key.lastUsedAt) : "-",
+    error: key.lastError ?? "-",
+    actions: (
+      <div className="button-row compact">
+        {key.status === "ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyKeyId === key.id}
+            onClick={() => setProviderKeyStatus(key, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : (
+          <button
+            className="button"
+            disabled={busyKeyId === key.id}
+            onClick={() => setProviderKeyStatus(key, "ACTIVE")}
+            type="button"
+          >
+            启用
+          </button>
+        )}
+        <button
+          className="button danger"
+          disabled={busyKeyId === key.id}
+          onClick={() => deleteProviderKey(key)}
+          type="button"
+        >
+          <Trash2 size={15} />
+          删除
+        </button>
+      </div>
+    ),
+  }));
+  const selectedProviderPriceRows = selectedProviderPrices.map((price) => ({
+    id: price.id,
+    model: price.model,
+    status: <StatusPill status={price.enabled ? "ACTIVE" : "DISABLED"} />,
+    upstreamRaw: priceTriplet(
+      price.upstreamInputPer1MTok,
+      price.upstreamCachedInputPer1MTok,
+      price.upstreamOutputPer1MTok,
+    ),
+    upstreamEffective: (
+      <>
+        x{price.upstreamPriceMultiplier}:{" "}
+        {priceTriplet(
+          multiplied(
+            price.upstreamInputPer1MTok,
+            price.upstreamPriceMultiplier,
+          ),
+          multiplied(
+            price.upstreamCachedInputPer1MTok,
+            price.upstreamPriceMultiplier,
+          ),
+          multiplied(
+            price.upstreamOutputPer1MTok,
+            price.upstreamPriceMultiplier,
+          ),
+        )}
+      </>
+    ),
+    customerPrice: renderCustomerPrice(price),
+    marginRisk: renderMarginRisk(price),
+    version: (
+      <>
+        {price.priceVersion || "v1"}
+        <br />
+        <span className="muted-cell">{formatPriceValidity(price)}</span>
+      </>
+    ),
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          onClick={() => editPrice(price)}
+          type="button"
+        >
+          编辑
+        </button>
+        <button
+          className="button secondary"
+          onClick={() => togglePrice(price)}
+          type="button"
+        >
+          {price.enabled ? "停用" : "启用"}
+        </button>
+        <button
+          className="button danger"
+          disabled={busyPriceId === price.id}
+          onClick={() => deletePrice(price)}
+          type="button"
+        >
+          <Trash2 size={15} />
+          删除
+        </button>
+      </div>
+    ),
+  }));
+  const priceImportPreviewRows =
+    priceImportPreview?.rows.slice(0, 20).map((row) => ({
+      id: `${row.data.upstreamProvider}:${row.data.model}`,
+      action: row.action === "create" ? "新增" : "更新",
+      upstreamProvider: row.data.upstreamProvider,
+      model: row.data.model,
+      customerPrice: `$${money(row.data.customerInputPer1MTok)} / $${money(
+        row.data.customerOutputPer1MTok,
+      )}`,
+      priceVersion: row.data.priceVersion,
+    })) ?? [];
   const activeProviderCount = providers.filter(
     (provider) => provider.status === "ACTIVE",
   ).length;
@@ -16317,101 +16225,21 @@ function UpstreamProviders({
                       </div>
                     </div>
 
-                    <div className="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>名称</th>
-                            <th>前缀</th>
-                            <th>状态</th>
-                            <th>优先级</th>
-                            <th>额度/限流</th>
-                            <th>最近检测</th>
-                            <th>最近使用</th>
-                            <th>错误</th>
-                            <th>操作</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(provider.keys ?? []).map((key) => (
-                            <tr key={key.id}>
-                              <td>
-                                {displayUpstreamProviderKeyName(key.name)}
-                              </td>
-                              <td>
-                                <code>{key.keyPrefix || key.key}</code>
-                              </td>
-                              <td>
-                                <StatusPill status={key.status} />
-                              </td>
-                              <td>{key.priority}</td>
-                              <td>
-                                <strong>
-                                  日 ${money(key.dailyLimitUsd)} / 月{" "}
-                                  {money(key.monthlyLimitUsd)}
-                                </strong>
-                                <span className="muted">
-                                  {key.providerRateLimit
-                                    ? `${key.providerRateLimit}/min`
-                                    : "不限速"}
-                                </span>
-                              </td>
-                              <td>
-                                {key.lastCheckedAt
-                                  ? `${dateTime(key.lastCheckedAt)} · ${key.lastCheckStatus ?? "-"}`
-                                  : "-"}
-                              </td>
-                              <td>
-                                {key.lastUsedAt
-                                  ? dateTime(key.lastUsedAt)
-                                  : "-"}
-                              </td>
-                              <td className="muted-cell">
-                                {key.lastError ?? "-"}
-                              </td>
-                              <td>
-                                <div className="button-row compact">
-                                  {key.status === "ACTIVE" ? (
-                                    <button
-                                      className="button secondary"
-                                      disabled={busyKeyId === key.id}
-                                      onClick={() =>
-                                        setProviderKeyStatus(key, "DISABLED")
-                                      }
-                                      type="button"
-                                    >
-                                      停用
-                                    </button>
-                                  ) : (
-                                    <button
-                                      className="button"
-                                      disabled={busyKeyId === key.id}
-                                      onClick={() =>
-                                        setProviderKeyStatus(key, "ACTIVE")
-                                      }
-                                      type="button"
-                                    >
-                                      启用
-                                    </button>
-                                  )}
-                                  <button
-                                    className="button danger"
-                                    disabled={busyKeyId === key.id}
-                                    onClick={() => deleteProviderKey(key)}
-                                    type="button"
-                                  >
-                                    删除
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                          {(provider.keys ?? []).length === 0 ? (
-                            <EmptyRow colSpan={9} />
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
+                    <AdminDataTable
+                      columns={[
+                        { accessorKey: "name", header: "名称" },
+                        { accessorKey: "prefix", header: "前缀" },
+                        { accessorKey: "status", header: "状态" },
+                        { accessorKey: "priority", header: "优先级" },
+                        { accessorKey: "quota", header: "额度/限流" },
+                        { accessorKey: "checkedAt", header: "最近检测" },
+                        { accessorKey: "usedAt", header: "最近使用" },
+                        { accessorKey: "error", header: "错误" },
+                        { accessorKey: "actions", header: "操作" },
+                      ]}
+                      data={selectedProviderKeyRows}
+                      empty="暂无 Key"
+                    />
                     <div className="mobile-record-list">
                       {(provider.keys ?? []).map((key) => (
                         <MobileRecord
@@ -16503,97 +16331,23 @@ function UpstreamProviders({
                       </button>
                     </div>
 
-                    <div className="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>模型</th>
-                            <th>状态</th>
-                            <th>上游原价 输入/缓存/输出</th>
-                            <th>上游实价</th>
-                            <th>站点售价</th>
-                            <th>毛利风险</th>
-                            <th>版本/有效期</th>
-                            <th>操作</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {providerPrices.map((price) => (
-                            <tr key={price.id}>
-                              <td>{price.model}</td>
-                              <td>
-                                <StatusPill
-                                  status={price.enabled ? "ACTIVE" : "DISABLED"}
-                                />
-                              </td>
-                              <td>
-                                {priceTriplet(
-                                  price.upstreamInputPer1MTok,
-                                  price.upstreamCachedInputPer1MTok,
-                                  price.upstreamOutputPer1MTok,
-                                )}
-                              </td>
-                              <td>
-                                x{price.upstreamPriceMultiplier}:{" "}
-                                {priceTriplet(
-                                  multiplied(
-                                    price.upstreamInputPer1MTok,
-                                    price.upstreamPriceMultiplier,
-                                  ),
-                                  multiplied(
-                                    price.upstreamCachedInputPer1MTok,
-                                    price.upstreamPriceMultiplier,
-                                  ),
-                                  multiplied(
-                                    price.upstreamOutputPer1MTok,
-                                    price.upstreamPriceMultiplier,
-                                  ),
-                                )}
-                              </td>
-                              <td>{renderCustomerPrice(price)}</td>
-                              <td>{renderMarginRisk(price)}</td>
-                              <td>
-                                {price.priceVersion || "v1"}
-                                <br />
-                                <span className="muted-cell">
-                                  {formatPriceValidity(price)}
-                                </span>
-                              </td>
-                              <td>
-                                <div className="button-row compact">
-                                  <button
-                                    className="button secondary"
-                                    onClick={() => editPrice(price)}
-                                    type="button"
-                                  >
-                                    编辑
-                                  </button>
-                                  <button
-                                    className="button secondary"
-                                    onClick={() => togglePrice(price)}
-                                    type="button"
-                                  >
-                                    {price.enabled ? "停用" : "启用"}
-                                  </button>
-                                  <button
-                                    className="button danger"
-                                    disabled={busyPriceId === price.id}
-                                    onClick={() => deletePrice(price)}
-                                    type="button"
-                                  >
-                                    <Trash2 size={15} />
-                                    删除
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                          {providerPrices.length === 0 ? (
-                            <EmptyRow colSpan={8} />
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
+                    <AdminDataTable
+                      columns={[
+                        { accessorKey: "model", header: "模型" },
+                        { accessorKey: "status", header: "状态" },
+                        {
+                          accessorKey: "upstreamRaw",
+                          header: "上游原价 输入/缓存/输出",
+                        },
+                        { accessorKey: "upstreamEffective", header: "上游实价" },
+                        { accessorKey: "customerPrice", header: "站点售价" },
+                        { accessorKey: "marginRisk", header: "毛利风险" },
+                        { accessorKey: "version", header: "版本/有效期" },
+                        { accessorKey: "actions", header: "操作" },
+                      ]}
+                      data={selectedProviderPriceRows}
+                      empty="暂无模型价格"
+                    />
                     <div className="mobile-record-list">
                       {providerPrices.map((price) => (
                         <MobileRecord
@@ -16936,35 +16690,17 @@ function UpstreamProviders({
                 </div>
               ) : null}
               {priceImportPreview?.rows.length ? (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>动作</th>
-                        <th>上游</th>
-                        <th>模型</th>
-                        <th>售价输入/输出</th>
-                        <th>版本</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {priceImportPreview.rows.slice(0, 20).map((row) => (
-                        <tr
-                          key={`${row.data.upstreamProvider}:${row.data.model}`}
-                        >
-                          <td>{row.action === "create" ? "新增" : "更新"}</td>
-                          <td>{row.data.upstreamProvider}</td>
-                          <td>{row.data.model}</td>
-                          <td>
-                            ${money(row.data.customerInputPer1MTok)} / $
-                            {money(row.data.customerOutputPer1MTok)}
-                          </td>
-                          <td>{row.data.priceVersion}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <AdminDataTable
+                  columns={[
+                    { accessorKey: "action", header: "动作" },
+                    { accessorKey: "upstreamProvider", header: "上游" },
+                    { accessorKey: "model", header: "模型" },
+                    { accessorKey: "customerPrice", header: "售价输入/输出" },
+                    { accessorKey: "priceVersion", header: "版本" },
+                  ]}
+                  data={priceImportPreviewRows}
+                  empty="暂无导入预览"
+                />
               ) : null}
             </div>
             <div className="modal-footer">
@@ -17825,16 +17561,6 @@ function isCallableModelPoolChannel(channel: ModelPoolChannel) {
 
 function MobileEmpty({ children }: { children: ReactNode }) {
   return <div className="mobile-empty">{children}</div>;
-}
-
-function EmptyRow({ colSpan }: { colSpan: number }) {
-  return (
-    <tr>
-      <td className="empty-cell" colSpan={colSpan}>
-        暂无数据
-      </td>
-    </tr>
-  );
 }
 
 function titleForTab(tab: Tab) {
