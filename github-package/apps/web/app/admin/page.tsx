@@ -1,7 +1,7 @@
-import DashboardClient from "../dashboard-client";
+import AdminConsole from "./_components/admin-console";
 
 export const dynamic = "force-dynamic";
 
 export default function AdminPage() {
-  return <DashboardClient mode="admin" />;
+  return <AdminConsole />;
 }
