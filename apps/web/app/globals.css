@@ -7243,6 +7243,14 @@ td .button-row.compact {
   .admin-console-v2 .shell-admin .button span {
     min-width: 0;
   }
+
+  .admin-console-v2 .admin-panel-v2 .admin-data-table-v2 + .mobile-record-list {
+    margin-top: 10px;
+  }
+
+  .admin-console-v2 .admin-panel-v2:has(.mobile-record-list) .admin-data-table-v2 {
+    display: none;
+  }
 }
 .shell-admin {
   --admin-shadow: 0 10px 24px rgb(15 23 42 / 6%);

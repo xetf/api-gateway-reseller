@@ -30,7 +30,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   FormEvent,
   type ReactNode,
@@ -48,6 +48,9 @@ import {
   setToken,
 } from "../lib/api";
 import { confirmAdminAction } from "./admin/_components/admin-confirm";
+import { adminDownload } from "./admin/_components/admin-api";
+import { AdminDataTable, AdminPanel } from "./admin/_components/admin-ui";
+import { z } from "zod";
 
 type User = {
   id: string;
@@ -944,6 +947,27 @@ type PublicAuthSettings = Pick<
   | "smtpConfigured"
 >;
 
+const adminAuthSettingsFormSchema = z.object({
+  emailCodeLoginEnabled: z.boolean(),
+  emailCodeAutoRegisterEnabled: z.boolean(),
+  newUserBonusUsd: z
+    .string()
+    .trim()
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+      message: "新用户赠送余额必须是非负数字。",
+    }),
+  emailCodeTtlSeconds: z.number().int().min(60).max(3600),
+  emailCodeCooldownSeconds: z.number().int().min(10).max(600),
+  smtpHost: z.string().trim(),
+  smtpPort: z.number().int().min(1).max(65535),
+  smtpSecure: z.boolean(),
+  smtpUser: z.string().trim(),
+  smtpPassword: z.string(),
+  smtpFrom: z.string().trim(),
+});
+
+type AdminAuthSettingsFormValues = z.infer<typeof adminAuthSettingsFormSchema>;
+
 type RedeemCode = {
   id: string;
   code?: string;
@@ -1418,6 +1442,7 @@ const pageMeta: Record<
 
 export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [token, setTokenState] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -1539,6 +1564,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
+    if (mode === "admin" && isAdminTab(tab)) {
+      router.push(`/admin/${adminTabSlugs[tab]}`);
+    }
   }
 
   function toggleSidebarCompact() {
@@ -2122,6 +2150,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     if (mode === "admin") {
       const nextTab: AdminTab = "admin-overview";
       setActiveTab(nextTab);
+      router.push("/admin");
       return;
     }
     setActiveTab("overview");
@@ -7174,6 +7203,91 @@ function AdminAuditLogs({
   onOutcomeChange: (outcome: string) => void;
   onSearch: (query: string, outcome: string) => void;
 }) {
+  const columns = [
+    {
+      header: "时间",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{dateTime(log.createdAt)}</strong>
+            <span className="muted">
+              {log.method} {log.path}
+            </span>
+          </>
+        );
+      },
+    },
+    {
+      header: "管理员",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.adminEmail ?? "-"}</strong>
+            <span className="muted">{log.adminUserId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "动作",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.action} />
+            <span className="muted">HTTP {log.responseStatus ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "结果",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.outcome ?? "unknown"} />
+            <span className="muted truncate">{log.errorMessage ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "目标",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.targetType ?? "-"}</strong>
+            <span className="muted">{log.targetId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "来源",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.ip ?? "-"}</strong>
+            <span className="muted truncate">{log.userAgent ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "内容",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => (
+        <pre className="json-snippet">
+          {formatAuditBody(row.original.requestBody)}
+        </pre>
+      ),
+    },
+  ];
+
   return (
     <section className="stack admin-log-page">
       <section className="admin-hero-panel">
@@ -7229,71 +7343,16 @@ function AdminAuditLogs({
         </button>
       </div>
 
-      <section className="card admin-log-table-card">
-        <div className="requests-head">
-          <h2 className="section-title">后台操作</h2>
-          <span className="section-subtitle">已加载 {logs.length} 条</span>
-        </div>
-        <div className="table-wrap audit-table-wrap">
-          <table className="audit-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>管理员</th>
-                <th>动作</th>
-                <th>结果</th>
-                <th>目标</th>
-                <th>来源</th>
-                <th>内容</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id}>
-                  <td>
-                    <strong>{dateTime(log.createdAt)}</strong>
-                    <span className="muted">
-                      {log.method} {log.path}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.adminEmail ?? "-"}</strong>
-                    <span className="muted">{log.adminUserId ?? "-"}</span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.action} />
-                    <span className="muted">
-                      HTTP {log.responseStatus ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.outcome ?? "unknown"} />
-                    <span className="muted truncate">
-                      {log.errorMessage ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.targetType ?? "-"}</strong>
-                    <span className="muted">{log.targetId ?? "-"}</span>
-                  </td>
-                  <td>
-                    <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">
-                      {log.userAgent ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <pre className="json-snippet">
-                      {formatAuditBody(log.requestBody)}
-                    </pre>
-                  </td>
-                </tr>
-              ))}
-              {logs.length === 0 ? <EmptyRow colSpan={7} /> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel
+        title="后台操作"
+        description={`已加载 ${logs.length} 条`}
+      >
+        <AdminDataTable
+          columns={columns}
+          data={logs}
+          empty="暂无操作审计记录"
+        />
+      </AdminPanel>
     </section>
   );
 }
@@ -7313,6 +7372,56 @@ function AdminLoginLogs({
   onSuccessChange: (success: string) => void;
   onSearch: (query: string, success: string) => void;
 }) {
+  const columns = [
+    {
+      header: "时间",
+      cell: ({ row }: { row: { original: LoginLog } }) =>
+        dateTime(row.original.createdAt),
+    },
+    {
+      header: "账号",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.email ?? log.user?.email ?? "-"}</strong>
+            <span className="muted">{log.username ?? log.userId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "方式",
+      cell: ({ row }: { row: { original: LoginLog } }) => (
+        <StatusPill status={row.original.method} />
+      ),
+    },
+    {
+      header: "结果",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.success ? "success" : "failure"} />
+            <span className="muted truncate">{log.failureReason ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "来源",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.ip ?? "-"}</strong>
+            <span className="muted truncate">{log.userAgent ?? "-"}</span>
+          </>
+        );
+      },
+    },
+  ];
+
   return (
     <section className="stack admin-log-page">
       <section className="admin-hero-panel">
@@ -7367,54 +7476,13 @@ function AdminLoginLogs({
         </button>
       </div>
 
-      <section className="card admin-log-table-card">
-        <div className="requests-head">
-          <h2 className="section-title">登录记录</h2>
-          <span className="section-subtitle">已加载 {logs.length} 条</span>
-        </div>
-        <div className="table-wrap audit-table-wrap">
-          <table className="audit-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>账号</th>
-                <th>方式</th>
-                <th>结果</th>
-                <th>来源</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id}>
-                  <td>{dateTime(log.createdAt)}</td>
-                  <td>
-                    <strong>{log.email ?? log.user?.email ?? "-"}</strong>
-                    <span className="muted">
-                      {log.username ?? log.userId ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.method} />
-                  </td>
-                  <td>
-                    <StatusPill status={log.success ? "success" : "failure"} />
-                    <span className="muted truncate">
-                      {log.failureReason ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">
-                      {log.userAgent ?? "-"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {logs.length === 0 ? <EmptyRow colSpan={5} /> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel title="登录记录" description={`已加载 ${logs.length} 条`}>
+        <AdminDataTable
+          columns={columns}
+          data={logs}
+          empty="暂无登录日志"
+        />
+      </AdminPanel>
     </section>
   );
 }
@@ -7467,27 +7535,47 @@ function AdminAuthSettings({
     setSavedMessage(null);
   }, [settings]);
 
+  function authSettingsPayload(): AdminAuthSettingsFormValues | null {
+    const parsed = adminAuthSettingsFormSchema.safeParse({
+      emailCodeLoginEnabled,
+      emailCodeAutoRegisterEnabled,
+      newUserBonusUsd,
+      emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
+      emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
+      smtpHost,
+      smtpPort: Number(smtpPort),
+      smtpSecure,
+      smtpUser,
+      smtpPassword,
+      smtpFrom,
+    });
+
+    if (!parsed.success) {
+      onError(parsed.error.issues[0]?.message ?? "登录设置校验失败。");
+      return null;
+    }
+
+    return parsed.data;
+  }
+
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onError(null);
     setSavedMessage(null);
+    const payload = authSettingsPayload();
+    if (!payload) {
+      return;
+    }
     setSaving(true);
 
     try {
       await apiFetch("/admin/auth-settings", {
         method: "PUT",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
-          newUserBonusUsd,
-          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
-          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
-          smtpHost,
-          smtpPort: Number(smtpPort),
-          smtpSecure,
-          smtpUser,
-          ...(smtpPassword.trim() ? { smtpPassword } : {}),
-          smtpFrom,
+          ...payload,
+          ...(payload.smtpPassword.trim()
+            ? { smtpPassword: payload.smtpPassword }
+            : {}),
         }),
       });
       setSmtpPassword("");
@@ -7506,6 +7594,11 @@ function AdminAuthSettings({
       return;
     }
 
+    const payload = authSettingsPayload();
+    if (!payload) {
+      return;
+    }
+
     onError(null);
     setTestMessage(null);
     setTestingEmail(true);
@@ -7514,17 +7607,10 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings/test-email", {
         method: "POST",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
-          newUserBonusUsd,
-          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
-          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
-          smtpHost,
-          smtpPort: Number(smtpPort),
-          smtpSecure,
-          smtpUser,
-          ...(smtpPassword.trim() ? { smtpPassword } : {}),
-          smtpFrom,
+          ...payload,
+          ...(payload.smtpPassword.trim()
+            ? { smtpPassword: payload.smtpPassword }
+            : {}),
           testEmail,
         }),
       });
@@ -7868,6 +7954,22 @@ function AdminRiskCenter({
     riskCenter?.globalCircuitBreakerSettings,
     riskCenter?.externalAlertSettings,
   ]);
+  const ipPolicyRows = [
+    ...(riskCenter?.ipBanRules ?? []).slice(0, 20).map((rule) => ({
+      id: `ban:${rule.ip}`,
+      type: "永久规则",
+      ip: rule.ip,
+      modeOrTtl: <StatusPill status={rule.mode.toUpperCase()} />,
+      note: rule.reason || rule.message || "-",
+    })),
+    ...(riskCenter?.temporaryIpNoticeBans ?? []).slice(0, 20).map((ban) => ({
+      id: `temporary:${ban.ip}`,
+      type: "临时 notice",
+      ip: ban.ip,
+      modeOrTtl: `${ban.ttlSeconds}s`,
+      note: ban.message,
+    })),
+  ];
 
   async function saveRedisFailurePolicy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -8495,54 +8597,21 @@ function AdminRiskCenter({
         </ModalShell>
       ) : null}
 
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">IP 策略</h2>
-            <p className="section-subtitle">
-              永久封禁与临时 notice 封禁集中预览。
-            </p>
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>类型</th>
-                <th>IP</th>
-                <th>模式 / TTL</th>
-                <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(riskCenter?.ipBanRules ?? []).slice(0, 20).map((rule) => (
-                <tr key={`ban:${rule.ip}`}>
-                  <td>永久规则</td>
-                  <td>{rule.ip}</td>
-                  <td>
-                    <StatusPill status={rule.mode.toUpperCase()} />
-                  </td>
-                  <td>{rule.reason || rule.message || "-"}</td>
-                </tr>
-              ))}
-              {(riskCenter?.temporaryIpNoticeBans ?? [])
-                .slice(0, 20)
-                .map((ban) => (
-                  <tr key={`temporary:${ban.ip}`}>
-                    <td>临时 notice</td>
-                    <td>{ban.ip}</td>
-                    <td>{ban.ttlSeconds}s</td>
-                    <td>{ban.message}</td>
-                  </tr>
-                ))}
-              {(riskCenter?.ipBanRules.length ?? 0) === 0 &&
-              (riskCenter?.temporaryIpNoticeBans.length ?? 0) === 0 ? (
-                <EmptyRow colSpan={4} />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel
+        description="永久封禁与临时 notice 封禁集中预览。"
+        title="IP 策略"
+      >
+        <AdminDataTable
+          columns={[
+            { accessorKey: "type", header: "类型" },
+            { accessorKey: "ip", header: "IP" },
+            { accessorKey: "modeOrTtl", header: "模式 / TTL" },
+            { accessorKey: "note", header: "说明" },
+          ]}
+          data={ipPolicyRows}
+          empty="暂无 IP 策略"
+        />
+      </AdminPanel>
     </div>
   );
 }
@@ -8563,24 +8632,11 @@ function AdminReports({
     setExporting(true);
     setExportError(null);
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/admin/reports/summary/export`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
+      await adminDownload(
+        "/admin/reports/summary/export",
+        `admin-report-${new Date().toISOString().slice(0, 10)}.csv`,
+        token,
       );
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `admin-report-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
     } catch (error) {
       setExportError(errorToText(error));
     } finally {
@@ -8676,38 +8732,43 @@ function ReportDimensionTable({
   title: string;
   rows: ReportDimensionRow[];
 }) {
+  const columns = [
+    {
+      header: "对象",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) => (
+        <>
+          <strong>{row.original.label}</strong>
+          <div className="muted">
+            {formatNumber(row.original.totalTokens)} tokens
+          </div>
+        </>
+      ),
+    },
+    {
+      header: "请求",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        formatNumber(row.original.requestCount),
+    },
+    {
+      header: "收入",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        `$${money(row.original.chargedAmountUsd)}`,
+    },
+    {
+      header: "毛利",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        `$${money(row.original.grossProfitUsd)}`,
+    },
+  ];
+
   return (
-    <section className="card">
-      <h2 className="section-title">{title}</h2>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>对象</th>
-              <th>请求</th>
-              <th>收入</th>
-              <th>毛利</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${title}:${row.id ?? row.label}`}>
-                <td>
-                  <strong>{row.label}</strong>
-                  <div className="muted">
-                    {formatNumber(row.totalTokens)} tokens
-                  </div>
-                </td>
-                <td>{formatNumber(row.requestCount)}</td>
-                <td>${money(row.chargedAmountUsd)}</td>
-                <td>${money(row.grossProfitUsd)}</td>
-              </tr>
-            ))}
-            {rows.length === 0 ? <EmptyRow colSpan={4} /> : null}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <AdminPanel title={title}>
+      <AdminDataTable
+        columns={columns}
+        data={rows}
+        empty={`暂无${title}`}
+      />
+    </AdminPanel>
   );
 }
 
@@ -14027,6 +14088,126 @@ function AdminRouting({
       ),
     ]),
   ).sort();
+  const simulationStepRows =
+    simulation?.steps.map((step, index) => ({
+      id: `${step}:${index}`,
+      step: `${index + 1}. ${step}`,
+    })) ?? [];
+  const simulationCandidateRows =
+    simulation?.route.routeCandidates.map((candidate) => ({
+      id: candidate.id,
+      provider: candidate.upstreamProvider,
+      status: <StatusPill status={candidate.effectiveStatus} />,
+      activeKeys: candidate.activeKeys.length,
+      customerPrice: candidate.price
+        ? `$${money(candidate.price.customerInputPer1MTok)} / $${money(candidate.price.customerOutputPer1MTok)}`
+        : "-",
+      upstreamCost: candidate.price
+        ? `$${money(candidate.price.upstreamInputPer1MTok)} / $${money(candidate.price.upstreamOutputPer1MTok)}`
+        : "-",
+      minimumCharge: candidate.price
+        ? `$${money(candidate.price.minimumChargeUsd)}`
+        : "-",
+    })) ?? [];
+  const accessTierRows = accessTiers.map((tier) => ({
+    id: tier.id,
+    tier: (
+      <>
+        <strong>{tier.name}</strong>
+        <div className="muted">{tier.code}</div>
+      </>
+    ),
+    status: <StatusPill status={tier.status} />,
+    references: (
+      <span className="muted">
+        用户 {tier._count?.users ?? 0} · Key {tier._count?.apiKeys ?? 0} · 池{" "}
+        {tier._count?.modelPools ?? 0} · 专线{" "}
+        {tier._count?.dedicatedRouteRules ?? 0}
+      </span>
+    ),
+    actions: (
+      <div className="button-row">
+        <button
+          className="button secondary"
+          disabled={busyId === tier.id}
+          onClick={() =>
+            updateTier(tier, tier.status === "ACTIVE" ? "DISABLED" : "ACTIVE")
+          }
+          type="button"
+        >
+          {tier.status === "ACTIVE" ? "禁用" : "启用"}
+        </button>
+        <button
+          className="icon-button danger"
+          disabled={tier.code === "standard" || busyId === tier.id}
+          onClick={() => deleteTier(tier)}
+          title="删除等级"
+          type="button"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    ),
+  }));
+  const dedicatedRouteRows = dedicatedRouteRules.map((rule) => ({
+    id: rule.id,
+    rule: (
+      <>
+        <strong>{rule.name}</strong>
+        <div className="muted">优先级 {rule.priority}</div>
+        <div className="muted">{formatDedicatedRouteValidity(rule)}</div>
+        {rule.conflictWarnings?.length ? (
+          <div className="inline-warning">
+            {rule.conflictWarnings.join("；")}
+          </div>
+        ) : null}
+      </>
+    ),
+    target: formatDedicatedRouteTarget(rule),
+    tier: (
+      <>
+        {rule.accessTier?.name ?? "-"}
+        <div className="muted">{rule.accessTier?.code ?? ""}</div>
+      </>
+    ),
+    route: (
+      <>
+        {rule.upstreamProvider || "不限制"}
+        <div className="muted">
+          {rule.upstreamProviderKey
+            ? `${rule.upstreamProviderKey.name} (${rule.upstreamProviderKey.keyPrefix})`
+            : "任意 Key"}
+        </div>
+      </>
+    ),
+    status: <StatusPill status={rule.status} />,
+    actions: (
+      <div className="button-row">
+        <button
+          className="button secondary"
+          disabled={busyId === rule.id}
+          onClick={() =>
+            updateRule(
+              rule,
+              rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
+            )
+          }
+          type="button"
+        >
+          {rule.status === "ACTIVE" ? "禁用" : "启用"}
+        </button>
+        <button
+          className="icon-button danger"
+          disabled={busyId === rule.id}
+          onClick={() => deleteRule(rule)}
+          title="删除专线"
+          type="button"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    ),
+  }));
 
   async function runSimulation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -14323,70 +14504,29 @@ function AdminRouting({
                 value={String(simulation.route.routeCandidates.length)}
               />
             </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>推演步骤</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {simulation.steps.map((step, index) => (
-                    <tr key={`${step}:${index}`}>
-                      <td>
-                        {index + 1}. {step}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <AdminDataTable
+              columns={[{ accessorKey: "step", header: "推演步骤" }]}
+              data={simulationStepRows}
+              empty="暂无推演步骤"
+            />
             {simulation.route.unavailableReasons.length > 0 ? (
               <div className="notice">
                 {simulation.route.unavailableReasons.join("；")}
               </div>
             ) : null}
             {simulation.route.routeCandidates.length > 0 ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>候选上游</th>
-                      <th>状态</th>
-                      <th>可用 Key</th>
-                      <th>客户价 / 1M</th>
-                      <th>上游成本 / 1M</th>
-                      <th>最低扣费</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {simulation.route.routeCandidates.map((candidate) => (
-                      <tr key={candidate.id}>
-                        <td>{candidate.upstreamProvider}</td>
-                        <td>
-                          <StatusPill status={candidate.effectiveStatus} />
-                        </td>
-                        <td>{candidate.activeKeys.length}</td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.customerInputPer1MTok)} / $${money(candidate.price.customerOutputPer1MTok)}`
-                            : "-"}
-                        </td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.upstreamInputPer1MTok)} / $${money(candidate.price.upstreamOutputPer1MTok)}`
-                            : "-"}
-                        </td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.minimumChargeUsd)}`
-                            : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <AdminDataTable
+                columns={[
+                  { accessorKey: "provider", header: "候选上游" },
+                  { accessorKey: "status", header: "状态" },
+                  { accessorKey: "activeKeys", header: "可用 Key" },
+                  { accessorKey: "customerPrice", header: "客户价 / 1M" },
+                  { accessorKey: "upstreamCost", header: "上游成本 / 1M" },
+                  { accessorKey: "minimumCharge", header: "最低扣费" },
+                ]}
+                data={simulationCandidateRows}
+                empty="暂无候选渠道"
+              />
             ) : null}
           </div>
         ) : null}
@@ -14904,6 +15044,74 @@ function AdminRedeemCodes({
       .toLowerCase()
       .includes(codeSearch.trim().toLowerCase()),
   );
+  const redeemColumns = [
+    {
+      header: "前缀",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.codePrefix,
+    },
+    {
+      header: "金额",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        `$${money(row.original.amount)}`,
+    },
+    {
+      header: "状态",
+      cell: ({ row }: { row: { original: RedeemCode } }) => (
+        <StatusPill status={row.original.status} />
+      ),
+    },
+    {
+      header: "兑换",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        `${row.original.redeemedCount}/${row.original.maxRedemptions}`,
+    },
+    {
+      header: "活动/限制",
+      cell: ({ row }: { row: { original: RedeemCode } }) => {
+        const code = row.original;
+        return (
+          <>
+            <strong>{code.campaignName ?? "-"}</strong>
+            <span className="muted">
+              每用户 {code.perUserLimit} 次 ·{" "}
+              {code.validUserTier ? code.validUserTier.name : "不限等级"}
+            </span>
+          </>
+        );
+      },
+    },
+    {
+      header: "过期",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.expiresAt ? dateTime(row.original.expiresAt) : "-",
+    },
+    {
+      header: "备注",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.remark || "-",
+    },
+    {
+      header: "最近兑换",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.redemptions?.[0]?.user.email ?? "-",
+    },
+    {
+      header: "操作",
+      cell: ({ row }: { row: { original: RedeemCode } }) => {
+        const code = row.original;
+        return (
+          <button
+            className="button secondary"
+            onClick={() => toggleCode(code)}
+            type="button"
+          >
+            {code.status === "ACTIVE" ? "停用" : "启用"}
+          </button>
+        );
+      },
+    },
+  ];
 
   async function createCodes(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -14956,21 +15164,10 @@ function AdminRedeemCodes({
     setExporting(true);
     onError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/admin/redeem-codes/export`, {
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `redeem-codes-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await adminDownload(
+        "/admin/redeem-codes/export",
+        `redeem-codes-${new Date().toISOString().slice(0, 10)}.csv`,
+      );
     } catch (exportError) {
       onError(errorToText(exportError));
     } finally {
@@ -15012,15 +15209,11 @@ function AdminRedeemCodes({
           </section>
         ) : null}
 
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">兑换码列表</h2>
-              <p className="section-subtitle">
-                按前缀、金额、状态或兑换用户查找。
-              </p>
-            </div>
-            <div className="button-row">
+        <AdminPanel
+          title="兑换码列表"
+          description="按前缀、金额、状态或兑换用户查找。"
+          actions={
+            <>
               <button
                 className="button secondary"
                 disabled={exporting || codes.length === 0}
@@ -15036,61 +15229,14 @@ function AdminRedeemCodes({
                 onChange={(event) => setCodeSearch(event.target.value)}
                 placeholder="搜索兑换码"
               />
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>前缀</th>
-                  <th>金额</th>
-                  <th>状态</th>
-                  <th>兑换</th>
-                  <th>活动/限制</th>
-                  <th>过期</th>
-                  <th>备注</th>
-                  <th>最近兑换</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCodes.map((code) => (
-                  <tr key={code.id}>
-                    <td>{code.codePrefix}</td>
-                    <td>${money(code.amount)}</td>
-                    <td>
-                      <StatusPill status={code.status} />
-                    </td>
-                    <td>
-                      {code.redeemedCount}/{code.maxRedemptions}
-                    </td>
-                    <td>
-                      <strong>{code.campaignName ?? "-"}</strong>
-                      <span className="muted">
-                        每用户 {code.perUserLimit} 次 ·{" "}
-                        {code.validUserTier
-                          ? code.validUserTier.name
-                          : "不限等级"}
-                      </span>
-                    </td>
-                    <td>{code.expiresAt ? dateTime(code.expiresAt) : "-"}</td>
-                    <td>{code.remark}</td>
-                    <td>{code.redemptions?.[0]?.user.email ?? "-"}</td>
-                    <td>
-                      <button
-                        className="button secondary"
-                        onClick={() => toggleCode(code)}
-                        type="button"
-                      >
-                        {code.status === "ACTIVE" ? "停用" : "启用"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {filteredCodes.length === 0 ? <EmptyRow colSpan={9} /> : null}
-              </tbody>
-            </table>
-          </div>
+            </>
+          }
+        >
+          <AdminDataTable
+            columns={redeemColumns}
+            data={filteredCodes}
+            empty="暂无兑换码"
+          />
           <div className="mobile-record-list">
             {filteredCodes.map((code) => (
               <MobileRecord
@@ -15132,7 +15278,7 @@ function AdminRedeemCodes({
               <MobileEmpty>暂无兑换码</MobileEmpty>
             ) : null}
           </div>
-        </section>
+        </AdminPanel>
       </div>
 
       {redeemModalOpen ? (
@@ -15500,26 +15646,11 @@ function UpstreamProviders({
 
   async function exportModelPrices(format: "json" | "csv") {
     onError(null);
-    const token = getToken();
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/admin/model-prices/export?format=${format}`,
-        {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        },
+      await adminDownload(
+        `/admin/model-prices/export?format=${format}`,
+        `model-prices-${new Date().toISOString().slice(0, 10)}.${format}`,
       );
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const href = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = `model-prices-${new Date().toISOString().slice(0, 10)}.${format}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(href);
     } catch (exportError) {
       onError(errorToText(exportError));
     }

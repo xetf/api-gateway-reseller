@@ -3415,6 +3415,68 @@ function Keys({
     setEditTags((key.tags ?? []).join(", "));
     setEditIpWhitelist((key.ipWhitelist ?? []).join("\n"));
   }
+  const apiKeyRows = apiKeys.map((key) => ({
+    id: key.id,
+    name: key.name,
+    secret: (
+      <code className="inline-secret">{key.keySecret ?? key.keyPrefix}</code>
+    ),
+    status: <StatusPill status={key.status} />,
+    rateLimit: `${key.rateLimitPerMinute}/min`,
+    quota: formatApiKeyLimitSummary(key),
+    concurrency: formatConcurrencyLimit(key.concurrencyLimit),
+    expiresAt: key.expiresAt ? dateTime(key.expiresAt) : "永不过期",
+    createdAt: dateTime(key.createdAt),
+    tags: (key.tags ?? []).length > 0 ? (key.tags ?? []).join(", ") : "-",
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          disabled={!key.keySecret}
+          onClick={() => setConfigKey(key)}
+          type="button"
+        >
+          使用 / 配置
+        </button>
+        <button
+          className="button secondary"
+          disabled={busyKeyId === key.id}
+          onClick={() => beginEditKey(key)}
+          type="button"
+        >
+          编辑
+        </button>
+        {key.status === "ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : null}
+        {key.status === "DISABLED" ? (
+          <button
+            className="button"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "ACTIVE")}
+            type="button"
+          >
+            启用
+          </button>
+        ) : null}
+        <button
+          className="button danger"
+          disabled={busyKeyId === key.id}
+          onClick={() => deleteKey(key)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   async function saveEditingKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3583,100 +3645,22 @@ function Keys({
         </section>
         <section className="card wide-card">
           <h2 className="section-title">API Key 列表</h2>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>API Key</th>
-                  <th>状态</th>
-                  <th>限流</th>
-                  <th>限额</th>
-                  <th>并发</th>
-                  <th>过期</th>
-                  <th>创建时间</th>
-                  <th>标签</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiKeys.map((key) => (
-                  <tr key={key.id}>
-                    <td>{key.name}</td>
-                    <td>
-                      <code className="inline-secret">
-                        {key.keySecret ?? key.keyPrefix}
-                      </code>
-                    </td>
-                    <td>
-                      <StatusPill status={key.status} />
-                    </td>
-                    <td>{key.rateLimitPerMinute}/min</td>
-                    <td>{formatApiKeyLimitSummary(key)}</td>
-                    <td>{formatConcurrencyLimit(key.concurrencyLimit)}</td>
-                    <td>
-                      {key.expiresAt ? dateTime(key.expiresAt) : "永不过期"}
-                    </td>
-                    <td>{dateTime(key.createdAt)}</td>
-                    <td>
-                      {(key.tags ?? []).length > 0
-                        ? (key.tags ?? []).join(", ")
-                        : "-"}
-                    </td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          disabled={!key.keySecret}
-                          onClick={() => setConfigKey(key)}
-                          type="button"
-                        >
-                          使用 / 配置
-                        </button>
-                        <button
-                          className="button secondary"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => beginEditKey(key)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {key.status === "ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : null}
-                        {key.status === "DISABLED" ? (
-                          <button
-                            className="button"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "ACTIVE")}
-                            type="button"
-                          >
-                            启用
-                          </button>
-                        ) : null}
-                        <button
-                          className="button danger"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => deleteKey(key)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {apiKeys.length === 0 ? <EmptyRow colSpan={10} /> : null}
-              </tbody>
-            </table>
-          </div>
+          <AdminDataTable
+            columns={[
+              { accessorKey: "name", header: "名称" },
+              { accessorKey: "secret", header: "API Key" },
+              { accessorKey: "status", header: "状态" },
+              { accessorKey: "rateLimit", header: "限流" },
+              { accessorKey: "quota", header: "限额" },
+              { accessorKey: "concurrency", header: "并发" },
+              { accessorKey: "expiresAt", header: "过期" },
+              { accessorKey: "createdAt", header: "创建时间" },
+              { accessorKey: "tags", header: "标签" },
+              { accessorKey: "actions", header: "操作" },
+            ]}
+            data={apiKeyRows}
+            empty="暂无 API Key"
+          />
           <div className="mobile-record-list">
             {apiKeys.map((key) => (
               <MobileRecord
@@ -4082,36 +4066,30 @@ function WalletView({
 }
 
 function Transactions({ transactions }: { transactions: Transaction[] }) {
+  const transactionRows = transactions.map((item) => ({
+    id: item.id,
+    type: item.type,
+    amount: money(item.amount),
+    balanceBefore: money(item.balanceBefore),
+    balanceAfter: money(item.balanceAfter),
+    remark: item.remark,
+    createdAt: dateTime(item.createdAt),
+  }));
+
   return (
-    <section className="card">
-      <h2 className="section-title">账本流水</h2>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>类型</th>
-              <th>金额</th>
-              <th>之前</th>
-              <th>之后</th>
-              <th>备注</th>
-              <th>时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((item) => (
-              <tr key={item.id}>
-                <td>{item.type}</td>
-                <td>{money(item.amount)}</td>
-                <td>{money(item.balanceBefore)}</td>
-                <td>{money(item.balanceAfter)}</td>
-                <td>{item.remark}</td>
-                <td>{dateTime(item.createdAt)}</td>
-              </tr>
-            ))}
-            {transactions.length === 0 ? <EmptyRow colSpan={6} /> : null}
-          </tbody>
-        </table>
-      </div>
+    <AdminPanel title="账本流水">
+      <AdminDataTable
+        columns={[
+          { accessorKey: "type", header: "类型" },
+          { accessorKey: "amount", header: "金额" },
+          { accessorKey: "balanceBefore", header: "之前" },
+          { accessorKey: "balanceAfter", header: "之后" },
+          { accessorKey: "remark", header: "备注" },
+          { accessorKey: "createdAt", header: "时间" },
+        ]}
+        data={transactionRows}
+        empty="暂无账本流水"
+      />
       <div className="mobile-record-list">
         {transactions.map((item) => (
           <MobileRecord
@@ -4131,7 +4109,7 @@ function Transactions({ transactions }: { transactions: Transaction[] }) {
           <MobileEmpty>暂无账本流水</MobileEmpty>
         ) : null}
       </div>
-    </section>
+    </AdminPanel>
   );
 }
 
@@ -7954,6 +7932,22 @@ function AdminRiskCenter({
     riskCenter?.globalCircuitBreakerSettings,
     riskCenter?.externalAlertSettings,
   ]);
+  const ipPolicyRows = [
+    ...(riskCenter?.ipBanRules ?? []).slice(0, 20).map((rule) => ({
+      id: `ban:${rule.ip}`,
+      type: "永久规则",
+      ip: rule.ip,
+      modeOrTtl: <StatusPill status={rule.mode.toUpperCase()} />,
+      note: rule.reason || rule.message || "-",
+    })),
+    ...(riskCenter?.temporaryIpNoticeBans ?? []).slice(0, 20).map((ban) => ({
+      id: `temporary:${ban.ip}`,
+      type: "临时 notice",
+      ip: ban.ip,
+      modeOrTtl: `${ban.ttlSeconds}s`,
+      note: ban.message,
+    })),
+  ];
 
   async function saveRedisFailurePolicy(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -8581,54 +8575,21 @@ function AdminRiskCenter({
         </ModalShell>
       ) : null}
 
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">IP 策略</h2>
-            <p className="section-subtitle">
-              永久封禁与临时 notice 封禁集中预览。
-            </p>
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>类型</th>
-                <th>IP</th>
-                <th>模式 / TTL</th>
-                <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(riskCenter?.ipBanRules ?? []).slice(0, 20).map((rule) => (
-                <tr key={`ban:${rule.ip}`}>
-                  <td>永久规则</td>
-                  <td>{rule.ip}</td>
-                  <td>
-                    <StatusPill status={rule.mode.toUpperCase()} />
-                  </td>
-                  <td>{rule.reason || rule.message || "-"}</td>
-                </tr>
-              ))}
-              {(riskCenter?.temporaryIpNoticeBans ?? [])
-                .slice(0, 20)
-                .map((ban) => (
-                  <tr key={`temporary:${ban.ip}`}>
-                    <td>临时 notice</td>
-                    <td>{ban.ip}</td>
-                    <td>{ban.ttlSeconds}s</td>
-                    <td>{ban.message}</td>
-                  </tr>
-                ))}
-              {(riskCenter?.ipBanRules.length ?? 0) === 0 &&
-              (riskCenter?.temporaryIpNoticeBans.length ?? 0) === 0 ? (
-                <EmptyRow colSpan={4} />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel
+        description="永久封禁与临时 notice 封禁集中预览。"
+        title="IP 策略"
+      >
+        <AdminDataTable
+          columns={[
+            { accessorKey: "type", header: "类型" },
+            { accessorKey: "ip", header: "IP" },
+            { accessorKey: "modeOrTtl", header: "模式 / TTL" },
+            { accessorKey: "note", header: "说明" },
+          ]}
+          data={ipPolicyRows}
+          empty="暂无 IP 策略"
+        />
+      </AdminPanel>
     </div>
   );
 }
@@ -8749,38 +8710,43 @@ function ReportDimensionTable({
   title: string;
   rows: ReportDimensionRow[];
 }) {
+  const columns = [
+    {
+      header: "对象",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) => (
+        <>
+          <strong>{row.original.label}</strong>
+          <div className="muted">
+            {formatNumber(row.original.totalTokens)} tokens
+          </div>
+        </>
+      ),
+    },
+    {
+      header: "请求",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        formatNumber(row.original.requestCount),
+    },
+    {
+      header: "收入",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        `$${money(row.original.chargedAmountUsd)}`,
+    },
+    {
+      header: "毛利",
+      cell: ({ row }: { row: { original: ReportDimensionRow } }) =>
+        `$${money(row.original.grossProfitUsd)}`,
+    },
+  ];
+
   return (
-    <section className="card">
-      <h2 className="section-title">{title}</h2>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>对象</th>
-              <th>请求</th>
-              <th>收入</th>
-              <th>毛利</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${title}:${row.id ?? row.label}`}>
-                <td>
-                  <strong>{row.label}</strong>
-                  <div className="muted">
-                    {formatNumber(row.totalTokens)} tokens
-                  </div>
-                </td>
-                <td>{formatNumber(row.requestCount)}</td>
-                <td>${money(row.chargedAmountUsd)}</td>
-                <td>${money(row.grossProfitUsd)}</td>
-              </tr>
-            ))}
-            {rows.length === 0 ? <EmptyRow colSpan={4} /> : null}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <AdminPanel title={title}>
+      <AdminDataTable
+        columns={columns}
+        data={rows}
+        empty={`暂无${title}`}
+      />
+    </AdminPanel>
   );
 }
 
@@ -10003,6 +9969,108 @@ function AdminUsers({
       onError(errorToText(error));
     }
   }
+  const userDirectoryColumns = [
+    { accessorKey: "email", header: "邮箱" },
+    { accessorKey: "role", header: "角色" },
+    { accessorKey: "status", header: "状态" },
+    { accessorKey: "balance", header: "余额" },
+    ...(!charityOnly
+      ? [{ accessorKey: "tenantPackage", header: "租户/套餐" }]
+      : []),
+    { accessorKey: "charity", header: "公益" },
+    ...(charityOnly ? [{ accessorKey: "charityKey", header: "公开 Key" }] : []),
+    { accessorKey: "allowedModels", header: "模型白名单" },
+    { accessorKey: "accountLimits", header: "账号限制" },
+    ...(charityOnly ? [{ accessorKey: "ipLimit", header: "IP 限流" }] : []),
+    { accessorKey: "keyCount", header: "Key" },
+    { accessorKey: "requestCount", header: "请求" },
+    { accessorKey: "createdAt", header: "创建时间" },
+    { accessorKey: "actions", header: "操作" },
+  ];
+  const userDirectoryRows = filteredUsers.map((item) => ({
+    id: item.id,
+    email: item.email,
+    role: item.role,
+    status: <StatusPill status={item.status} />,
+    balance: `$${money(item.wallet?.balance ?? "0")}`,
+    tenantPackage: (
+      <>
+        <strong>{item.tenant?.name ?? "未分配"}</strong>
+        <div className="muted">{item.packageTemplate?.name ?? "无套餐"}</div>
+      </>
+    ),
+    charity: item.charityEnabled ? (
+      <span className="pill ok">{item.charityDisplayName || "已公开"}</span>
+    ) : (
+      <span className="pill">未公开</span>
+    ),
+    charityKey: (
+      <code className="inline-secret">{item.charityKey || "未填写"}</code>
+    ),
+    allowedModels:
+      item.allowedModels.length > 0 ? item.allowedModels.join(", ") : "不限",
+    accountLimits: `${formatRateLimit(item.rateLimitPerMinute)} · 并发 ${formatConcurrencyLimit(item.concurrencyLimit)}`,
+    ipLimit: item.charityIpRateLimitEnabled ? (
+      <span className="pill ok">
+        {formatRateLimit(item.charityIpRateLimitPerMinute ?? 0)}
+      </span>
+    ) : (
+      <span className="pill">未启用</span>
+    ),
+    keyCount: item._count.apiKeys,
+    requestCount: item._count.apiRequests,
+    createdAt: dateTime(item.createdAt),
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          onClick={() => beginEditUser(item)}
+          type="button"
+        >
+          编辑
+        </button>
+        {charityOnly ? (
+          <button
+            className="button secondary"
+            onClick={() => beginEditUser(item)}
+            type="button"
+          >
+            设置公开 Key
+          </button>
+        ) : null}
+        <button
+          className="button secondary"
+          onClick={() => setKeyModalUserId(item.id)}
+          type="button"
+        >
+          Key 管理
+        </button>
+        {!charityOnly ? (
+          <button
+            className="button secondary"
+            onClick={() => setBillingUser(item)}
+            type="button"
+          >
+            月结
+          </button>
+        ) : null}
+        <button
+          className="button secondary"
+          onClick={() => toggleUserStatus(item)}
+          type="button"
+        >
+          {item.status === "ACTIVE" ? "停用" : "启用"}
+        </button>
+        <button
+          className="button danger"
+          onClick={() => deleteUser(item)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   return (
     <>
@@ -10270,142 +10338,11 @@ function AdminUsers({
               <span className="pill">{filteredUsers.length} 条</span>
             </div>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>邮箱</th>
-                  <th>角色</th>
-                  <th>状态</th>
-                  <th>余额</th>
-                  {!charityOnly ? <th>租户/套餐</th> : null}
-                  <th>公益</th>
-                  {charityOnly ? <th>公开 Key</th> : null}
-                  <th>模型白名单</th>
-                  <th>账号限制</th>
-                  {charityOnly ? <th>IP 限流</th> : null}
-                  <th>Key</th>
-                  <th>请求</th>
-                  <th>创建时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredUsers.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.email}</td>
-                    <td>{item.role}</td>
-                    <td>
-                      <StatusPill status={item.status} />
-                    </td>
-                    <td>${money(item.wallet?.balance ?? "0")}</td>
-                    {!charityOnly ? (
-                      <td>
-                        <strong>{item.tenant?.name ?? "未分配"}</strong>
-                        <div className="muted">
-                          {item.packageTemplate?.name ?? "无套餐"}
-                        </div>
-                      </td>
-                    ) : null}
-                    <td>
-                      {item.charityEnabled ? (
-                        <span className="pill ok">
-                          {item.charityDisplayName || "已公开"}
-                        </span>
-                      ) : (
-                        <span className="pill">未公开</span>
-                      )}
-                    </td>
-                    {charityOnly ? (
-                      <td>
-                        <code className="inline-secret">
-                          {item.charityKey || "未填写"}
-                        </code>
-                      </td>
-                    ) : null}
-                    <td>
-                      {item.allowedModels.length > 0
-                        ? item.allowedModels.join(", ")
-                        : "不限"}
-                    </td>
-                    <td>
-                      {formatRateLimit(item.rateLimitPerMinute)} · 并发{" "}
-                      {formatConcurrencyLimit(item.concurrencyLimit)}
-                    </td>
-                    {charityOnly ? (
-                      <td>
-                        {item.charityIpRateLimitEnabled ? (
-                          <span className="pill ok">
-                            {formatRateLimit(
-                              item.charityIpRateLimitPerMinute ?? 0,
-                            )}
-                          </span>
-                        ) : (
-                          <span className="pill">未启用</span>
-                        )}
-                      </td>
-                    ) : null}
-                    <td>{item._count.apiKeys}</td>
-                    <td>{item._count.apiRequests}</td>
-                    <td>{dateTime(item.createdAt)}</td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          onClick={() => beginEditUser(item)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {charityOnly ? (
-                          <button
-                            className="button secondary"
-                            onClick={() => beginEditUser(item)}
-                            type="button"
-                          >
-                            设置公开 Key
-                          </button>
-                        ) : null}
-                        <button
-                          className="button secondary"
-                          onClick={() => setKeyModalUserId(item.id)}
-                          type="button"
-                        >
-                          Key 管理
-                        </button>
-                        {!charityOnly ? (
-                          <button
-                            className="button secondary"
-                            onClick={() => setBillingUser(item)}
-                            type="button"
-                          >
-                            月结
-                          </button>
-                        ) : null}
-                        <button
-                          className="button secondary"
-                          onClick={() => toggleUserStatus(item)}
-                          type="button"
-                        >
-                          {item.status === "ACTIVE" ? "停用" : "启用"}
-                        </button>
-                        <button
-                          className="button danger"
-                          onClick={() => deleteUser(item)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {filteredUsers.length === 0 ? (
-                  <EmptyRow colSpan={charityOnly ? 13 : 11} />
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <AdminDataTable
+            columns={userDirectoryColumns}
+            data={userDirectoryRows}
+            empty={charityOnly ? "暂无公益用户" : "暂无用户"}
+          />
           <div className="mobile-record-list">
             {filteredUsers.map((item) => (
               <MobileRecord
@@ -11389,6 +11326,82 @@ function AdminUserKeysModal({
       setBusyKeyId(null);
     }
   }
+  const userApiKeyRows = userApiKeys.map((key) => ({
+    id: key.id,
+    selected: (
+      <input
+        checked={selectedKeySet.has(key.id)}
+        onChange={() => toggleKeySelection(key.id)}
+        type="checkbox"
+      />
+    ),
+    name: key.name,
+    secret: (
+      <code className="inline-secret">
+        {key.keySecret ?? "未保存完整 Key"}
+      </code>
+    ),
+    status: <StatusPill status={key.status} />,
+    limits: `${key.rateLimitPerMinute}/min · 并发 ${formatConcurrencyLimit(key.concurrencyLimit)}`,
+    quota: formatApiKeyLimitSummary(key),
+    tagsAndIp: (
+      <>
+        <strong>{(key.tags ?? []).join(", ") || "-"}</strong>
+        <span className="muted truncate">
+          {(key.ipWhitelist ?? []).join(", ") || "不限 IP"}
+        </span>
+      </>
+    ),
+    notice: (
+      <>
+        <span className={key.noticeEnabled ? "pill ok" : "pill"}>
+          {key.noticeEnabled ? "公告中" : "未开启"}
+        </span>
+        {key.noticeText ? (
+          <div className="notice-preview">{key.noticeText}</div>
+        ) : null}
+      </>
+    ),
+    lastUsedAt: key.lastUsedAt ? dateTime(key.lastUsedAt) : "-",
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          onClick={() => beginEditKey(key)}
+          type="button"
+        >
+          编辑
+        </button>
+        {key.status === "ACTIVE" ? (
+          <button
+            className="button secondary"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "DISABLED")}
+            type="button"
+          >
+            停用
+          </button>
+        ) : (
+          <button
+            className="button"
+            disabled={busyKeyId === key.id}
+            onClick={() => updateKeyStatus(key, "ACTIVE")}
+            type="button"
+          >
+            启用
+          </button>
+        )}
+        <button
+          className="button danger"
+          disabled={busyKeyId === key.id}
+          onClick={() => deleteKey(key)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   return (
     <>
@@ -11624,104 +11637,23 @@ function AdminUserKeysModal({
             </div>
           </form>
 
-          <div className="table-wrap admin-key-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>选择</th>
-                  <th>名称</th>
-                  <th>完整 Key</th>
-                  <th>状态</th>
-                  <th>限制</th>
-                  <th>限额</th>
-                  <th>标签/IP</th>
-                  <th>公告</th>
-                  <th>上次使用</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {userApiKeys.map((key) => (
-                  <tr key={key.id}>
-                    <td>
-                      <input
-                        checked={selectedKeySet.has(key.id)}
-                        onChange={() => toggleKeySelection(key.id)}
-                        type="checkbox"
-                      />
-                    </td>
-                    <td>{key.name}</td>
-                    <td>
-                      <code className="inline-secret">
-                        {key.keySecret ?? "未保存完整 Key"}
-                      </code>
-                    </td>
-                    <td>
-                      <StatusPill status={key.status} />
-                    </td>
-                    <td>
-                      {key.rateLimitPerMinute}/min · 并发{" "}
-                      {formatConcurrencyLimit(key.concurrencyLimit)}
-                    </td>
-                    <td>{formatApiKeyLimitSummary(key)}</td>
-                    <td>
-                      <strong>{(key.tags ?? []).join(", ") || "-"}</strong>
-                      <span className="muted truncate">
-                        {(key.ipWhitelist ?? []).join(", ") || "不限 IP"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={key.noticeEnabled ? "pill ok" : "pill"}>
-                        {key.noticeEnabled ? "公告中" : "未开启"}
-                      </span>
-                      {key.noticeText ? (
-                        <div className="notice-preview">{key.noticeText}</div>
-                      ) : null}
-                    </td>
-                    <td>{key.lastUsedAt ? dateTime(key.lastUsedAt) : "-"}</td>
-                    <td>
-                      <div className="button-row compact">
-                        <button
-                          className="button secondary"
-                          onClick={() => beginEditKey(key)}
-                          type="button"
-                        >
-                          编辑
-                        </button>
-                        {key.status === "ACTIVE" ? (
-                          <button
-                            className="button secondary"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "DISABLED")}
-                            type="button"
-                          >
-                            停用
-                          </button>
-                        ) : (
-                          <button
-                            className="button"
-                            disabled={busyKeyId === key.id}
-                            onClick={() => updateKeyStatus(key, "ACTIVE")}
-                            type="button"
-                          >
-                            启用
-                          </button>
-                        )}
-                        <button
-                          className="button danger"
-                          disabled={busyKeyId === key.id}
-                          onClick={() => deleteKey(key)}
-                          type="button"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {userApiKeys.length === 0 ? <EmptyRow colSpan={10} /> : null}
-              </tbody>
-            </table>
+          <div className="admin-key-table">
+            <AdminDataTable
+              columns={[
+                { accessorKey: "selected", header: "选择" },
+                { accessorKey: "name", header: "名称" },
+                { accessorKey: "secret", header: "完整 Key" },
+                { accessorKey: "status", header: "状态" },
+                { accessorKey: "limits", header: "限制" },
+                { accessorKey: "quota", header: "限额" },
+                { accessorKey: "tagsAndIp", header: "标签/IP" },
+                { accessorKey: "notice", header: "公告" },
+                { accessorKey: "lastUsedAt", header: "上次使用" },
+                { accessorKey: "actions", header: "操作" },
+              ]}
+              data={userApiKeyRows}
+              empty="暂无 API Key"
+            />
           </div>
 
           <div className="mobile-record-list">
@@ -14100,6 +14032,126 @@ function AdminRouting({
       ),
     ]),
   ).sort();
+  const simulationStepRows =
+    simulation?.steps.map((step, index) => ({
+      id: `${step}:${index}`,
+      step: `${index + 1}. ${step}`,
+    })) ?? [];
+  const simulationCandidateRows =
+    simulation?.route.routeCandidates.map((candidate) => ({
+      id: candidate.id,
+      provider: candidate.upstreamProvider,
+      status: <StatusPill status={candidate.effectiveStatus} />,
+      activeKeys: candidate.activeKeys.length,
+      customerPrice: candidate.price
+        ? `$${money(candidate.price.customerInputPer1MTok)} / $${money(candidate.price.customerOutputPer1MTok)}`
+        : "-",
+      upstreamCost: candidate.price
+        ? `$${money(candidate.price.upstreamInputPer1MTok)} / $${money(candidate.price.upstreamOutputPer1MTok)}`
+        : "-",
+      minimumCharge: candidate.price
+        ? `$${money(candidate.price.minimumChargeUsd)}`
+        : "-",
+    })) ?? [];
+  const accessTierRows = accessTiers.map((tier) => ({
+    id: tier.id,
+    tier: (
+      <>
+        <strong>{tier.name}</strong>
+        <div className="muted">{tier.code}</div>
+      </>
+    ),
+    status: <StatusPill status={tier.status} />,
+    references: (
+      <span className="muted">
+        用户 {tier._count?.users ?? 0} · Key {tier._count?.apiKeys ?? 0} · 池{" "}
+        {tier._count?.modelPools ?? 0} · 专线{" "}
+        {tier._count?.dedicatedRouteRules ?? 0}
+      </span>
+    ),
+    actions: (
+      <div className="button-row">
+        <button
+          className="button secondary"
+          disabled={busyId === tier.id}
+          onClick={() =>
+            updateTier(tier, tier.status === "ACTIVE" ? "DISABLED" : "ACTIVE")
+          }
+          type="button"
+        >
+          {tier.status === "ACTIVE" ? "禁用" : "启用"}
+        </button>
+        <button
+          className="icon-button danger"
+          disabled={tier.code === "standard" || busyId === tier.id}
+          onClick={() => deleteTier(tier)}
+          title="删除等级"
+          type="button"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    ),
+  }));
+  const dedicatedRouteRows = dedicatedRouteRules.map((rule) => ({
+    id: rule.id,
+    rule: (
+      <>
+        <strong>{rule.name}</strong>
+        <div className="muted">优先级 {rule.priority}</div>
+        <div className="muted">{formatDedicatedRouteValidity(rule)}</div>
+        {rule.conflictWarnings?.length ? (
+          <div className="inline-warning">
+            {rule.conflictWarnings.join("；")}
+          </div>
+        ) : null}
+      </>
+    ),
+    target: formatDedicatedRouteTarget(rule),
+    tier: (
+      <>
+        {rule.accessTier?.name ?? "-"}
+        <div className="muted">{rule.accessTier?.code ?? ""}</div>
+      </>
+    ),
+    route: (
+      <>
+        {rule.upstreamProvider || "不限制"}
+        <div className="muted">
+          {rule.upstreamProviderKey
+            ? `${rule.upstreamProviderKey.name} (${rule.upstreamProviderKey.keyPrefix})`
+            : "任意 Key"}
+        </div>
+      </>
+    ),
+    status: <StatusPill status={rule.status} />,
+    actions: (
+      <div className="button-row">
+        <button
+          className="button secondary"
+          disabled={busyId === rule.id}
+          onClick={() =>
+            updateRule(
+              rule,
+              rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
+            )
+          }
+          type="button"
+        >
+          {rule.status === "ACTIVE" ? "禁用" : "启用"}
+        </button>
+        <button
+          className="icon-button danger"
+          disabled={busyId === rule.id}
+          onClick={() => deleteRule(rule)}
+          title="删除专线"
+          type="button"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    ),
+  }));
 
   async function runSimulation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -14396,70 +14448,29 @@ function AdminRouting({
                 value={String(simulation.route.routeCandidates.length)}
               />
             </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>推演步骤</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {simulation.steps.map((step, index) => (
-                    <tr key={`${step}:${index}`}>
-                      <td>
-                        {index + 1}. {step}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <AdminDataTable
+              columns={[{ accessorKey: "step", header: "推演步骤" }]}
+              data={simulationStepRows}
+              empty="暂无推演步骤"
+            />
             {simulation.route.unavailableReasons.length > 0 ? (
               <div className="notice">
                 {simulation.route.unavailableReasons.join("；")}
               </div>
             ) : null}
             {simulation.route.routeCandidates.length > 0 ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>候选上游</th>
-                      <th>状态</th>
-                      <th>可用 Key</th>
-                      <th>客户价 / 1M</th>
-                      <th>上游成本 / 1M</th>
-                      <th>最低扣费</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {simulation.route.routeCandidates.map((candidate) => (
-                      <tr key={candidate.id}>
-                        <td>{candidate.upstreamProvider}</td>
-                        <td>
-                          <StatusPill status={candidate.effectiveStatus} />
-                        </td>
-                        <td>{candidate.activeKeys.length}</td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.customerInputPer1MTok)} / $${money(candidate.price.customerOutputPer1MTok)}`
-                            : "-"}
-                        </td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.upstreamInputPer1MTok)} / $${money(candidate.price.upstreamOutputPer1MTok)}`
-                            : "-"}
-                        </td>
-                        <td>
-                          {candidate.price
-                            ? `$${money(candidate.price.minimumChargeUsd)}`
-                            : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <AdminDataTable
+                columns={[
+                  { accessorKey: "provider", header: "候选上游" },
+                  { accessorKey: "status", header: "状态" },
+                  { accessorKey: "activeKeys", header: "可用 Key" },
+                  { accessorKey: "customerPrice", header: "客户价 / 1M" },
+                  { accessorKey: "upstreamCost", header: "上游成本 / 1M" },
+                  { accessorKey: "minimumCharge", header: "最低扣费" },
+                ]}
+                data={simulationCandidateRows}
+                empty="暂无候选渠道"
+              />
             ) : null}
           </div>
         ) : null}
@@ -14543,66 +14554,16 @@ function AdminRouting({
             </button>
           </div>
         </form>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>等级</th>
-                <th>状态</th>
-                <th>引用</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accessTiers.map((tier) => (
-                <tr key={tier.id}>
-                  <td>
-                    <strong>{tier.name}</strong>
-                    <div className="muted">{tier.code}</div>
-                  </td>
-                  <td>
-                    <StatusPill status={tier.status} />
-                  </td>
-                  <td className="muted">
-                    用户 {tier._count?.users ?? 0} · Key{" "}
-                    {tier._count?.apiKeys ?? 0} · 池{" "}
-                    {tier._count?.modelPools ?? 0} · 专线{" "}
-                    {tier._count?.dedicatedRouteRules ?? 0}
-                  </td>
-                  <td>
-                    <div className="button-row">
-                      <button
-                        className="button secondary"
-                        disabled={busyId === tier.id}
-                        onClick={() =>
-                          updateTier(
-                            tier,
-                            tier.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
-                          )
-                        }
-                        type="button"
-                      >
-                        {tier.status === "ACTIVE" ? "禁用" : "启用"}
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        disabled={
-                          tier.code === "standard" || busyId === tier.id
-                        }
-                        onClick={() => deleteTier(tier)}
-                        title="删除等级"
-                        type="button"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {accessTiers.length === 0 ? <EmptyRow colSpan={4} /> : null}
-            </tbody>
-          </table>
-        </div>
+        <AdminDataTable
+          columns={[
+            { accessorKey: "tier", header: "等级" },
+            { accessorKey: "status", header: "状态" },
+            { accessorKey: "references", header: "引用" },
+            { accessorKey: "actions", header: "操作" },
+          ]}
+          data={accessTierRows}
+          empty="暂无访问等级"
+        />
       </section>
 
       <section className="card">
@@ -14840,83 +14801,18 @@ function AdminRouting({
             </button>
           </div>
         </form>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>规则</th>
-                <th>目标</th>
-                <th>等级</th>
-                <th>专线</th>
-                <th>状态</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dedicatedRouteRules.map((rule) => (
-                <tr key={rule.id}>
-                  <td>
-                    <strong>{rule.name}</strong>
-                    <div className="muted">优先级 {rule.priority}</div>
-                    <div className="muted">
-                      {formatDedicatedRouteValidity(rule)}
-                    </div>
-                    {rule.conflictWarnings?.length ? (
-                      <div className="inline-warning">
-                        {rule.conflictWarnings.join("；")}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td>{formatDedicatedRouteTarget(rule)}</td>
-                  <td>
-                    {rule.accessTier?.name ?? "-"}
-                    <div className="muted">{rule.accessTier?.code ?? ""}</div>
-                  </td>
-                  <td>
-                    {rule.upstreamProvider || "不限制"}
-                    <div className="muted">
-                      {rule.upstreamProviderKey
-                        ? `${rule.upstreamProviderKey.name} (${rule.upstreamProviderKey.keyPrefix})`
-                        : "任意 Key"}
-                    </div>
-                  </td>
-                  <td>
-                    <StatusPill status={rule.status} />
-                  </td>
-                  <td>
-                    <div className="button-row">
-                      <button
-                        className="button secondary"
-                        disabled={busyId === rule.id}
-                        onClick={() =>
-                          updateRule(
-                            rule,
-                            rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
-                          )
-                        }
-                        type="button"
-                      >
-                        {rule.status === "ACTIVE" ? "禁用" : "启用"}
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        disabled={busyId === rule.id}
-                        onClick={() => deleteRule(rule)}
-                        title="删除专线"
-                        type="button"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {dedicatedRouteRules.length === 0 ? (
-                <EmptyRow colSpan={6} />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+        <AdminDataTable
+          columns={[
+            { accessorKey: "rule", header: "规则" },
+            { accessorKey: "target", header: "目标" },
+            { accessorKey: "tier", header: "等级" },
+            { accessorKey: "route", header: "专线" },
+            { accessorKey: "status", header: "状态" },
+            { accessorKey: "actions", header: "操作" },
+          ]}
+          data={dedicatedRouteRows}
+          empty="暂无专线规则"
+        />
       </section>
     </div>
   );
@@ -14977,6 +14873,74 @@ function AdminRedeemCodes({
       .toLowerCase()
       .includes(codeSearch.trim().toLowerCase()),
   );
+  const redeemColumns = [
+    {
+      header: "前缀",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.codePrefix,
+    },
+    {
+      header: "金额",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        `$${money(row.original.amount)}`,
+    },
+    {
+      header: "状态",
+      cell: ({ row }: { row: { original: RedeemCode } }) => (
+        <StatusPill status={row.original.status} />
+      ),
+    },
+    {
+      header: "兑换",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        `${row.original.redeemedCount}/${row.original.maxRedemptions}`,
+    },
+    {
+      header: "活动/限制",
+      cell: ({ row }: { row: { original: RedeemCode } }) => {
+        const code = row.original;
+        return (
+          <>
+            <strong>{code.campaignName ?? "-"}</strong>
+            <span className="muted">
+              每用户 {code.perUserLimit} 次 ·{" "}
+              {code.validUserTier ? code.validUserTier.name : "不限等级"}
+            </span>
+          </>
+        );
+      },
+    },
+    {
+      header: "过期",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.expiresAt ? dateTime(row.original.expiresAt) : "-",
+    },
+    {
+      header: "备注",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.remark || "-",
+    },
+    {
+      header: "最近兑换",
+      cell: ({ row }: { row: { original: RedeemCode } }) =>
+        row.original.redemptions?.[0]?.user.email ?? "-",
+    },
+    {
+      header: "操作",
+      cell: ({ row }: { row: { original: RedeemCode } }) => {
+        const code = row.original;
+        return (
+          <button
+            className="button secondary"
+            onClick={() => toggleCode(code)}
+            type="button"
+          >
+            {code.status === "ACTIVE" ? "停用" : "启用"}
+          </button>
+        );
+      },
+    },
+  ];
 
   async function createCodes(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -15074,15 +15038,11 @@ function AdminRedeemCodes({
           </section>
         ) : null}
 
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">兑换码列表</h2>
-              <p className="section-subtitle">
-                按前缀、金额、状态或兑换用户查找。
-              </p>
-            </div>
-            <div className="button-row">
+        <AdminPanel
+          title="兑换码列表"
+          description="按前缀、金额、状态或兑换用户查找。"
+          actions={
+            <>
               <button
                 className="button secondary"
                 disabled={exporting || codes.length === 0}
@@ -15098,61 +15058,14 @@ function AdminRedeemCodes({
                 onChange={(event) => setCodeSearch(event.target.value)}
                 placeholder="搜索兑换码"
               />
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>前缀</th>
-                  <th>金额</th>
-                  <th>状态</th>
-                  <th>兑换</th>
-                  <th>活动/限制</th>
-                  <th>过期</th>
-                  <th>备注</th>
-                  <th>最近兑换</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCodes.map((code) => (
-                  <tr key={code.id}>
-                    <td>{code.codePrefix}</td>
-                    <td>${money(code.amount)}</td>
-                    <td>
-                      <StatusPill status={code.status} />
-                    </td>
-                    <td>
-                      {code.redeemedCount}/{code.maxRedemptions}
-                    </td>
-                    <td>
-                      <strong>{code.campaignName ?? "-"}</strong>
-                      <span className="muted">
-                        每用户 {code.perUserLimit} 次 ·{" "}
-                        {code.validUserTier
-                          ? code.validUserTier.name
-                          : "不限等级"}
-                      </span>
-                    </td>
-                    <td>{code.expiresAt ? dateTime(code.expiresAt) : "-"}</td>
-                    <td>{code.remark}</td>
-                    <td>{code.redemptions?.[0]?.user.email ?? "-"}</td>
-                    <td>
-                      <button
-                        className="button secondary"
-                        onClick={() => toggleCode(code)}
-                        type="button"
-                      >
-                        {code.status === "ACTIVE" ? "停用" : "启用"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {filteredCodes.length === 0 ? <EmptyRow colSpan={9} /> : null}
-              </tbody>
-            </table>
-          </div>
+            </>
+          }
+        >
+          <AdminDataTable
+            columns={redeemColumns}
+            data={filteredCodes}
+            empty="暂无兑换码"
+          />
           <div className="mobile-record-list">
             {filteredCodes.map((code) => (
               <MobileRecord
@@ -15194,7 +15107,7 @@ function AdminRedeemCodes({
               <MobileEmpty>暂无兑换码</MobileEmpty>
             ) : null}
           </div>
-        </section>
+        </AdminPanel>
       </div>
 
       {redeemModalOpen ? (
