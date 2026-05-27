@@ -7,7 +7,6 @@ import {
   setStickyModelPoolChannel,
 } from "./model-pool-stickiness.js";
 import {
-  getInflightPenaltyMs,
   getSpeedScoreMs,
   reserveBalancedModelPoolChannel,
 } from "./routing/channel-selector.js";
@@ -370,7 +369,6 @@ async function getBalancedRoute(
           speedScoreMs: route.entropyScore,
           stickyOccupancy: route.stickyOccupancy,
         })),
-        getInflightPenaltyMs(fastestScoreMs),
       );
 
   if (reservation) {

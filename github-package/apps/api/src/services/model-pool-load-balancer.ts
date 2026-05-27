@@ -8,14 +8,9 @@ export type LoadBalanceCandidate = {
 
 const inflightTtlSeconds = 180;
 const refreshInflightTtlMs = 30_000;
-const recentPickTtlSeconds = 60;
 
 function inflightKey(channelId: string) {
   return `modelpool:balance:inflight:${channelId}`;
-}
-
-function recentPickKey(channelId: string) {
-  return `modelpool:balance:recent:${channelId}`;
 }
 
 export function getSpeedScoreMs(params: {
@@ -30,28 +25,15 @@ export function getSpeedWindowMs(fastestScoreMs: number) {
   return Math.max(500, fastestScoreMs * 0.35);
 }
 
-export function getInflightPenaltyMs(fastestScoreMs: number) {
-  return Math.max(300, fastestScoreMs * 0.2);
-}
-
-export function getRecentPickPenaltyMs(fastestScoreMs: number) {
-  return Math.max(400, fastestScoreMs * 0.2);
-}
-
-export function getStickyOccupancyPenaltyMs(fastestScoreMs: number) {
-  return Math.max(800, fastestScoreMs * 0.35);
-}
-
 export async function reserveBalancedModelPoolChannel(
   candidates: LoadBalanceCandidate[],
-  penaltyMs: number,
 ) {
   if (candidates.length === 0) {
     return null;
   }
 
   try {
-    const selectedChannelId = await reserveChannelAtomically(candidates, penaltyMs);
+    const selectedChannelId = await reserveChannelAtomically(candidates);
     if (!selectedChannelId) {
       return null;
     }
@@ -62,68 +44,40 @@ export async function reserveBalancedModelPoolChannel(
   }
 }
 
-async function reserveChannelAtomically(
-  candidates: LoadBalanceCandidate[],
-  penaltyMs: number,
-) {
-  const keys = candidates.flatMap((candidate) => [
-    inflightKey(candidate.channelId),
-    recentPickKey(candidate.channelId),
-  ]);
-  const recentPickPenaltyMs = getRecentPickPenaltyMs(
-    Math.min(...candidates.map((candidate) => candidate.speedScoreMs)),
-  );
-  const stickyOccupancyPenaltyMs = getStickyOccupancyPenaltyMs(
-    Math.min(...candidates.map((candidate) => candidate.speedScoreMs)),
-  );
+async function reserveChannelAtomically(candidates: LoadBalanceCandidate[]) {
+  const keys = candidates.map((candidate) => inflightKey(candidate.channelId));
   const args = [
     String(inflightTtlSeconds),
-    String(penaltyMs),
-    String(recentPickTtlSeconds),
-    String(recentPickPenaltyMs),
-    String(stickyOccupancyPenaltyMs),
     ...candidates.flatMap((candidate) => [
       candidate.channelId,
       String(candidate.speedScoreMs),
-      String(candidate.stickyOccupancy ?? 0),
     ]),
   ];
 
   const result = await redis.eval(
     `
 	local ttl = tonumber(ARGV[1])
-	local penalty = tonumber(ARGV[2])
-	local recentTtl = tonumber(ARGV[3])
-	local recentPenalty = tonumber(ARGV[4])
-	local stickyPenalty = tonumber(ARGV[5])
 	local bestIndex = 1
 	local bestScore = nil
-	local argIndex = 6
+	local bestInflight = nil
+	local argIndex = 2
 
-	for index = 1, (#KEYS / 2) do
-	  local speed = tonumber(ARGV[argIndex + 1])
-	  local sticky = tonumber(ARGV[argIndex + 2] or "0")
-	  local inflightKeyIndex = ((index - 1) * 2) + 1
-	  local recentKeyIndex = inflightKeyIndex + 1
-	  local inflight = tonumber(redis.call("GET", KEYS[inflightKeyIndex]) or "0")
-	  local recent = tonumber(redis.call("GET", KEYS[recentKeyIndex]) or "0")
-	  local score = speed + (inflight * penalty) + (recent * recentPenalty) + (sticky * stickyPenalty)
+	for index = 1, #KEYS do
+	  local score = tonumber(ARGV[argIndex + 1])
+	  local inflight = tonumber(redis.call("GET", KEYS[index]) or "0")
 
-	  if bestScore == nil or score < bestScore then
+	  if bestScore == nil or score < bestScore or (score == bestScore and inflight < bestInflight) then
 	    bestScore = score
+	    bestInflight = inflight
 	    bestIndex = index
 	  end
 
-	  argIndex = argIndex + 3
+	  argIndex = argIndex + 2
 	end
 
-	local selectedInflightKeyIndex = ((bestIndex - 1) * 2) + 1
-	local selectedRecentKeyIndex = selectedInflightKeyIndex + 1
-	redis.call("INCR", KEYS[selectedInflightKeyIndex])
-	redis.call("EXPIRE", KEYS[selectedInflightKeyIndex], ttl)
-	redis.call("INCR", KEYS[selectedRecentKeyIndex])
-	redis.call("EXPIRE", KEYS[selectedRecentKeyIndex], recentTtl)
-	return ARGV[6 + ((bestIndex - 1) * 3)]
+	redis.call("INCR", KEYS[bestIndex])
+	redis.call("EXPIRE", KEYS[bestIndex], ttl)
+	return ARGV[2 + ((bestIndex - 1) * 2)]
 	`,
     keys.length,
     ...keys,

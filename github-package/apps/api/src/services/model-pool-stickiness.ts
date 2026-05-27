@@ -233,7 +233,7 @@ export function isStickyCallSlow(params: {
     params.firstTokenLatencyMs !== undefined &&
     params.firstTokenLatencyMs !== null
   ) {
-    return params.firstTokenLatencyMs >= (params.settings?.slowFirstTokenMs ?? 15_000);
+    return params.firstTokenLatencyMs > (params.settings?.slowFirstTokenMs ?? 15_000);
   }
 
   if (params.latencyMs !== undefined && params.latencyMs !== null) {
