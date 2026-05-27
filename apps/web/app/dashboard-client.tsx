@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   Activity,
   BarChart3,
@@ -29,7 +30,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   FormEvent,
   type ReactNode,
@@ -46,6 +47,10 @@ import {
   getToken,
   setToken,
 } from "../lib/api";
+import { confirmAdminAction } from "./admin/_components/admin-confirm";
+import { adminDownload } from "./admin/_components/admin-api";
+import { AdminDataTable, AdminPanel } from "./admin/_components/admin-ui";
+import { z } from "zod";
 
 type User = {
   id: string;
@@ -942,6 +947,27 @@ type PublicAuthSettings = Pick<
   | "smtpConfigured"
 >;
 
+const adminAuthSettingsFormSchema = z.object({
+  emailCodeLoginEnabled: z.boolean(),
+  emailCodeAutoRegisterEnabled: z.boolean(),
+  newUserBonusUsd: z
+    .string()
+    .trim()
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+      message: "新用户赠送余额必须是非负数字。",
+    }),
+  emailCodeTtlSeconds: z.number().int().min(60).max(3600),
+  emailCodeCooldownSeconds: z.number().int().min(10).max(600),
+  smtpHost: z.string().trim(),
+  smtpPort: z.number().int().min(1).max(65535),
+  smtpSecure: z.boolean(),
+  smtpUser: z.string().trim(),
+  smtpPassword: z.string(),
+  smtpFrom: z.string().trim(),
+});
+
+type AdminAuthSettingsFormValues = z.infer<typeof adminAuthSettingsFormSchema>;
+
 type RedeemCode = {
   id: string;
   code?: string;
@@ -1416,6 +1442,7 @@ const pageMeta: Record<
 
 export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [token, setTokenState] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -1537,6 +1564,9 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
+    if (mode === "admin" && isAdminTab(tab)) {
+      router.push(`/admin/${adminTabSlugs[tab]}`);
+    }
   }
 
   function toggleSidebarCompact() {
@@ -1907,6 +1937,126 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     });
   }
 
+  async function refreshAdminOverview(authToken = token) {
+    if (!authToken) return;
+    const [overviewResult, wizardResult] = await Promise.all([
+      apiFetch<AdminOverview>("/admin/overview", { token: authToken }),
+      apiFetch<{ wizard: SetupWizardStatus }>("/admin/setup-wizard", {
+        token: authToken,
+      }),
+    ]);
+    setAdminOverview(overviewResult);
+    setSetupWizard(wizardResult.wizard);
+  }
+
+  async function refreshAdminUsers(authToken = token) {
+    if (!authToken) return;
+    const result = await apiFetch<{ users: AdminUser[] }>("/admin/users", {
+      token: authToken,
+    });
+    setAdminUsers(result.users);
+  }
+
+  async function refreshCommercialOps(authToken = token) {
+    if (!authToken) return;
+    const [tenantsResult, templatesResult, invoicesResult] = await Promise.all([
+      apiFetch<{ tenants: Tenant[] }>("/admin/tenants", { token: authToken }),
+      apiFetch<{ packageTemplates: PackageTemplate[] }>(
+        "/admin/package-templates",
+        { token: authToken },
+      ),
+      apiFetch<{ invoices: Invoice[] }>("/admin/invoices", {
+        token: authToken,
+      }),
+    ]);
+    setTenants(tenantsResult.tenants);
+    setPackageTemplates(templatesResult.packageTemplates);
+    setInvoices(invoicesResult.invoices);
+  }
+
+  async function refreshUpstreams(authToken = token) {
+    if (!authToken) return;
+    const [providersResult, pricesResult] = await Promise.all([
+      apiFetch<{ providers: UpstreamProvider[] }>("/admin/upstream-providers", {
+        token: authToken,
+      }),
+      apiFetch<{
+        modelPrices: ModelPrice[];
+        unifiedPriceSettings?: UnifiedPriceSetting[];
+      }>("/admin/model-prices", { token: authToken }),
+    ]);
+    setUpstreamProviders(providersResult.providers);
+    setModelPrices(pricesResult.modelPrices);
+    setUnifiedPriceSettings(pricesResult.unifiedPriceSettings ?? []);
+  }
+
+  async function refreshSettings(authToken = token) {
+    if (!authToken) return;
+    const [
+      authResult,
+      pendingResult,
+      noticeResult,
+      charityResult,
+      reasoningResult,
+    ] = await Promise.all([
+      apiFetch<{ settings: AuthSettings }>("/admin/auth-settings", {
+        token: authToken,
+      }),
+      apiFetch<{ settings: PendingAutoTerminateSettings }>(
+        "/admin/pending-auto-terminate-settings",
+        { token: authToken },
+      ),
+      apiFetch<{
+        settings: GatewayNoticeSettings;
+        defaults: GatewayNoticeSettings;
+      }>("/admin/gateway-notice-settings", { token: authToken }),
+      apiFetch<{ settings: CharityAnnouncementSettings }>(
+        "/admin/charity-announcement-settings",
+        { token: authToken },
+      ),
+      apiFetch<{ settings: ReasoningEffortTransformSettings }>(
+        "/admin/reasoning-effort-transform-settings",
+        { token: authToken },
+      ),
+    ]);
+    setAuthSettings(authResult.settings);
+    setPendingAutoTerminateSettings(pendingResult.settings);
+    setGatewayNoticeSettings(noticeResult.settings);
+    setGatewayNoticeDefaults(noticeResult.defaults);
+    setCharityAnnouncementSettings(charityResult.settings);
+    setReasoningEffortTransformSettings(reasoningResult.settings);
+  }
+
+  async function refreshRiskCenter(authToken = token) {
+    if (!authToken) return;
+    const result = await apiFetch<RiskCenter>("/admin/risk-center", {
+      token: authToken,
+    });
+    setRiskCenter(result);
+    setIpBanRules(result.ipBanRules);
+    setPendingAutoTerminateSettings(result.pendingAutoTerminateSettings);
+    setGatewayNoticeSettings(result.gatewayNoticeSettings);
+    setCharityAnnouncementSettings(result.charityAnnouncementSettings);
+  }
+
+  async function refreshRedeemCodes(authToken = token) {
+    if (!authToken) return;
+    const result = await apiFetch<{ codes: RedeemCode[] }>(
+      "/admin/redeem-codes",
+      { token: authToken },
+    );
+    setRedeemCodes(result.codes);
+  }
+
+  async function refreshReports(authToken = token) {
+    if (!authToken) return;
+    const result = await apiFetch<AdminReportSummary>(
+      "/admin/reports/summary",
+      { token: authToken },
+    );
+    setAdminReportSummary(result);
+  }
+
   const refreshModelPools = useCallback(
     async (authToken = token) => {
       if (!authToken || loadingModelPoolsRef.current) {
@@ -2000,9 +2150,62 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     if (mode === "admin") {
       const nextTab: AdminTab = "admin-overview";
       setActiveTab(nextTab);
+      router.push("/admin");
       return;
     }
     setActiveTab("overview");
+  }
+
+  function refreshActiveAdminPage() {
+    if (mode !== "admin" || !isAdminTab(activeTab)) {
+      void refreshAll();
+      return;
+    }
+
+    switch (activeTab) {
+      case "admin-overview":
+        void Promise.all([refreshAdminOverview(), refreshRiskCenter()]);
+        break;
+      case "admin-users":
+      case "admin-charity":
+        void Promise.all([
+          refreshAdminUsers(),
+          refreshCommercialOps(),
+          refreshSettings(),
+        ]);
+        break;
+      case "admin-upstreams":
+        void refreshUpstreams();
+        break;
+      case "admin-model-pools":
+        void refreshModelPools();
+        break;
+      case "admin-routing":
+        void Promise.all([refreshRouting(), refreshModelPools()]);
+        break;
+      case "admin-settings":
+      case "admin-notices":
+        void refreshSettings();
+        break;
+      case "admin-risk":
+        void refreshRiskCenter();
+        break;
+      case "admin-redeem":
+        void refreshRedeemCodes();
+        break;
+      case "admin-requests":
+        void refreshAdminRequests({ filters: requestFilters });
+        break;
+      case "admin-reports":
+        void refreshReports();
+        break;
+      case "admin-audit-logs":
+        void refreshAdminAuditLogs();
+        break;
+      case "admin-login-logs":
+        void refreshLoginLogs();
+        break;
+    }
   }
 
   if (!authChecked) {
@@ -2122,7 +2325,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <div className="button-row admin-global-actions">
               <button
                 className="button secondary"
-                onClick={() => refreshAll()}
+                onClick={refreshActiveAdminPage}
                 type="button"
               >
                 <RefreshCw size={17} />
@@ -2232,6 +2435,13 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
               loginLogSuccess={loginLogSuccess}
               onRefreshAll={refreshAll}
               onError={setError}
+              onRefreshAdminUsers={refreshAdminUsers}
+              onRefreshCommercialOps={refreshCommercialOps}
+              onRefreshUpstreams={refreshUpstreams}
+              onRefreshSettings={refreshSettings}
+              onRefreshRiskCenter={refreshRiskCenter}
+              onRefreshRedeemCodes={refreshRedeemCodes}
+              onRefreshReports={refreshReports}
               onRefreshModelPools={refreshModelPools}
               onRefreshRouting={refreshRouting}
               onGatewayNoticeSettingsChanged={setGatewayNoticeSettings}
@@ -2303,6 +2513,13 @@ function AdminDashboardContent({
   loginLogSuccess,
   onRefreshAll,
   onError,
+  onRefreshAdminUsers,
+  onRefreshCommercialOps,
+  onRefreshUpstreams,
+  onRefreshSettings,
+  onRefreshRiskCenter,
+  onRefreshRedeemCodes,
+  onRefreshReports,
   onRefreshModelPools,
   onRefreshRouting,
   onGatewayNoticeSettingsChanged,
@@ -2360,6 +2577,13 @@ function AdminDashboardContent({
   loginLogSuccess: string;
   onRefreshAll: () => void;
   onError: (error: string | null) => void;
+  onRefreshAdminUsers: () => Promise<void>;
+  onRefreshCommercialOps: () => Promise<void>;
+  onRefreshUpstreams: () => Promise<void>;
+  onRefreshSettings: () => Promise<void>;
+  onRefreshRiskCenter: () => Promise<void>;
+  onRefreshRedeemCodes: () => Promise<void>;
+  onRefreshReports: () => Promise<void>;
   onRefreshModelPools: () => Promise<void>;
   onRefreshRouting: () => Promise<void>;
   onGatewayNoticeSettingsChanged: (
@@ -2397,8 +2621,6 @@ function AdminDashboardContent({
     success?: string,
   ) => Promise<void>;
 }) {
-  const refreshAll = () => onRefreshAll();
-
   switch (activeTab) {
     case "admin-overview":
       return (
@@ -2414,7 +2636,7 @@ function AdminDashboardContent({
           providers={upstreamProviders}
           modelPrices={modelPrices}
           unifiedPriceSettings={unifiedPriceSettings}
-          onChanged={refreshAll}
+          onChanged={() => void onRefreshUpstreams()}
           onError={onError}
         />
       );
@@ -2427,7 +2649,7 @@ function AdminDashboardContent({
           upstreamProviders={upstreamProviders}
           healthCheck={modelPoolHealthCheck}
           onRefreshModelPools={() => onRefreshModelPools()}
-          onChanged={refreshAll}
+          onChanged={() => void onRefreshModelPools()}
           onError={onError}
         />
       );
@@ -2441,7 +2663,6 @@ function AdminDashboardContent({
           onChanged={() => {
             void onRefreshRouting();
             void onRefreshModelPools();
-            void onRefreshAll();
           }}
           onError={onError}
         />
@@ -2462,7 +2683,13 @@ function AdminDashboardContent({
               ? charityAnnouncementSettings
               : undefined
           }
-          onChanged={refreshAll}
+          onChanged={() => {
+            void onRefreshAdminUsers();
+            void onRefreshCommercialOps();
+            if (activeTab === "admin-charity") {
+              void onRefreshSettings();
+            }
+          }}
           onError={onError}
         />
       );
@@ -2470,7 +2697,7 @@ function AdminDashboardContent({
       return (
         <AdminAuthSettings
           settings={authSettings}
-          onChanged={refreshAll}
+          onChanged={() => void onRefreshSettings()}
           onError={onError}
         />
       );
@@ -2482,7 +2709,10 @@ function AdminDashboardContent({
           gatewayNoticeSettings={gatewayNoticeSettings}
           ipBanRules={ipBanRules}
           pendingAutoTerminateSettings={pendingAutoTerminateSettings}
-          onChanged={refreshAll}
+          onChanged={() => {
+            void onRefreshSettings();
+            void onRefreshRiskCenter();
+          }}
           onGatewayNoticeSettingsChanged={onGatewayNoticeSettingsChanged}
           onIpBanRulesChanged={onIpBanRulesChanged}
           onPendingAutoTerminateSettingsChanged={
@@ -2495,12 +2725,12 @@ function AdminDashboardContent({
         />
       );
     case "admin-risk":
-      return <AdminRiskCenter riskCenter={riskCenter} onRefresh={refreshAll} />;
+      return <AdminRiskCenter riskCenter={riskCenter} onRefresh={() => void onRefreshRiskCenter()} />;
     case "admin-redeem":
       return (
         <AdminRedeemCodes
           codes={redeemCodes}
-          onChanged={refreshAll}
+          onChanged={() => void onRefreshRedeemCodes()}
           onError={onError}
         />
       );
@@ -2538,7 +2768,7 @@ function AdminDashboardContent({
         <AdminReports
           report={adminReportSummary}
           token={token ?? ""}
-          onRefresh={refreshAll}
+          onRefresh={() => void onRefreshReports()}
         />
       );
     case "admin-audit-logs":
@@ -2715,25 +2945,29 @@ function ModalShell({
   wide?: boolean;
 }) {
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div
-        className={wide ? "form-modal modal-wide" : "form-modal"}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-backdrop" />
+        <Dialog.Content className={wide ? "form-modal modal-wide" : "form-modal"}>
         <div className="modal-header">
           <div>
-            <h2>{title}</h2>
-            {description ? <p>{description}</p> : null}
+            <Dialog.Title asChild>
+              <h2>{title}</h2>
+            </Dialog.Title>
+            {description ? (
+              <Dialog.Description asChild>
+                <p>{description}</p>
+              </Dialog.Description>
+            ) : null}
           </div>
-          <button className="modal-close" onClick={onClose} type="button">
+          <Dialog.Close className="modal-close" type="button">
             ×
-          </button>
+          </Dialog.Close>
         </div>
         {children}
-      </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -3232,9 +3466,12 @@ function Keys({
   }
 
   async function deleteKey(key: ApiKey) {
-    const confirmed = window.confirm(
-      `确定删除 API Key「${key.name}」吗？删除后将无法继续使用。`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除 API Key",
+      description: `确定删除 API Key「${key.name}」吗？删除后将无法继续使用。`,
+      confirmText: "删除",
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }
@@ -3968,9 +4205,12 @@ function Requests({
   }
 
   async function terminateRequest(item: ApiRequest) {
-    const confirmed = window.confirm(
-      `确定终止这条 PENDING 调用吗？\n${item.model} · ${dateTime(item.createdAt)}`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "终止 PENDING 调用",
+      description: `${item.model} · ${dateTime(item.createdAt)}`,
+      confirmText: "终止调用",
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }
@@ -5292,7 +5532,7 @@ function AdminRequests({
   const [autoTerminateModalOpen, setAutoTerminateModalOpen] = useState(false);
   const [reasoningTransformModalOpen, setReasoningTransformModalOpen] =
     useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [autoTerminateBusy, setAutoTerminateBusy] = useState(false);
   const [autoTerminateError, setAutoTerminateError] = useState<string | null>(
     null,
@@ -5418,7 +5658,11 @@ function AdminRequests({
   }
 
   async function deleteRule(ip: string) {
-    const confirmed = window.confirm(`确定解除 IP「${ip}」的封禁吗？`);
+    const confirmed = await confirmAdminAction({
+      title: "解除 IP 封禁",
+      description: `确定解除 IP「${ip}」的封禁吗？`,
+      confirmText: "解除封禁",
+    });
     if (!confirmed) {
       return;
     }
@@ -6959,6 +7203,91 @@ function AdminAuditLogs({
   onOutcomeChange: (outcome: string) => void;
   onSearch: (query: string, outcome: string) => void;
 }) {
+  const columns = [
+    {
+      header: "时间",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{dateTime(log.createdAt)}</strong>
+            <span className="muted">
+              {log.method} {log.path}
+            </span>
+          </>
+        );
+      },
+    },
+    {
+      header: "管理员",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.adminEmail ?? "-"}</strong>
+            <span className="muted">{log.adminUserId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "动作",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.action} />
+            <span className="muted">HTTP {log.responseStatus ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "结果",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.outcome ?? "unknown"} />
+            <span className="muted truncate">{log.errorMessage ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "目标",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.targetType ?? "-"}</strong>
+            <span className="muted">{log.targetId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "来源",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.ip ?? "-"}</strong>
+            <span className="muted truncate">{log.userAgent ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "内容",
+      cell: ({ row }: { row: { original: AdminAuditLog } }) => (
+        <pre className="json-snippet">
+          {formatAuditBody(row.original.requestBody)}
+        </pre>
+      ),
+    },
+  ];
+
   return (
     <section className="stack admin-log-page">
       <section className="admin-hero-panel">
@@ -7014,71 +7343,16 @@ function AdminAuditLogs({
         </button>
       </div>
 
-      <section className="card admin-log-table-card">
-        <div className="requests-head">
-          <h2 className="section-title">后台操作</h2>
-          <span className="section-subtitle">已加载 {logs.length} 条</span>
-        </div>
-        <div className="table-wrap audit-table-wrap">
-          <table className="audit-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>管理员</th>
-                <th>动作</th>
-                <th>结果</th>
-                <th>目标</th>
-                <th>来源</th>
-                <th>内容</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id}>
-                  <td>
-                    <strong>{dateTime(log.createdAt)}</strong>
-                    <span className="muted">
-                      {log.method} {log.path}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.adminEmail ?? "-"}</strong>
-                    <span className="muted">{log.adminUserId ?? "-"}</span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.action} />
-                    <span className="muted">
-                      HTTP {log.responseStatus ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.outcome ?? "unknown"} />
-                    <span className="muted truncate">
-                      {log.errorMessage ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.targetType ?? "-"}</strong>
-                    <span className="muted">{log.targetId ?? "-"}</span>
-                  </td>
-                  <td>
-                    <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">
-                      {log.userAgent ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <pre className="json-snippet">
-                      {formatAuditBody(log.requestBody)}
-                    </pre>
-                  </td>
-                </tr>
-              ))}
-              {logs.length === 0 ? <EmptyRow colSpan={7} /> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel
+        title="后台操作"
+        description={`已加载 ${logs.length} 条`}
+      >
+        <AdminDataTable
+          columns={columns}
+          data={logs}
+          empty="暂无操作审计记录"
+        />
+      </AdminPanel>
     </section>
   );
 }
@@ -7098,6 +7372,56 @@ function AdminLoginLogs({
   onSuccessChange: (success: string) => void;
   onSearch: (query: string, success: string) => void;
 }) {
+  const columns = [
+    {
+      header: "时间",
+      cell: ({ row }: { row: { original: LoginLog } }) =>
+        dateTime(row.original.createdAt),
+    },
+    {
+      header: "账号",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.email ?? log.user?.email ?? "-"}</strong>
+            <span className="muted">{log.username ?? log.userId ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "方式",
+      cell: ({ row }: { row: { original: LoginLog } }) => (
+        <StatusPill status={row.original.method} />
+      ),
+    },
+    {
+      header: "结果",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <StatusPill status={log.success ? "success" : "failure"} />
+            <span className="muted truncate">{log.failureReason ?? "-"}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: "来源",
+      cell: ({ row }: { row: { original: LoginLog } }) => {
+        const log = row.original;
+        return (
+          <>
+            <strong>{log.ip ?? "-"}</strong>
+            <span className="muted truncate">{log.userAgent ?? "-"}</span>
+          </>
+        );
+      },
+    },
+  ];
+
   return (
     <section className="stack admin-log-page">
       <section className="admin-hero-panel">
@@ -7152,54 +7476,13 @@ function AdminLoginLogs({
         </button>
       </div>
 
-      <section className="card admin-log-table-card">
-        <div className="requests-head">
-          <h2 className="section-title">登录记录</h2>
-          <span className="section-subtitle">已加载 {logs.length} 条</span>
-        </div>
-        <div className="table-wrap audit-table-wrap">
-          <table className="audit-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>账号</th>
-                <th>方式</th>
-                <th>结果</th>
-                <th>来源</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id}>
-                  <td>{dateTime(log.createdAt)}</td>
-                  <td>
-                    <strong>{log.email ?? log.user?.email ?? "-"}</strong>
-                    <span className="muted">
-                      {log.username ?? log.userId ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <StatusPill status={log.method} />
-                  </td>
-                  <td>
-                    <StatusPill status={log.success ? "success" : "failure"} />
-                    <span className="muted truncate">
-                      {log.failureReason ?? "-"}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{log.ip ?? "-"}</strong>
-                    <span className="muted truncate">
-                      {log.userAgent ?? "-"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {logs.length === 0 ? <EmptyRow colSpan={5} /> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminPanel title="登录记录" description={`已加载 ${logs.length} 条`}>
+        <AdminDataTable
+          columns={columns}
+          data={logs}
+          empty="暂无登录日志"
+        />
+      </AdminPanel>
     </section>
   );
 }
@@ -7252,27 +7535,47 @@ function AdminAuthSettings({
     setSavedMessage(null);
   }, [settings]);
 
+  function authSettingsPayload(): AdminAuthSettingsFormValues | null {
+    const parsed = adminAuthSettingsFormSchema.safeParse({
+      emailCodeLoginEnabled,
+      emailCodeAutoRegisterEnabled,
+      newUserBonusUsd,
+      emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
+      emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
+      smtpHost,
+      smtpPort: Number(smtpPort),
+      smtpSecure,
+      smtpUser,
+      smtpPassword,
+      smtpFrom,
+    });
+
+    if (!parsed.success) {
+      onError(parsed.error.issues[0]?.message ?? "登录设置校验失败。");
+      return null;
+    }
+
+    return parsed.data;
+  }
+
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onError(null);
     setSavedMessage(null);
+    const payload = authSettingsPayload();
+    if (!payload) {
+      return;
+    }
     setSaving(true);
 
     try {
       await apiFetch("/admin/auth-settings", {
         method: "PUT",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
-          newUserBonusUsd,
-          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
-          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
-          smtpHost,
-          smtpPort: Number(smtpPort),
-          smtpSecure,
-          smtpUser,
-          ...(smtpPassword.trim() ? { smtpPassword } : {}),
-          smtpFrom,
+          ...payload,
+          ...(payload.smtpPassword.trim()
+            ? { smtpPassword: payload.smtpPassword }
+            : {}),
         }),
       });
       setSmtpPassword("");
@@ -7291,6 +7594,11 @@ function AdminAuthSettings({
       return;
     }
 
+    const payload = authSettingsPayload();
+    if (!payload) {
+      return;
+    }
+
     onError(null);
     setTestMessage(null);
     setTestingEmail(true);
@@ -7299,17 +7607,10 @@ function AdminAuthSettings({
       await apiFetch("/admin/auth-settings/test-email", {
         method: "POST",
         body: JSON.stringify({
-          emailCodeLoginEnabled,
-          emailCodeAutoRegisterEnabled,
-          newUserBonusUsd,
-          emailCodeTtlSeconds: Number(emailCodeTtlSeconds),
-          emailCodeCooldownSeconds: Number(emailCodeCooldownSeconds),
-          smtpHost,
-          smtpPort: Number(smtpPort),
-          smtpSecure,
-          smtpUser,
-          ...(smtpPassword.trim() ? { smtpPassword } : {}),
-          smtpFrom,
+          ...payload,
+          ...(payload.smtpPassword.trim()
+            ? { smtpPassword: payload.smtpPassword }
+            : {}),
           testEmail,
         }),
       });
@@ -8348,24 +8649,11 @@ function AdminReports({
     setExporting(true);
     setExportError(null);
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/admin/reports/summary/export`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
+      await adminDownload(
+        "/admin/reports/summary/export",
+        `admin-report-${new Date().toISOString().slice(0, 10)}.csv`,
+        token,
       );
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `admin-report-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
     } catch (error) {
       setExportError(errorToText(error));
     } finally {
@@ -9667,9 +9955,12 @@ function AdminUsers({
   }
 
   async function deleteUser(item: AdminUser) {
-    const confirmed = window.confirm(
-      `确定删除用户「${item.email}」吗？这个操作会删除该用户的 API Key、钱包流水和调用记录。`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除用户",
+      description: `确定删除用户「${item.email}」吗？这个操作会删除该用户的 API Key、钱包流水和调用记录。`,
+      confirmText: "删除用户",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -11071,9 +11362,12 @@ function AdminUserKeysModal({
   }
 
   async function deleteKey(key: ApiKey) {
-    const confirmed = window.confirm(
-      `确定删除 ${user.email} 的 API Key「${key.name}」吗？删除后将无法继续使用。`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除用户 API Key",
+      description: `确定删除 ${user.email} 的 API Key「${key.name}」吗？删除后将无法继续使用。`,
+      confirmText: "删除",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -12564,9 +12858,12 @@ function AdminModelPools({
     const targetTier = accessTiers.find(
       (tier) => tier.id === selectedCopyTargetTierId,
     );
-    const confirmed = window.confirm(
-      `确定将 standard 模型池复制到「${targetTier?.name ?? "目标等级"}」吗？${copyOverwriteExisting ? "已存在的模型池会被覆盖基础配置和渠道状态。" : "已存在的模型池会跳过。"}`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "复制 standard 模型池",
+      description: `确定将 standard 模型池复制到「${targetTier?.name ?? "目标等级"}」吗？${copyOverwriteExisting ? "已存在的模型池会被覆盖基础配置和渠道状态。" : "已存在的模型池会跳过。"}`,
+      confirmText: "开始复制",
+      danger: copyOverwriteExisting,
+    });
 
     if (!confirmed) {
       return;
@@ -12610,9 +12907,12 @@ function AdminModelPools({
       return;
     }
 
-    const confirmed = window.confirm(
-      `确定将所有「${selectedBulkProviderName}」模型池渠道设置为 ${status} 吗？`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "批量设置渠道状态",
+      description: `确定将所有「${selectedBulkProviderName}」模型池渠道设置为 ${status} 吗？`,
+      confirmText: "批量设置",
+      danger: status === "DISABLED",
+    });
 
     if (!confirmed) {
       return;
@@ -12655,9 +12955,11 @@ function AdminModelPools({
     const targetTier = accessTiers.find(
       (tier) => tier.id === selectedBulkProviderTierId,
     );
-    const confirmed = window.confirm(
-      `确定把「${selectedBulkProviderName}」已定价的模型批量加入「${targetTier?.name ?? "目标等级"}」模型池吗？`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "批量添加上游渠道",
+      description: `确定把「${selectedBulkProviderName}」已定价的模型批量加入「${targetTier?.name ?? "目标等级"}」模型池吗？`,
+      confirmText: "批量添加",
+    });
 
     if (!confirmed) {
       return;
@@ -12750,9 +13052,12 @@ function AdminModelPools({
   }
 
   async function deletePool(pool: ModelPool) {
-    const confirmed = window.confirm(
-      `确定删除模型池「${pool.model}」吗？池内上游渠道会一起移除，但上游定价不会被删除。`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除模型池",
+      description: `确定删除模型池「${pool.model}」吗？池内上游渠道会一起移除，但上游定价不会被删除。`,
+      confirmText: "删除模型池",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -12835,9 +13140,12 @@ function AdminModelPools({
   }
 
   async function deleteChannel(channel: ModelPoolChannel) {
-    const confirmed = window.confirm(
-      `确定从模型池移除「${channel.upstreamProvider}」吗？`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "移除模型池渠道",
+      description: `确定从模型池移除「${channel.upstreamProvider}」吗？`,
+      confirmText: "移除",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -13854,7 +14162,14 @@ function AdminRouting({
   }
 
   async function deleteTier(tier: AccessTier) {
-    if (!window.confirm(`确定删除等级「${tier.name}」吗？`)) {
+    if (
+      !(await confirmAdminAction({
+        title: "删除访问等级",
+        description: `确定删除等级「${tier.name}」吗？`,
+        confirmText: "删除等级",
+        danger: true,
+      }))
+    ) {
       return;
     }
 
@@ -13935,7 +14250,14 @@ function AdminRouting({
   }
 
   async function deleteRule(rule: DedicatedRouteRule) {
-    if (!window.confirm(`确定删除专线规则「${rule.name}」吗？`)) {
+    if (
+      !(await confirmAdminAction({
+        title: "删除专线规则",
+        description: `确定删除专线规则「${rule.name}」吗？`,
+        confirmText: "删除规则",
+        danger: true,
+      }))
+    ) {
       return;
     }
 
@@ -14707,21 +15029,10 @@ function AdminRedeemCodes({
     setExporting(true);
     onError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/admin/redeem-codes/export`, {
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `redeem-codes-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await adminDownload(
+        "/admin/redeem-codes/export",
+        `redeem-codes-${new Date().toISOString().slice(0, 10)}.csv`,
+      );
     } catch (exportError) {
       onError(errorToText(exportError));
     } finally {
@@ -15223,9 +15534,12 @@ function UpstreamProviders({
   }
 
   async function deletePrice(price: ModelPrice) {
-    const confirmed = window.confirm(
-      `确定删除模型价格「${price.upstreamProvider} / ${price.model}」吗？`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除模型价格",
+      description: `确定删除模型价格「${price.upstreamProvider} / ${price.model}」吗？`,
+      confirmText: "删除价格",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -15248,26 +15562,11 @@ function UpstreamProviders({
 
   async function exportModelPrices(format: "json" | "csv") {
     onError(null);
-    const token = getToken();
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/admin/model-prices/export?format=${format}`,
-        {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        },
+      await adminDownload(
+        `/admin/model-prices/export?format=${format}`,
+        `model-prices-${new Date().toISOString().slice(0, 10)}.${format}`,
       );
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const blob = await response.blob();
-      const href = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = `model-prices-${new Date().toISOString().slice(0, 10)}.${format}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(href);
     } catch (exportError) {
       onError(errorToText(exportError));
     }
@@ -15514,7 +15813,12 @@ function UpstreamProviders({
   }
 
   async function deleteProvider(provider: UpstreamProvider) {
-    const confirmed = window.confirm(`确定删除上游「${provider.name}」吗？`);
+    const confirmed = await confirmAdminAction({
+      title: "删除上游",
+      description: `确定删除上游「${provider.name}」吗？`,
+      confirmText: "删除上游",
+      danger: true,
+    });
 
     if (!confirmed) {
       return;
@@ -15594,9 +15898,12 @@ function UpstreamProviders({
   }
 
   async function deleteProviderKey(key: UpstreamProviderKey) {
-    const confirmed = window.confirm(
-      `确定删除上游 Key「${displayUpstreamProviderKeyName(key.name)}」吗？`,
-    );
+    const confirmed = await confirmAdminAction({
+      title: "删除上游 Key",
+      description: `确定删除上游 Key「${displayUpstreamProviderKeyName(key.name)}」吗？`,
+      confirmText: "删除 Key",
+      danger: true,
+    });
     if (!confirmed) {
       return;
     }

@@ -1613,7 +1613,8 @@ a {
 .admin-requests-page {
   flex: 1 1 auto;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
 }
 
 .grid {
@@ -6707,6 +6708,29 @@ td .button-row.compact {
   align-items: center;
 }
 
+.shell-admin .admin-requests-page {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
+}
+
+.shell-admin .admin-requests-page .admin-query-console {
+  position: relative;
+  z-index: 3;
+  overflow: visible;
+}
+
+.shell-admin .admin-requests-page .admin-request-filter-form,
+.shell-admin .admin-requests-page .request-common-filter-bar {
+  display: grid;
+  min-height: auto;
+  opacity: 1;
+  visibility: visible;
+}
+
+.shell-admin .admin-data-workbench {
+  min-height: 0;
+}
+
 .shell-admin .admin-data-workbench > .card,
 .shell-admin .admin-data-workbench .requests-card {
   min-height: 0;
@@ -6879,6 +6903,347 @@ td .button-row.compact {
 }
 
 /* Performance pass: keep the glass look without live backdrop blurs on dense admin screens. */
+.admin-console-v2 {
+  min-height: 100dvh;
+  background: #eef2f6;
+}
+
+.admin-console-v2 .shell-admin {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.admin-console-v2 .shell-admin .main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-console-v2 .shell-admin .workspace {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.admin-console-v2 .shell-admin .workspace-fixed-page {
+  overflow: hidden;
+}
+
+.admin-console-v2 .shell-admin .admin-data-workbench,
+.admin-console-v2 .shell-admin .requests-card,
+.admin-console-v2 .shell-admin .model-pool-scroll,
+.admin-console-v2 .shell-admin .table-wrap {
+  min-width: 0;
+}
+
+.admin-console-v2 .shell-admin .table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.admin-console-v2 .shell-admin table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.admin-console-v2 .shell-admin th,
+.admin-console-v2 .shell-admin td {
+  max-width: 360px;
+}
+
+.admin-console-v2 .shell-admin th:last-child,
+.admin-console-v2 .shell-admin td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  box-shadow: -1px 0 0 rgb(226 232 240 / 92%);
+}
+
+.admin-console-v2 .shell-admin th:last-child {
+  z-index: 3;
+}
+
+.admin-console-v2 .shell-admin td:last-child {
+  background: rgb(255 255 255 / 96%);
+}
+
+.admin-console-v2 .shell-admin tbody tr:hover td:last-child {
+  background: rgb(240 253 250 / 96%);
+}
+
+.admin-console-v2 .shell-admin code,
+.admin-console-v2 .shell-admin pre,
+.admin-console-v2 .shell-admin .json-snippet,
+.admin-console-v2 .shell-admin .code-block,
+.admin-console-v2 .shell-admin .inline-secret,
+.admin-console-v2 .shell-admin .secret {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-console-v2 .shell-admin .inline-secret {
+  display: inline-block;
+  max-width: 320px;
+  vertical-align: middle;
+}
+
+.admin-console-v2 .shell-admin .button,
+.admin-console-v2 .shell-admin .input,
+.admin-console-v2 .shell-admin .pill,
+.admin-console-v2 .shell-admin .status-pill,
+.admin-console-v2 .shell-admin .icon-button {
+  flex-shrink: 0;
+}
+
+.admin-console-v2 .shell-admin .button {
+  white-space: nowrap;
+}
+
+.admin-console-v2 .shell-admin .section-head,
+.admin-console-v2 .shell-admin .card-head,
+.admin-console-v2 .shell-admin .provider-head {
+  align-items: flex-start;
+}
+
+.admin-console-v2 .shell-admin .section-head > div:first-child,
+.admin-console-v2 .shell-admin .card-head > div:first-child,
+.admin-console-v2 .shell-admin .provider-head > div:first-child {
+  min-width: 0;
+}
+
+.admin-console-v2 .shell-admin .admin-kpi-strip,
+.admin-console-v2 .shell-admin .metric-grid,
+.admin-console-v2 .shell-admin .status-grid,
+.admin-console-v2 .shell-admin .request-summary-grid {
+  align-items: stretch;
+}
+
+.admin-console-v2 .shell-admin .metric,
+.admin-console-v2 .shell-admin .request-summary-tile,
+.admin-console-v2 .shell-admin .status-tile {
+  min-width: 0;
+}
+
+.admin-console-v2 .shell-admin .metric-value,
+.admin-console-v2 .shell-admin .metric-caption,
+.admin-console-v2 .shell-admin .status-tile strong,
+.admin-console-v2 .shell-admin .status-tile span {
+  overflow-wrap: anywhere;
+}
+
+.admin-console-v2 .modal-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+.admin-console-v2 .form-modal,
+.admin-console-v2 .config-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 81;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(88dvh, 920px);
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+}
+
+.admin-console-v2 .form-modal.modal-wide {
+  width: min(1120px, calc(100vw - 32px));
+}
+
+.admin-console-v2 .form-modal > .form,
+.admin-console-v2 .config-modal > .form {
+  display: contents;
+}
+
+.admin-console-v2 .modal-body,
+.admin-console-v2 .form-modal > .form > .modal-body,
+.admin-console-v2 .config-modal > .form > .modal-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-console-v2 .modal-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex-wrap: wrap;
+}
+
+.admin-console-v2 .modal-close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.admin-console-v2 .admin-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgb(15 23 42 / 58%);
+  backdrop-filter: blur(8px);
+}
+
+.admin-console-v2 .admin-confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 91;
+  display: grid;
+  gap: 14px;
+  width: min(440px, calc(100vw - 32px));
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 96%), rgb(248 250 252 / 94%)),
+    #ffffff;
+  box-shadow:
+    0 34px 100px rgb(15 23 42 / 34%),
+    inset 0 1px 0 rgb(255 255 255 / 88%);
+  padding: 18px;
+  transform: translate(-50%, -50%);
+}
+
+.admin-console-v2 .admin-confirm-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 820;
+  line-height: 1.25;
+}
+
+.admin-console-v2 .admin-confirm-description {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.admin-console-v2 .admin-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.admin-console-v2 .admin-panel-v2 {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-console-v2 .admin-data-table-v2 td > strong,
+.admin-console-v2 .admin-data-table-v2 td > span {
+  display: block;
+}
+
+.admin-console-v2 .admin-empty-state {
+  display: grid;
+  min-height: 96px;
+  place-items: center;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+}
+
+.admin-console-v2 .admin-request-filter-form {
+  min-width: 0;
+}
+
+.admin-console-v2 .request-common-filter-bar,
+.admin-console-v2 .advanced-filter-grid,
+.admin-console-v2 .filter-row,
+.admin-console-v2 .grid-form {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.admin-console-v2 .admin-hero-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
+}
+
+.admin-console-v2 .admin-hero-actions .button {
+  min-width: 0;
+}
+
+.admin-console-v2 .admin-sidebar .nav button.compact {
+  justify-content: center;
+}
+
+.admin-console-v2 .admin-sidebar .nav button.compact span,
+.admin-console-v2 .sidebar-compact .brand-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+@media (max-width: 920px) {
+  .admin-console-v2 .shell-admin,
+  .admin-console-v2 .shell-admin.sidebar-compact {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .admin-console-v2 .shell-admin .main,
+  .admin-console-v2 .shell-admin .workspace,
+  .admin-console-v2 .shell-admin .workspace-fixed-page {
+    overflow: visible;
+  }
+
+  .admin-console-v2 .shell-admin .admin-hero-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-console-v2 .shell-admin .admin-hero-status,
+  .admin-console-v2 .shell-admin .admin-hero-actions {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .admin-console-v2 .shell-admin th:last-child,
+  .admin-console-v2 .shell-admin td:last-child {
+    position: static;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-console-v2 .form-modal,
+  .admin-console-v2 .form-modal.modal-wide,
+  .admin-console-v2 .config-modal {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    max-height: 92dvh;
+    border-radius: 8px 8px 0 0;
+    transform: none;
+  }
+
+  .admin-console-v2 .modal-footer .button {
+    flex: 1 1 140px;
+  }
+
+  .admin-console-v2 .shell-admin .button span {
+    min-width: 0;
+  }
+}
 .shell-admin {
   --admin-shadow: 0 10px 24px rgb(15 23 42 / 6%);
   --admin-shadow-soft: 0 4px 14px rgb(15 23 42 / 5%);
