@@ -6,6 +6,7 @@ import {
   resolveStoredUpstreamKey,
 } from "./upstream-key-encryption.js";
 import type { RoutingKeyCandidateTrace } from "./routing/decision-trace.js";
+import { readDispatchSettings } from "./dispatch-settings.js";
 
 const initialProviderKeyName = "key-1";
 
@@ -250,6 +251,7 @@ export async function reserveProviderKey(
   }
 
   const stickyOccupancies = await getStickyProviderKeyOccupancies(keys.map((key) => key.id));
+  const dispatchSettings = await readDispatchSettings();
   const keyCandidates = keys.map((key) => ({
     keyId: key.id,
     priority: key.priority,
@@ -258,7 +260,11 @@ export async function reserveProviderKey(
   }));
 
   if (options.dryRun) {
-    const fallbackKey = chooseFallbackKey(keys, stickyOccupancies);
+    const fallbackKey = chooseFallbackKey(
+      keys,
+      stickyOccupancies,
+      dispatchSettings.stickyHitPenalty,
+    );
     return fallbackKey
       ? {
           ...createDryRunKeyReservation(fallbackKey),
@@ -271,10 +277,18 @@ export async function reserveProviderKey(
   }
 
   try {
-    const selectedKeyId = await reserveKeyAtomically(keys, stickyOccupancies);
+    const selectedKeyId = await reserveKeyAtomically(
+      keys,
+      stickyOccupancies,
+      dispatchSettings.stickyHitPenalty,
+    );
     const selectedKey =
       keys.find((key) => key.id === selectedKeyId) ??
-      chooseFallbackKey(keys, stickyOccupancies);
+      chooseFallbackKey(
+        keys,
+        stickyOccupancies,
+        dispatchSettings.stickyHitPenalty,
+      );
 
     if (!selectedKey) {
       return null;
@@ -293,7 +307,11 @@ export async function reserveProviderKey(
       },
     };
   } catch {
-    const fallbackKey = chooseFallbackKey(keys, stickyOccupancies);
+    const fallbackKey = chooseFallbackKey(
+      keys,
+      stickyOccupancies,
+      dispatchSettings.stickyHitPenalty,
+    );
     if (!fallbackKey) {
       return null;
     }
@@ -317,13 +335,14 @@ export async function reserveProviderKey(
 async function reserveKeyAtomically(
   keys: UpstreamProviderKey[],
   stickyOccupancies: Map<string, number>,
+  stickyHitPenalty: number,
 ) {
   const redisKeys = keys.map((key) => upstreamKeyInflightKey(key.id));
   const args = [
     String(keyInflightTtlSeconds),
     ...keys.flatMap((key) => [
       key.id,
-      String(stickyOccupancies.get(key.id) ?? 0),
+      String((stickyOccupancies.get(key.id) ?? 0) * stickyHitPenalty),
       String(key.priority),
       String(key.lastUsedAt?.getTime() ?? 0),
     ]),
@@ -333,25 +352,25 @@ async function reserveKeyAtomically(
     `
 local ttl = tonumber(ARGV[1])
 local bestIndex = 1
-local bestSticky = nil
+local bestEntropy = nil
 local bestInflight = nil
 local bestPriority = nil
 local bestLastUsed = nil
 local argIndex = 2
 
 for index = 1, #KEYS do
-  local sticky = tonumber(ARGV[argIndex + 1])
+  local entropy = tonumber(ARGV[argIndex + 1])
   local priority = tonumber(ARGV[argIndex + 2])
   local lastUsed = tonumber(ARGV[argIndex + 3])
   local inflight = tonumber(redis.call("GET", KEYS[index]) or "0")
 
-  if bestSticky == nil
-    or sticky < bestSticky
-    or (sticky == bestSticky and inflight < bestInflight)
-    or (sticky == bestSticky and inflight == bestInflight and priority < bestPriority)
-    or (sticky == bestSticky and inflight == bestInflight and priority == bestPriority and lastUsed < bestLastUsed)
+  if bestEntropy == nil
+    or entropy < bestEntropy
+    or (entropy == bestEntropy and inflight < bestInflight)
+    or (entropy == bestEntropy and inflight == bestInflight and priority < bestPriority)
+    or (entropy == bestEntropy and inflight == bestInflight and priority == bestPriority and lastUsed < bestLastUsed)
   then
-    bestSticky = sticky
+    bestEntropy = entropy
     bestInflight = inflight
     bestPriority = priority
     bestLastUsed = lastUsed
@@ -376,12 +395,14 @@ return ARGV[2 + ((bestIndex - 1) * 4)]
 function chooseFallbackKey(
   keys: UpstreamProviderKey[],
   stickyOccupancies: Map<string, number>,
+  stickyHitPenalty: number,
 ) {
   return [...keys].sort((left, right) => {
-    const stickyDelta =
-      (stickyOccupancies.get(left.id) ?? 0) - (stickyOccupancies.get(right.id) ?? 0);
-    if (stickyDelta !== 0) {
-      return stickyDelta;
+    const entropyDelta =
+      (stickyOccupancies.get(left.id) ?? 0) * stickyHitPenalty -
+      (stickyOccupancies.get(right.id) ?? 0) * stickyHitPenalty;
+    if (entropyDelta !== 0) {
+      return entropyDelta;
     }
 
     if (left.priority !== right.priority) {

@@ -120,10 +120,16 @@ export async function getProviderForModel(
     ? `${callerIdentity}:tier:${options.tierId}`
     : callerIdentity;
   const excludedChannelIds = new Set(options.excludeChannelIds ?? []);
-  const stickyRouteState = options.bypassSticky
+  const dispatchSettings = await readDispatchSettings();
+  const stickyRouteState = options.bypassSticky || !dispatchSettings.stickyEnabled
     ? null
     : await getStickyModelPoolRoute(scopedCallerIdentity, model);
   decisionTrace.stickyTried = Boolean(stickyRouteState);
+  if (!options.bypassSticky && !dispatchSettings.stickyEnabled) {
+    await clearStickyModelPoolChannel(scopedCallerIdentity, model).catch(
+      () => undefined,
+    );
+  }
   if (stickyRouteState) {
     const stickyChannel = channels.find(
       (channel) => channel.id === stickyRouteState.channelId,

@@ -1855,6 +1855,7 @@ function AdminUserKeysModal({
   const [selectedKeyIds, setSelectedKeyIds] = useState<string[]>([]);
   const [batchNoticeEnabled, setBatchNoticeEnabled] = useState(true);
   const [batchNoticeText, setBatchNoticeText] = useState("");
+  const [batchTierId, setBatchTierId] = useState(user.tierId ?? "");
   const [batchBusy, setBatchBusy] = useState(false);
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
   const [editName, setEditName] = useState("");
@@ -1890,6 +1891,7 @@ function AdminUserKeysModal({
     setBatchNoticeEnabled(true);
     setBatchNoticeText("");
     setTierId(user.tierId ?? defaultTierId);
+    setBatchTierId(user.tierId ?? defaultTierId);
   }, [user.id]);
 
   async function createKey(event: FormEvent<HTMLFormElement>) {
@@ -2025,12 +2027,13 @@ function AdminUserKeysModal({
 
   async function batchUpdateKeys(changes: {
     status?: "ACTIVE" | "DISABLED" | "REVOKED";
+    tierId?: string | null;
     noticeEnabled?: boolean;
     noticeText?: string | null;
-  }) {
+  }, keyIds = selectedKeyIds) {
     onError(null);
 
-    if (selectedKeyIds.length === 0) {
+    if (keyIds.length === 0) {
       onError("请先选择要批量处理的 Key。");
       return;
     }
@@ -2045,7 +2048,7 @@ function AdminUserKeysModal({
       await apiFetch(`/admin/users/${user.id}/api-keys/batch`, {
         method: "PATCH",
         body: JSON.stringify({
-          keyIds: selectedKeyIds,
+          keyIds,
           ...changes,
           ...(changes.noticeText !== undefined
             ? { noticeText: changes.noticeText?.trim() || null }
@@ -2059,6 +2062,13 @@ function AdminUserKeysModal({
     } finally {
       setBatchBusy(false);
     }
+  }
+
+  async function syncAllKeyTiersToUserTier() {
+    await batchUpdateKeys(
+      { tierId: (user.tierId ?? defaultTierId) || null },
+      userApiKeys.map((key) => key.id),
+    );
   }
 
   async function submitBatchNotice(event: FormEvent<HTMLFormElement>) {
@@ -2373,6 +2383,20 @@ function AdminUserKeysModal({
             </div>
             <div className="grid cols-2">
               <label className="field">
+                <span>Key 等级</span>
+                <select
+                  className="input"
+                  value={batchTierId || defaultTierId}
+                  onChange={(event) => setBatchTierId(event.target.value)}
+                >
+                  {accessTiers.map((tier) => (
+                    <option key={tier.id} value={tier.id}>
+                      {tier.name} ({tier.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
                 <span>公告动作</span>
                 <select
                   className="input"
@@ -2397,6 +2421,24 @@ function AdminUserKeysModal({
               </label>
             </div>
             <div className="button-row">
+              <button
+                className="button secondary"
+                disabled={batchBusy || selectedKeyIds.length === 0}
+                onClick={() =>
+                  batchUpdateKeys({ tierId: batchTierId || defaultTierId || null })
+                }
+                type="button"
+              >
+                同步所选 Key 等级
+              </button>
+              <button
+                className="button secondary"
+                disabled={batchBusy || userApiKeys.length === 0}
+                onClick={syncAllKeyTiersToUserTier}
+                type="button"
+              >
+                同步全部 Key 到用户等级
+              </button>
               <button
                 className="button"
                 disabled={batchBusy || selectedKeyIds.length === 0}

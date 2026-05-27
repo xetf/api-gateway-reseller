@@ -1,5 +1,9 @@
 export const callableChannelStatuses = ["ACTIVE", "FORCED_ACTIVE"] as const;
-export const healthCheckedChannelStatuses = ["ACTIVE", "UNAVAILABLE"] as const;
+export const healthCheckedChannelStatuses = [
+  "ACTIVE",
+  "UNAVAILABLE",
+  "FORCED_ACTIVE",
+] as const;
 export const penalizedChannelStatus = "PENALIZED";
 
 export type CallableChannelStatus = (typeof callableChannelStatuses)[number];

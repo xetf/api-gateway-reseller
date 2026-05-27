@@ -367,6 +367,7 @@ const adminPatchApiKeySchema = z.object({
 });
 const adminBatchUpdateApiKeysSchema = z.object({
   keyIds: z.array(z.string()).min(1).max(500),
+  tierId: optionalTierIdSchema,
   status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]).optional(),
   noticeEnabled: z.boolean().optional(),
   noticeText: noticeTextSchema,
@@ -2731,6 +2732,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = adminBatchUpdateApiKeysSchema.parse(request.body);
     const data = {
+      ...(body.tierId !== undefined ? { tierId: body.tierId } : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
       ...(body.noticeEnabled !== undefined
         ? { noticeEnabled: body.noticeEnabled }
