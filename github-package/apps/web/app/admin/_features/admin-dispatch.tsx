@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  Activity,
   Clock3,
   Gauge,
   GitBranch,
+  Pencil,
   Plus,
   Save,
   ShieldCheck,
@@ -102,6 +102,13 @@ export function AdminDispatchPage({
     remark: "",
   });
   const [tierDraft, setTierDraft] = useState({
+    name: "",
+    code: "",
+    sortOrder: "100",
+    description: "",
+  });
+  const [editingTier, setEditingTier] = useState<AccessTier | null>(null);
+  const [tierEditDraft, setTierEditDraft] = useState({
     name: "",
     code: "",
     sortOrder: "100",
@@ -282,6 +289,47 @@ export function AdminDispatchPage({
     }
   }
 
+  function beginEditTier(tier: AccessTier) {
+    setEditingTier(tier);
+    setTierEditDraft({
+      name: tier.name,
+      code: tier.code,
+      sortOrder: String(tier.sortOrder ?? 100),
+      description: tier.description ?? "",
+    });
+  }
+
+  async function saveTier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTier) {
+      return;
+    }
+    if (!tierEditDraft.name.trim() || !tierEditDraft.code.trim()) {
+      onError("请填写等级名称和代码。");
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      await apiFetch(`/admin/access-tiers/${editingTier.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: tierEditDraft.name.trim(),
+          code: tierEditDraft.code.trim(),
+          sortOrder: Number(tierEditDraft.sortOrder),
+          description: tierEditDraft.description.trim() || null,
+        }),
+      });
+      setEditingTier(null);
+      void tiersQuery.refetch();
+      void ipRulesQuery.refetch();
+    } catch (error) {
+      onError(errorToText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteTier(tier: AccessTier) {
     const confirmed = await confirmAdminAction({
       title: "删除等级预设",
@@ -317,6 +365,15 @@ export function AdminDispatchPage({
     description: tier.description ?? "-",
     actions: (
       <div className="button-row compact">
+        <button
+          className="button secondary"
+          disabled={busy}
+          onClick={() => beginEditTier(tier)}
+          type="button"
+        >
+          <Pencil size={14} />
+          编辑
+        </button>
         <button
           className="button secondary"
           disabled={busy}
@@ -432,14 +489,14 @@ export function AdminDispatchPage({
             <RuleTitle
               icon={<Gauge size={18} />}
               title="熵值与标准选择"
-              subtitle="标准选择、负载均衡、熵值规则始终开启；这里只调权重。"
+              subtitle="系统会优先选负担更轻、健康检测更快的上游；这里只调加分力度。"
               action={<StatusPill status="ACTIVE" />}
             />
             <div className="dispatch-field-grid two">
-              <Field label="速度排名熵增" hint="速度排名每落后一名，渠道增加多少熵值。">
+              <Field label="慢上游避让力度" hint="健康检测越慢，越不容易被选中；数字越大，越偏向快的上游。">
                 <input className="input" type="number" min={0} max={60000} value={draft.speedRankPenalty} onChange={(event) => setNumber("speedRankPenalty", event.target.value)} />
               </Field>
-              <Field label="粘性数量熵增" hint="每多一个 IP 粘住该渠道或 Key，就增加多少熵值。">
+              <Field label="已粘住人数避让力度" hint="粘住某个上游或 Key 的 IP 越多，越少继续分配给它；数字越大，分散越明显。">
                 <input className="input" type="number" min={0} max={60000} value={draft.stickyHitPenalty} onChange={(event) => setNumber("stickyHitPenalty", event.target.value)} />
               </Field>
             </div>
@@ -505,7 +562,7 @@ export function AdminDispatchPage({
             <div>
               <h2 className="section-title">等级预设</h2>
               <p className="section-subtitle">
-                用户管理直接选择这些等级；IP 规则命中时优先覆盖用户等级。
+                用户管理直接选择这些等级；显示位置数字小的排前面，IP 命中时优先覆盖用户等级。
               </p>
             </div>
             <span className="pill ok">{activeTiers.length} 个启用</span>
@@ -529,7 +586,9 @@ export function AdminDispatchPage({
             />
             <input
               className="input"
-              aria-label="排序"
+              aria-label="显示位置，数字小的排前面"
+              title="显示位置：数字小的排前面"
+              placeholder="显示位置"
               type="number"
               min={0}
               max={10000}
@@ -558,7 +617,7 @@ export function AdminDispatchPage({
             columns={[
               { accessorKey: "name", header: "名称" },
               { accessorKey: "code", header: "代码" },
-              { accessorKey: "sortOrder", header: "排序" },
+              { accessorKey: "sortOrder", header: "显示位置" },
               { accessorKey: "status", header: "状态" },
               { accessorKey: "usage", header: "使用中" },
               { accessorKey: "actions", header: "操作" },
@@ -604,6 +663,105 @@ export function AdminDispatchPage({
           />
         </section>
       </div>
+
+      {editingTier ? (
+        <div className="modal-backdrop" onClick={() => setEditingTier(null)}>
+          <div
+            className="form-modal config-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <form className="form" onSubmit={saveTier}>
+              <div className="modal-head">
+                <div>
+                  <span className="eyebrow">Access Tier</span>
+                  <h2>编辑等级预设</h2>
+                  <p>名称和代码会显示在用户、Key、模型池和 IP 等级规则里。</p>
+                </div>
+                <button
+                  className="button secondary"
+                  onClick={() => setEditingTier(null)}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="grid cols-2">
+                  <label className="field">
+                    <span>等级名称</span>
+                    <input
+                      className="input"
+                      value={tierEditDraft.name}
+                      onChange={(event) =>
+                        setTierEditDraft((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>等级代码</span>
+                    <input
+                      className="input"
+                      value={tierEditDraft.code}
+                      onChange={(event) =>
+                        setTierEditDraft((current) => ({
+                          ...current,
+                          code: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="field">
+                  <span>显示位置</span>
+                  <input
+                    className="input"
+                    min={1}
+                    max={10000}
+                    type="number"
+                    value={tierEditDraft.sortOrder}
+                    onChange={(event) =>
+                      setTierEditDraft((current) => ({
+                        ...current,
+                        sortOrder: event.target.value,
+                      }))
+                    }
+                  />
+                  <small className="muted">数字小的排前面，只影响后台下拉和列表显示。</small>
+                </label>
+                <label className="field">
+                  <span>说明</span>
+                  <textarea
+                    className="input textarea compact-textarea"
+                    value={tierEditDraft.description}
+                    onChange={(event) =>
+                      setTierEditDraft((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="button secondary"
+                  onClick={() => setEditingTier(null)}
+                  type="button"
+                >
+                  取消
+                </button>
+                <button className="button" disabled={busy} type="submit">
+                  <Save size={16} />
+                  保存等级
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
