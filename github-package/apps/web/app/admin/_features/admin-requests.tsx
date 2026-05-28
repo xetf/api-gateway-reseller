@@ -2218,11 +2218,10 @@ function AdminRequests({
 
   return (
     <div className="grid admin-page admin-requests-page admin-operations-page">
-      <section className="admin-hero-panel admin-requests-hero">
-        <div>
-          <span className="eyebrow">Traffic Audit</span>
-          <h2>全站调用工作台</h2>
-          <p>查询、成本审计、风控动作集中在一个工作台里；高频筛选在左，治理动作在右。</p>
+      <section className="admin-requests-tools">
+        <div className="admin-requests-tools-copy">
+          <strong>治理工具</strong>
+          <span>封禁、自动终止和推理转换集中在这里。</span>
         </div>
         <div className="admin-hero-actions">
           <button

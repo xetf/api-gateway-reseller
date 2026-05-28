@@ -6799,23 +6799,34 @@ td .button-row.compact {
   min-height: 0;
 }
 
-.shell-admin .admin-requests-page .admin-requests-hero {
-  min-height: auto;
-  grid-template-columns: minmax(0, 1fr) auto;
+.shell-admin .admin-requests-tools {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  padding: 8px 12px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 78%);
+  box-shadow: var(--admin-shadow-soft);
+  padding: 8px 10px;
 }
 
-.shell-admin .admin-requests-page .admin-requests-hero h2 {
-  margin: 2px 0 3px;
-  font-size: 18px;
+.shell-admin .admin-requests-tools-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.shell-admin .admin-requests-page .admin-requests-hero p {
-  margin-top: 0;
-  font-size: 11px;
-  line-height: 1.35;
+.shell-admin .admin-requests-tools-copy strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.shell-admin .admin-requests-tools-copy span {
+  color: #64748b;
+  font-size: 12px;
 }
 
 .shell-admin .workspace-fixed-page .admin-workspace-tabs {
