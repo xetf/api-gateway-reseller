@@ -12,8 +12,6 @@ import {
   ListChecks,
   LogIn,
   LogOut,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -536,8 +534,6 @@ const adminTabSlugs = {
   "admin-login-logs": "login-logs",
 } as const;
 
-const adminSidebarCompactStorageKey = "apishare-admin-sidebar-compact";
-
 type FrontTab = (typeof frontNav)[number]["id"];
 type AdminTab = (typeof adminNav)[number]["id"];
 type Tab = FrontTab | AdminTab;
@@ -682,14 +678,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [activeTab, setActiveTab] = useState<Tab>(
     mode === "admin" ? adminTabFromPath(pathname) : "overview",
   );
-  const [sidebarCompact, setSidebarCompact] = useState(() => {
-    if (typeof window === "undefined" || mode !== "admin") {
-      return false;
-    }
-    return (
-      window.localStorage.getItem(adminSidebarCompactStorageKey) === "true"
-    );
-  });
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -774,14 +762,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         router.push(nextPath);
       }
     }
-  }
-
-  function toggleSidebarCompact() {
-    setSidebarCompact((current) => {
-      const next = !current;
-      window.localStorage.setItem(adminSidebarCompactStorageKey, String(next));
-      return next;
-    });
   }
 
   async function refreshAll(authToken = token) {
@@ -1114,11 +1094,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   return (
     <main
       className={
-        mode === "admin" && sidebarCompact
-          ? "shell shell-admin sidebar-compact"
-          : mode === "admin"
-            ? "shell shell-admin"
-            : "shell"
+        mode === "admin" ? "shell shell-admin sidebar-compact" : "shell"
       }
     >
       <aside className={mode === "admin" ? "sidebar admin-sidebar" : "sidebar"}>
@@ -1127,20 +1103,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <span className="brand-mark">A</span>
             <span className="brand-name">APIshare</span>
           </span>
-          {mode === "admin" ? (
-            <button
-              aria-label={sidebarCompact ? "展开侧栏" : "收起侧栏"}
-              className="sidebar-toggle"
-              onClick={toggleSidebarCompact}
-              type="button"
-            >
-              {sidebarCompact ? (
-                <PanelLeftOpen size={17} />
-              ) : (
-                <PanelLeftClose size={17} />
-              )}
-            </button>
-          ) : null}
         </div>
         <nav className="nav">
           {mode === "admin" ? (
@@ -1151,7 +1113,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
                   key={workspace.id}
                   item={workspace}
                   active={activeAdminWorkspace?.id === workspace.id}
-                  compact={sidebarCompact}
+                  compact
                   onClick={() => switchTab(workspace.tabs[0])}
                 />
               ))}

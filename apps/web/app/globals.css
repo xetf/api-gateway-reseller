@@ -1152,6 +1152,18 @@ a {
   gap: 0;
 }
 
+.shell-admin.sidebar-compact .brand {
+  justify-content: center;
+}
+
+.shell-admin.sidebar-compact .brand-lockup {
+  gap: 0;
+}
+
+.shell-admin.sidebar-compact .brand-name {
+  display: none;
+}
+
 .sidebar-compact .sidebar-toggle {
   position: absolute;
   left: 58px;
