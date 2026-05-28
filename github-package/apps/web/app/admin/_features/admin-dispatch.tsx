@@ -1,6 +1,15 @@
 "use client";
 
-import { Plus, Save, Trash2 } from "lucide-react";
+import {
+  Activity,
+  Clock3,
+  Gauge,
+  GitBranch,
+  Plus,
+  Save,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 import { confirmAdminAction } from "../_components/admin-confirm";
@@ -107,6 +116,7 @@ export function AdminDispatchPage({
   );
   const defaultTierId = activeTiers[0]?.id ?? "";
   const rules = ipRulesQuery.data?.rules ?? [];
+  const activeIpRuleCount = rules.filter((rule) => rule.status === "ACTIVE").length;
 
   useEffect(() => {
     if (settingsQuery.data?.settings) {
@@ -366,224 +376,275 @@ export function AdminDispatchPage({
           <h2>调度与分发系统</h2>
           <p>这里集中配置 IP 粘性、慢定义、解绑、惩罚、健康检测和熵值选择规则。</p>
         </div>
-        <div className="admin-hero-status">
-          <div className="status-tile">
-            <span>粘性规则</span>
-            <strong>{draft.stickyEnabled ? "开启" : "关闭"}</strong>
-          </div>
-          <div className="status-tile">
-            <span>惩罚规则</span>
-            <strong>{draft.penaltyEnabled ? "开启" : "关闭"}</strong>
-          </div>
+        <div className="dispatch-hero-metrics">
+          <DispatchMetric label="粘性" value={draft.stickyEnabled ? "开启" : "关闭"} />
+          <DispatchMetric label="解绑" value={draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"} />
+          <DispatchMetric label="惩罚" value={draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"} />
+          <DispatchMetric label="等级" value={`${activeTiers.length}/${tiers.length}`} />
         </div>
       </section>
 
-      <form className="grid" onSubmit={saveSettings}>
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">粘性规则</h2>
-              <p className="section-subtitle">某个 IP 成功调用后，会在时间窗口内继续使用同一个上游和 Key。</p>
+      <form className="dispatch-layout" onSubmit={saveSettings}>
+        <div className="dispatch-main">
+          <section className="card dispatch-rule-card">
+            <RuleTitle
+              icon={<GitBranch size={18} />}
+              title="粘性与解绑"
+              subtitle="成功后按 IP + 模型粘住上游；连续慢可自动解绑。"
+              action={
+                <label className="check-row">
+                  <input
+                    checked={draft.stickyEnabled}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        stickyEnabled: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  粘性开启
+                </label>
+              }
+            />
+            <div className="dispatch-field-grid">
+              <Field label="粘性时长（秒）" hint="成功调用后，IP 粘住同一上游 Key 的时间。">
+                <input className="input" type="number" min={60} max={86400} value={draft.stickyTtlSeconds} onChange={(event) => setNumber("stickyTtlSeconds", event.target.value)} />
+              </Field>
+              <Field label="首 token 慢阈值（毫秒）" hint="首 token 超过这个时间，就算本次调用慢。">
+                <input className="input" type="number" min={1000} max={300000} value={draft.slowFirstTokenMs} onChange={(event) => setNumber("slowFirstTokenMs", event.target.value)} />
+              </Field>
+              <Field label="总时长慢阈值（毫秒）" hint="总时长超过这个值算慢；compact 请求跳过。">
+                <input className="input" type="number" min={1000} max={600000} value={draft.slowTotalLatencyMs} onChange={(event) => setNumber("slowTotalLatencyMs", event.target.value)} />
+              </Field>
+              <Field label="连续慢几次解绑" hint="同一 IP 连续慢达到这个次数，就清除粘性。">
+                <input className="input" type="number" min={1} max={100} value={draft.slowUnbindThreshold} onChange={(event) => setNumber("slowUnbindThreshold", event.target.value)} />
+              </Field>
             </div>
-            <label className="check-row">
-              <input
-                checked={draft.stickyEnabled}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, stickyEnabled: event.target.checked }))
-                }
-                type="checkbox"
-              />
-              开启 1号粘性规则
-            </label>
-          </div>
-          <div className="grid cols-3">
-            <Field label="粘性时长（秒）" hint="成功调用后，IP 粘住同一上游 Key 的时间。">
-              <input className="input" type="number" min={60} max={86400} value={draft.stickyTtlSeconds} onChange={(event) => setNumber("stickyTtlSeconds", event.target.value)} />
-            </Field>
-            <Field label="强制可用按钮" hint="控制模型池页面是否允许管理员手动强制渠道可用。">
-              <label className="check-row">
-                <input checked={draft.forceAvailableButtonEnabled} onChange={(event) => setDraft((current) => ({ ...current, forceAvailableButtonEnabled: event.target.checked }))} type="checkbox" />
-                允许使用
-              </label>
-            </Field>
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">慢定义与解绑</h2>
-              <p className="section-subtitle">compact 相关请求不会命中慢定义；解绑规则关闭时，慢定义不生效。</p>
-            </div>
-            <label className="check-row">
+            <label className="dispatch-inline-toggle">
               <input checked={draft.stickySlowUnbindEnabled} disabled={!draft.stickyEnabled} onChange={(event) => setDraft((current) => ({ ...current, stickySlowUnbindEnabled: event.target.checked }))} type="checkbox" />
-              开启 3号粘性解绑
+              开启粘性解绑规则
+              <span>关闭后即使连续慢，也不会解除 IP 粘性。</span>
             </label>
-          </div>
-          <div className="grid cols-3">
-            <Field label="首 token 慢阈值（毫秒）" hint="首 token 超过这个时间，就算本次调用慢。">
-              <input className="input" type="number" min={1000} max={300000} value={draft.slowFirstTokenMs} onChange={(event) => setNumber("slowFirstTokenMs", event.target.value)} />
-            </Field>
-            <Field label="总时长慢阈值（毫秒）" hint="非流式或无首 token 数据时，总时长超过这个值算慢。">
-              <input className="input" type="number" min={1000} max={600000} value={draft.slowTotalLatencyMs} onChange={(event) => setNumber("slowTotalLatencyMs", event.target.value)} />
-            </Field>
-            <Field label="连续慢几次解绑" hint="同一 IP 连续慢达到这个次数，就清除粘性。">
-              <input className="input" type="number" min={1} max={100} value={draft.slowUnbindThreshold} onChange={(event) => setNumber("slowUnbindThreshold", event.target.value)} />
-            </Field>
-          </div>
-        </section>
+          </section>
 
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">标准选择与熵值</h2>
-              <p className="section-subtitle">标准选择、负载均衡、熵值规则始终开启；这里调节熵增权重。</p>
+          <section className="card dispatch-rule-card">
+            <RuleTitle
+              icon={<Gauge size={18} />}
+              title="熵值与标准选择"
+              subtitle="标准选择、负载均衡、熵值规则始终开启；这里只调权重。"
+              action={<StatusPill status="ACTIVE" />}
+            />
+            <div className="dispatch-field-grid two">
+              <Field label="速度排名熵增" hint="速度排名每落后一名，渠道增加多少熵值。">
+                <input className="input" type="number" min={0} max={60000} value={draft.speedRankPenalty} onChange={(event) => setNumber("speedRankPenalty", event.target.value)} />
+              </Field>
+              <Field label="粘性数量熵增" hint="每多一个 IP 粘住该渠道或 Key，就增加多少熵值。">
+                <input className="input" type="number" min={0} max={60000} value={draft.stickyHitPenalty} onChange={(event) => setNumber("stickyHitPenalty", event.target.value)} />
+              </Field>
             </div>
-            <StatusPill status="ACTIVE" />
-          </div>
-          <div className="grid cols-2">
-            <Field label="速度排名熵增" hint="速度排名每落后一名，渠道增加多少熵值。">
-              <input className="input" type="number" min={0} max={60000} value={draft.speedRankPenalty} onChange={(event) => setNumber("speedRankPenalty", event.target.value)} />
-            </Field>
-            <Field label="粘性数量熵增" hint="每多一个 IP 粘住该渠道或 Key，就增加多少熵值。">
-              <input className="input" type="number" min={0} max={60000} value={draft.stickyHitPenalty} onChange={(event) => setNumber("stickyHitPenalty", event.target.value)} />
-            </Field>
-          </div>
-        </section>
+          </section>
 
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">惩罚与健康检测</h2>
-              <p className="section-subtitle">真实调用连续失败触发惩罚；健康检测始终开启，任一 Key 失败则进不可用区。</p>
+          <section className="card dispatch-rule-card">
+            <RuleTitle
+              icon={<ShieldCheck size={18} />}
+              title="惩罚与健康检测"
+              subtitle="真实调用连续失败才惩罚；健康检测始终开启。"
+              action={
+                <label className="check-row">
+                  <input checked={draft.penaltyEnabled} onChange={(event) => setDraft((current) => ({ ...current, penaltyEnabled: event.target.checked }))} type="checkbox" />
+                  惩罚开启
+                </label>
+              }
+            />
+            <div className="dispatch-field-grid">
+              <Field label="连续失败几次惩罚" hint="同一 IP 连续调用同一上游失败达到次数后，渠道进入惩罚中。">
+                <input className="input" type="number" min={1} max={100} value={draft.penaltyFailureThreshold} onChange={(event) => setNumber("penaltyFailureThreshold", event.target.value)} />
+              </Field>
+              <Field label="惩罚时长（秒）" hint="惩罚中不可调用，到期后触发健康检测。">
+                <input className="input" type="number" min={1} max={86400} value={draft.penaltySeconds} onChange={(event) => setNumber("penaltySeconds", event.target.value)} />
+              </Field>
+              <Field label="健康检测间隔（秒）" hint="可调用渠道每隔多久检测一次所有 active Key。">
+                <input className="input" type="number" min={5} max={3600} value={draft.healthCheckIntervalSeconds} onChange={(event) => setNumber("healthCheckIntervalSeconds", event.target.value)} />
+              </Field>
+              <Field label="强制可用按钮" hint="控制模型池页面是否允许管理员手动强制渠道可用。">
+                <label className="check-row compact-check-row">
+                  <input checked={draft.forceAvailableButtonEnabled} onChange={(event) => setDraft((current) => ({ ...current, forceAvailableButtonEnabled: event.target.checked }))} type="checkbox" />
+                  允许使用
+                </label>
+              </Field>
             </div>
-            <label className="check-row">
-              <input checked={draft.penaltyEnabled} onChange={(event) => setDraft((current) => ({ ...current, penaltyEnabled: event.target.checked }))} type="checkbox" />
-              开启 9号惩罚规则
-            </label>
-          </div>
-          <div className="grid cols-3">
-            <Field label="连续失败几次惩罚" hint="同一 IP 连续调用同一上游失败达到次数后，渠道进入惩罚中。">
-              <input className="input" type="number" min={1} max={100} value={draft.penaltyFailureThreshold} onChange={(event) => setNumber("penaltyFailureThreshold", event.target.value)} />
-            </Field>
-            <Field label="惩罚时长（秒）" hint="惩罚中不可调用，到期后触发健康检测。">
-              <input className="input" type="number" min={1} max={86400} value={draft.penaltySeconds} onChange={(event) => setNumber("penaltySeconds", event.target.value)} />
-            </Field>
-            <Field label="健康检测间隔（秒）" hint="可调用渠道每隔多久检测一次所有 active Key。">
-              <input className="input" type="number" min={5} max={3600} value={draft.healthCheckIntervalSeconds} onChange={(event) => setNumber("healthCheckIntervalSeconds", event.target.value)} />
-            </Field>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        <div className="button-row">
-          <button className="button" disabled={busy} type="submit">
+        <aside className="dispatch-side card">
+          <RuleTitle
+            icon={<Clock3 size={18} />}
+            title="规则速览"
+            subtitle="保存后调度服务立即读取新配置。"
+          />
+          <div className="dispatch-summary-list">
+            <InfoPair label="粘性窗口" value={`${draft.stickyTtlSeconds}s`} />
+            <InfoPair label="慢定义" value={`${draft.slowFirstTokenMs}ms / ${draft.slowTotalLatencyMs}ms`} />
+            <InfoPair label="解绑阈值" value={draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"} />
+            <InfoPair label="惩罚阈值" value={draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"} />
+            <InfoPair label="惩罚时长" value={`${draft.penaltySeconds}s`} />
+            <InfoPair label="健康检测" value={`${draft.healthCheckIntervalSeconds}s`} />
+            <InfoPair label="IP 等级规则" value={`${activeIpRuleCount} 条启用`} />
+          </div>
+          <button className="button dispatch-save-button" disabled={busy} type="submit">
             <Save size={16} />
             保存调度设置
           </button>
-        </div>
+        </aside>
       </form>
 
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">等级预设</h2>
-            <p className="section-subtitle">
-              这里维护系统等级；用户管理里给每个用户设置等级，IP 等级命中时优先覆盖用户等级。
-            </p>
+      <div className="dispatch-data-grid">
+        <section className="card dispatch-data-card">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">等级预设</h2>
+              <p className="section-subtitle">
+                用户管理直接选择这些等级；IP 规则命中时优先覆盖用户等级。
+              </p>
+            </div>
+            <span className="pill ok">{activeTiers.length} 个启用</span>
           </div>
-        </div>
-        <form className="filter-row" onSubmit={addTier}>
-          <input
-            className="input"
-            placeholder="等级名称，例如 VIP"
-            value={tierDraft.name}
-            onChange={(event) =>
-              setTierDraft((current) => ({ ...current, name: event.target.value }))
-            }
+          <form className="dispatch-add-row tier" onSubmit={addTier}>
+            <input
+              className="input"
+              placeholder="等级名称，例如 VIP"
+              value={tierDraft.name}
+              onChange={(event) =>
+                setTierDraft((current) => ({ ...current, name: event.target.value }))
+              }
+            />
+            <input
+              className="input"
+              placeholder="代码，例如 vip"
+              value={tierDraft.code}
+              onChange={(event) =>
+                setTierDraft((current) => ({ ...current, code: event.target.value }))
+              }
+            />
+            <input
+              className="input"
+              aria-label="排序"
+              type="number"
+              min={0}
+              max={10000}
+              value={tierDraft.sortOrder}
+              onChange={(event) =>
+                setTierDraft((current) => ({ ...current, sortOrder: event.target.value }))
+              }
+            />
+            <input
+              className="input"
+              placeholder="说明"
+              value={tierDraft.description}
+              onChange={(event) =>
+                setTierDraft((current) => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+            />
+            <button className="button" disabled={busy} type="submit">
+              <Plus size={16} />
+              添加
+            </button>
+          </form>
+          <AdminDataTable
+            columns={[
+              { accessorKey: "name", header: "名称" },
+              { accessorKey: "code", header: "代码" },
+              { accessorKey: "sortOrder", header: "排序" },
+              { accessorKey: "status", header: "状态" },
+              { accessorKey: "usage", header: "使用中" },
+              { accessorKey: "actions", header: "操作" },
+            ]}
+            data={tierRows}
+            empty="暂无等级预设"
           />
-          <input
-            className="input"
-            placeholder="代码，例如 vip"
-            value={tierDraft.code}
-            onChange={(event) =>
-              setTierDraft((current) => ({ ...current, code: event.target.value }))
-            }
-          />
-          <input
-            className="input"
-            type="number"
-            min={0}
-            max={10000}
-            value={tierDraft.sortOrder}
-            onChange={(event) =>
-              setTierDraft((current) => ({ ...current, sortOrder: event.target.value }))
-            }
-          />
-          <input
-            className="input"
-            placeholder="说明：这个等级用于哪些用户或模型池"
-            value={tierDraft.description}
-            onChange={(event) =>
-              setTierDraft((current) => ({
-                ...current,
-                description: event.target.value,
-              }))
-            }
-          />
-          <button className="button" disabled={busy} type="submit">
-            <Plus size={16} />
-            添加等级
-          </button>
-        </form>
-        <AdminDataTable
-          columns={[
-            { accessorKey: "name", header: "名称" },
-            { accessorKey: "code", header: "代码" },
-            { accessorKey: "sortOrder", header: "排序" },
-            { accessorKey: "status", header: "状态" },
-            { accessorKey: "usage", header: "使用中" },
-            { accessorKey: "description", header: "说明" },
-            { accessorKey: "actions", header: "操作" },
-          ]}
-          data={tierRows}
-          empty="暂无等级预设"
-        />
-      </section>
+        </section>
 
-      <section className="card">
-        <div className="section-head">
-          <div>
-            <h2 className="section-title">IP 等级规则</h2>
-            <p className="section-subtitle">IP 等级优先于用户和 Key 等级，支持单 IP 和 IPv4 CIDR。</p>
+        <section className="card dispatch-data-card">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">IP 等级规则</h2>
+              <p className="section-subtitle">支持单 IP 和 IPv4 CIDR；优先级数字越小越先匹配。</p>
+            </div>
+            <span className="pill">{activeIpRuleCount} 条启用</span>
           </div>
-        </div>
-        <form className="filter-row" onSubmit={addIpRule}>
-          <input className="input" placeholder="例如 1.2.3.4 或 1.2.3.0/24" value={ipDraft.cidrOrIp} onChange={(event) => setIpDraft((current) => ({ ...current, cidrOrIp: event.target.value }))} />
-          <select className="input" value={ipDraft.tierId} onChange={(event) => setIpDraft((current) => ({ ...current, tierId: event.target.value }))}>
-            {activeTiers.map((tier) => (
-              <option key={tier.id} value={tier.id}>{tier.name} ({tier.code})</option>
-            ))}
-          </select>
-          <input className="input" type="number" min={1} max={10000} value={ipDraft.priority} onChange={(event) => setIpDraft((current) => ({ ...current, priority: event.target.value }))} />
-          <input className="input" placeholder="备注" value={ipDraft.remark} onChange={(event) => setIpDraft((current) => ({ ...current, remark: event.target.value }))} />
-          <button className="button" disabled={busy || activeTiers.length === 0} type="submit">
-            <Plus size={16} />
-            添加
-          </button>
-        </form>
-        <AdminDataTable
-          columns={[
-            { accessorKey: "ip", header: "IP/CIDR" },
-            { accessorKey: "tier", header: "等级" },
-            { accessorKey: "priority", header: "优先级" },
-            { accessorKey: "status", header: "状态" },
-            { accessorKey: "remark", header: "备注" },
-            { accessorKey: "actions", header: "操作" },
-          ]}
-          data={ruleRows}
-          empty="暂无 IP 等级规则"
-        />
-      </section>
+          <form className="dispatch-add-row ip" onSubmit={addIpRule}>
+            <input className="input" placeholder="1.2.3.4 或 1.2.3.0/24" value={ipDraft.cidrOrIp} onChange={(event) => setIpDraft((current) => ({ ...current, cidrOrIp: event.target.value }))} />
+            <select className="input" value={ipDraft.tierId} onChange={(event) => setIpDraft((current) => ({ ...current, tierId: event.target.value }))}>
+              {activeTiers.map((tier) => (
+                <option key={tier.id} value={tier.id}>{tier.name} ({tier.code})</option>
+              ))}
+            </select>
+            <input className="input" aria-label="优先级" type="number" min={1} max={10000} value={ipDraft.priority} onChange={(event) => setIpDraft((current) => ({ ...current, priority: event.target.value }))} />
+            <input className="input" placeholder="备注" value={ipDraft.remark} onChange={(event) => setIpDraft((current) => ({ ...current, remark: event.target.value }))} />
+            <button className="button" disabled={busy || activeTiers.length === 0} type="submit">
+              <Plus size={16} />
+              添加
+            </button>
+          </form>
+          <AdminDataTable
+            columns={[
+              { accessorKey: "ip", header: "IP/CIDR" },
+              { accessorKey: "tier", header: "等级" },
+              { accessorKey: "priority", header: "优先级" },
+              { accessorKey: "status", header: "状态" },
+              { accessorKey: "remark", header: "备注" },
+              { accessorKey: "actions", header: "操作" },
+            ]}
+            data={ruleRows}
+            empty="暂无 IP 等级规则"
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function DispatchMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="dispatch-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RuleTitle({
+  icon,
+  title,
+  subtitle,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="dispatch-rule-title">
+      <div className="dispatch-rule-icon">{icon}</div>
+      <div>
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+      {action ? <div className="dispatch-rule-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function InfoPair({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="dispatch-info-pair">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
