@@ -7439,12 +7439,27 @@ td .button-row.compact {
 .shell-admin .admin-kpi-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
+  gap: 6px;
 }
 
 .shell-admin .admin-kpi-strip .metric {
-  min-height: 86px;
-  padding: 12px;
+  min-height: 52px;
+  padding: 7px 10px;
+}
+
+.shell-admin .admin-kpi-strip .metric-label {
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.shell-admin .admin-kpi-strip .metric-value {
+  font-size: 18px;
+  line-height: 1.05;
+}
+
+.shell-admin .admin-kpi-strip .metric-caption {
+  font-size: 10px;
+  line-height: 1.1;
 }
 
 .shell-admin .admin-dashboard-grid {
