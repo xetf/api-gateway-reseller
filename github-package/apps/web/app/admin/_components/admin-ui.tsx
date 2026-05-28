@@ -386,14 +386,16 @@ export function AdminPanel({
   description,
   actions,
   children,
+  className,
 }: {
   title: string;
   description?: string;
   actions?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="card admin-panel-v2">
+    <section className={className ? `card admin-panel-v2 ${className}` : "card admin-panel-v2"}>
       <div className="section-head">
         <div>
           <h2 className="section-title">{title}</h2>

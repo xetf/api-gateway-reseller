@@ -6687,6 +6687,172 @@ td .button-row.compact {
   overflow: hidden;
 }
 
+.shell-admin .admin-page.grid,
+.shell-admin .stack.admin-log-page,
+.shell-admin .admin-risk-page,
+.shell-admin .admin-reports-page,
+.shell-admin .admin-settings-page,
+.shell-admin .admin-notice-console {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell-admin .admin-page.grid {
+  grid-auto-rows: auto;
+}
+
+.shell-admin .admin-users-page {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-users-page:has(.charity-announcement-settings) {
+  grid-template-rows: auto minmax(0, 0.8fr) auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-users-page .admin-user-directory,
+.shell-admin .admin-users-page .charity-announcement-settings {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell-admin .admin-users-page .admin-user-directory {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-admin .admin-users-page .admin-user-directory .admin-data-table-v2 {
+  flex: 1 1 auto;
+}
+
+.shell-admin .admin-users-page .charity-announcement-settings .form {
+  min-height: 0;
+  overflow: auto;
+}
+
+.shell-admin .admin-dashboard-page {
+  grid-template-rows: auto auto minmax(0, 0.65fr) minmax(0, 1fr);
+}
+
+.shell-admin .admin-dashboard-page .admin-monitor-panel,
+.shell-admin .admin-dashboard-page .admin-dashboard-grid {
+  min-height: 0;
+  overflow: auto;
+}
+
+.shell-admin .admin-redeem-page {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-redeem-page .generated-code-card,
+.shell-admin .admin-redeem-page .redeem-list-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell-admin .admin-redeem-page .code-block {
+  max-height: 130px;
+  overflow: auto;
+}
+
+.shell-admin .admin-redeem-page .redeem-list-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-admin .admin-redeem-page .redeem-list-panel .admin-data-table-v2 {
+  flex: 1 1 auto;
+}
+
+.shell-admin .admin-log-page,
+.shell-admin .admin-reports-page,
+.shell-admin .admin-risk-page {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-settings-page {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.shell-admin .admin-settings-page .admin-settings-stack {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.shell-admin .admin-risk-page {
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.shell-admin .admin-log-page .admin-panel-v2,
+.shell-admin .admin-reports-page .admin-panel-v2,
+.shell-admin .admin-risk-page .admin-panel-v2 {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell-admin .admin-log-page .admin-panel-v2,
+.shell-admin .admin-reports-page .admin-panel-v2 {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-admin .admin-log-page .admin-data-table-v2,
+.shell-admin .admin-reports-page .admin-data-table-v2 {
+  flex: 1 1 auto;
+}
+
+.shell-admin .admin-reports-page .split-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.shell-admin .admin-reports-page .split-grid .admin-panel-v2 {
+  min-height: 280px;
+}
+
+.shell-admin .admin-requests-page {
+  overflow: hidden;
+}
+
+.shell-admin .admin-requests-page .requests-card,
+.shell-admin .admin-requests-page .audit-card {
+  min-height: 0;
+}
+
+.shell-admin .admin-notice-console {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-notice-console .notice-console-shell {
+  min-height: 0;
+  height: 100%;
+}
+
+.shell-admin .admin-notice-console .notice-console-nav,
+.shell-admin .admin-notice-console .notice-console-content,
+.shell-admin .admin-notice-console .notice-console-panel {
+  min-height: 0;
+  max-height: 100%;
+}
+
+.shell-admin .admin-notice-console .notice-console-nav,
+.shell-admin .admin-notice-console .notice-console-content {
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.shell-admin .admin-notice-console .notice-console-panel {
+  overflow: auto;
+}
+
 .shell-admin .card,
 .shell-admin .action-panel,
 .shell-admin .provider-panel,

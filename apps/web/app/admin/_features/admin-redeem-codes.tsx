@@ -252,7 +252,7 @@ export function AdminRedeemCodes({
 
   return (
     <>
-      <div className="grid admin-page">
+      <div className="grid admin-page admin-redeem-page">
         <section className="admin-hero-panel">
           <div>
             <span className="eyebrow">Campaign Credits</span>
@@ -267,7 +267,7 @@ export function AdminRedeemCodes({
         </section>
 
         {generated.length > 0 ? (
-          <section className="card">
+          <section className="card generated-code-card">
             <div className="section-head">
               <div>
                 <h2 className="section-title">刚生成的兑换码</h2>
@@ -283,6 +283,7 @@ export function AdminRedeemCodes({
         ) : null}
 
         <AdminPanel
+          className="redeem-list-panel"
           title="兑换码列表"
           description="按前缀、金额、状态或兑换用户查找。"
           actions={

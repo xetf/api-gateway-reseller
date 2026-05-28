@@ -182,7 +182,7 @@ export function AdminAuthSettings({
   const previewTtlMinutes = Math.max(1, Math.ceil(Number(emailCodeTtlSeconds) / 60));
 
   return (
-    <form className="form" onSubmit={saveSettings}>
+    <form className="form admin-settings-page" onSubmit={saveSettings}>
       <div className="admin-settings-stack">
         <AdminFoldout
           title="邮箱验证码"

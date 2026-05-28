@@ -308,7 +308,7 @@ function AdminRiskCenterPanel({
   }
 
   return (
-    <div className="stack">
+    <div className="stack admin-risk-page">
       <section className="card">
         <div className="section-head">
           <div>

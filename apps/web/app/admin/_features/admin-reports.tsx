@@ -78,7 +78,7 @@ export function AdminReports({
   }
 
   return (
-    <div className="stack">
+    <div className="stack admin-reports-page">
       <section className="admin-hero-panel">
         <div>
           <span className="eyebrow">Operations Report</span>
