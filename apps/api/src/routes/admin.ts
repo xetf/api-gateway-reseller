@@ -456,66 +456,6 @@ const externalAlertSettingsSchema = z
     mentionText: z.string().trim().max(500),
   })
   .partial();
-const tenantSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  code: accessTierCodeSchema,
-  status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
-  reseller: z.boolean().default(false),
-  contactEmail: z.string().trim().email().nullable().optional(),
-  remark: z.string().trim().max(1000).nullable().optional(),
-});
-const tenantPatchSchema = tenantSchema.partial();
-const packageTemplateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  code: accessTierCodeSchema,
-  status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
-  tierId: optionalTierIdSchema,
-  allowedModels: z.array(z.string().trim().min(1).max(160)).max(500).default([]),
-  rateLimitPerMinute: userRuntimeLimitSchema.default(0),
-  concurrencyLimit: userRuntimeLimitSchema.default(0),
-  initialBalanceUsd: optionalNonNegativeMoneySchema,
-  monthlyCreditLimitUsd: optionalNonNegativeMoneySchema,
-  remark: z.string().trim().max(1000).nullable().optional(),
-});
-const packageTemplatePatchSchema = packageTemplateSchema.partial();
-const billingAccountSchema = z.object({
-  status: z.enum(["ACTIVE", "SUSPENDED"]).default("ACTIVE"),
-  monthlySettlement: z.boolean().default(false),
-  creditLimitUsd: optionalNonNegativeMoneySchema,
-  creditUsedUsd: optionalNonNegativeMoneySchema,
-  billingDay: z.number().int().min(1).max(28).default(1),
-  invoiceTitle: z.string().trim().max(200).nullable().optional(),
-  taxNumber: z.string().trim().max(80).nullable().optional(),
-  billingEmail: z.string().trim().email().nullable().optional(),
-  remark: z.string().trim().max(1000).nullable().optional(),
-});
-const invoiceDateSchema = z
-  .union([z.string(), z.null()])
-  .optional()
-  .transform((value, context) => {
-    if (value === undefined || value === null || value.trim() === "") {
-      return null;
-    }
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      context.addIssue({ code: "custom", message: "Invalid invoice date" });
-      return z.NEVER;
-    }
-    return date;
-  });
-const invoiceSchema = z.object({
-  userId: z.string().min(1),
-  invoiceNo: z.string().trim().min(1).max(80),
-  status: z.enum(["DRAFT", "ISSUED", "PAID", "VOID"]).default("DRAFT"),
-  amountUsd: nonNegativeMoneySchema,
-  periodStart: invoiceDateSchema,
-  periodEnd: invoiceDateSchema,
-  issuedAt: invoiceDateSchema,
-  paidAt: invoiceDateSchema,
-  title: z.string().trim().max(200).nullable().optional(),
-  taxNumber: z.string().trim().max(80).nullable().optional(),
-  remark: z.string().trim().max(1000).nullable().optional(),
-});
 const adminRequestResultTypes = [
   "notice",
   "ip_ban",
@@ -1960,186 +1900,6 @@ export async function adminRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get("/admin/tenants", async () => {
-    const tenants = await prisma.tenant.findMany({
-      orderBy: [{ reseller: "desc" }, { createdAt: "desc" }],
-      include: {
-        _count: {
-          select: { users: true },
-        },
-      },
-    });
-    return { tenants };
-  });
-
-  app.post("/admin/tenants", async (request) => {
-    const body = tenantSchema.parse(request.body);
-    const tenant = await prisma.tenant.create({
-      data: {
-        ...body,
-        contactEmail: normalizeNullableText(body.contactEmail),
-        remark: normalizeNullableText(body.remark),
-      },
-    });
-    return { tenant };
-  });
-
-  app.patch("/admin/tenants/:id", async (request) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = tenantPatchSchema.parse(request.body);
-    const tenant = await prisma.tenant.update({
-      where: { id: params.id },
-      data: {
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.code !== undefined ? { code: body.code } : {}),
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.reseller !== undefined ? { reseller: body.reseller } : {}),
-        ...(body.contactEmail !== undefined
-          ? { contactEmail: normalizeNullableText(body.contactEmail) }
-          : {}),
-        ...(body.remark !== undefined
-          ? { remark: normalizeNullableText(body.remark) }
-          : {}),
-      },
-    });
-    return { tenant };
-  });
-
-  app.get("/admin/package-templates", async () => {
-    const packageTemplates = await prisma.packageTemplate.findMany({
-      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-      include: {
-        tier: { select: { id: true, code: true, name: true, status: true } },
-        _count: { select: { users: true } },
-      },
-    });
-    return { packageTemplates };
-  });
-
-  app.post("/admin/package-templates", async (request) => {
-    const body = packageTemplateSchema.parse(request.body);
-    const packageTemplate = await prisma.packageTemplate.create({
-      data: {
-        ...body,
-        tierId: body.tierId ?? null,
-        initialBalanceUsd: body.initialBalanceUsd ?? "0",
-        monthlyCreditLimitUsd: body.monthlyCreditLimitUsd ?? "0",
-        remark: normalizeNullableText(body.remark),
-      },
-      include: {
-        tier: { select: { id: true, code: true, name: true, status: true } },
-        _count: { select: { users: true } },
-      },
-    });
-    return { packageTemplate };
-  });
-
-  app.patch("/admin/package-templates/:id", async (request) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = packageTemplatePatchSchema.parse(request.body);
-    const packageTemplate = await prisma.packageTemplate.update({
-      where: { id: params.id },
-      data: {
-        ...(body.name !== undefined ? { name: body.name } : {}),
-        ...(body.code !== undefined ? { code: body.code } : {}),
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.tierId !== undefined ? { tierId: body.tierId } : {}),
-        ...(body.allowedModels !== undefined
-          ? { allowedModels: body.allowedModels }
-          : {}),
-        ...(body.rateLimitPerMinute !== undefined
-          ? { rateLimitPerMinute: body.rateLimitPerMinute }
-          : {}),
-        ...(body.concurrencyLimit !== undefined
-          ? { concurrencyLimit: body.concurrencyLimit }
-          : {}),
-        ...(body.initialBalanceUsd !== undefined
-          ? { initialBalanceUsd: body.initialBalanceUsd }
-          : {}),
-        ...(body.monthlyCreditLimitUsd !== undefined
-          ? { monthlyCreditLimitUsd: body.monthlyCreditLimitUsd }
-          : {}),
-        ...(body.remark !== undefined
-          ? { remark: normalizeNullableText(body.remark) }
-          : {}),
-      },
-      include: {
-        tier: { select: { id: true, code: true, name: true, status: true } },
-        _count: { select: { users: true } },
-      },
-    });
-    return { packageTemplate };
-  });
-
-  app.post("/admin/users/:id/package-template/:templateId/apply", async (request, reply) => {
-    const params = z
-      .object({ id: z.string(), templateId: z.string() })
-      .parse(request.params);
-    const template = await prisma.packageTemplate.findUnique({
-      where: { id: params.templateId },
-    });
-    if (!template) {
-      return reply.status(404).send({ message: "Package template not found" });
-    }
-
-    const user = await prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: params.id },
-        data: {
-          packageTemplateId: template.id,
-          tierId: template.tierId,
-          allowedModels: template.allowedModels,
-          rateLimitPerMinute: template.rateLimitPerMinute,
-          concurrencyLimit: template.concurrencyLimit,
-        },
-        select: { id: true },
-      });
-
-      const initialBalance = new Decimal(template.initialBalanceUsd.toString());
-      if (initialBalance.gt(0)) {
-        const wallet = await tx.wallet.upsert({
-          where: { userId: params.id },
-          update: { balance: { increment: initialBalance.toFixed(8) } },
-          create: {
-            userId: params.id,
-            balance: initialBalance.toFixed(8),
-          },
-        });
-        const before = new Decimal(wallet.balance.toString()).minus(initialBalance);
-        await tx.walletTransaction.create({
-          data: {
-            userId: params.id,
-            type: "RECHARGE",
-            source: "PACKAGE_TEMPLATE",
-            amount: initialBalance.toFixed(8),
-            balanceBefore: before.toFixed(8),
-            balanceAfter: wallet.balance.toString(),
-            remark: `Apply package template: ${template.name}`,
-          },
-        });
-      }
-
-      if (new Decimal(template.monthlyCreditLimitUsd.toString()).gt(0)) {
-        await tx.billingAccount.upsert({
-          where: { userId: params.id },
-          update: {
-            monthlySettlement: true,
-            creditLimitUsd: template.monthlyCreditLimitUsd,
-          },
-          create: {
-            userId: params.id,
-            monthlySettlement: true,
-            creditLimitUsd: template.monthlyCreditLimitUsd,
-          },
-        });
-      }
-
-      return updated;
-    });
-
-    return { ok: true, user };
-  });
-
   app.get("/admin/users", async () => {
     const users = await prisma.user.findMany({
       orderBy: { createdAt: "desc" },
@@ -2154,23 +1914,11 @@ export async function adminRoutes(app: FastifyInstance) {
         rateLimitPerMinute: true,
         concurrencyLimit: true,
         tierId: true,
-        tenantId: true,
-        packageTemplateId: true,
         tier: {
           select: {
             id: true,
             code: true,
             name: true,
-          },
-        },
-        tenant: true,
-        packageTemplate: true,
-        billingAccount: {
-          include: {
-            invoices: {
-              orderBy: { createdAt: "desc" },
-              take: 5,
-            },
           },
         },
         charityEnabled: true,
@@ -2229,8 +1977,6 @@ export async function adminRoutes(app: FastifyInstance) {
         rateLimitPerMinute: userRuntimeLimitSchema.optional(),
         concurrencyLimit: userRuntimeLimitSchema.optional(),
         tierId: optionalTierIdSchema,
-        tenantId: optionalTierIdSchema,
-        packageTemplateId: optionalTierIdSchema,
         charityEnabled: z.boolean().optional(),
         charityDisplayName: z.string().max(80).nullable().optional(),
         charityKey: z.string().max(300).nullable().optional(),
@@ -2256,10 +2002,6 @@ export async function adminRoutes(app: FastifyInstance) {
         ? { concurrencyLimit: body.concurrencyLimit }
         : {}),
       ...(body.tierId !== undefined ? { tierId: body.tierId } : {}),
-      ...(body.tenantId !== undefined ? { tenantId: body.tenantId } : {}),
-      ...(body.packageTemplateId !== undefined
-        ? { packageTemplateId: body.packageTemplateId }
-        : {}),
       ...(body.charityEnabled !== undefined
         ? { charityEnabled: body.charityEnabled }
         : {}),
@@ -2290,8 +2032,6 @@ export async function adminRoutes(app: FastifyInstance) {
         rateLimitPerMinute: true,
         concurrencyLimit: true,
         tierId: true,
-        tenantId: true,
-        packageTemplateId: true,
         tier: {
           select: {
             id: true,
@@ -2299,9 +2039,6 @@ export async function adminRoutes(app: FastifyInstance) {
             name: true,
           },
         },
-        tenant: true,
-        packageTemplate: true,
-        billingAccount: true,
         charityEnabled: true,
         charityDisplayName: true,
         charityKey: true,
@@ -2333,8 +2070,6 @@ export async function adminRoutes(app: FastifyInstance) {
         rateLimitPerMinute: userRuntimeLimitSchema.default(0),
         concurrencyLimit: userRuntimeLimitSchema.default(0),
         tierId: optionalTierIdSchema,
-        tenantId: optionalTierIdSchema,
-        packageTemplateId: optionalTierIdSchema,
         charityEnabled: z.boolean().default(false),
         charityDisplayName: z.string().max(80).nullable().optional(),
         charityKey: z.string().max(300).nullable().optional(),
@@ -2357,8 +2092,6 @@ export async function adminRoutes(app: FastifyInstance) {
             rateLimitPerMinute: body.rateLimitPerMinute,
             concurrencyLimit: body.concurrencyLimit,
             tierId: body.tierId ?? standardTier.id,
-            tenantId: body.tenantId ?? null,
-            packageTemplateId: body.packageTemplateId ?? null,
             charityEnabled: body.charityEnabled,
             charityDisplayName: normalizeNullableText(body.charityDisplayName),
             charityKey: normalizeNullableText(body.charityKey),
@@ -2444,126 +2177,6 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     return { ok: true, user: updated };
-  });
-
-  app.put("/admin/users/:id/billing-account", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = billingAccountSchema.parse(request.body);
-    const user = await prisma.user.findUnique({
-      where: { id: params.id },
-      select: { id: true },
-    });
-    if (!user) {
-      return reply.status(404).send({ message: "User not found" });
-    }
-
-    const billingAccount = await prisma.billingAccount.upsert({
-      where: { userId: params.id },
-      update: {
-        status: body.status,
-        monthlySettlement: body.monthlySettlement,
-        creditLimitUsd: body.creditLimitUsd ?? "0",
-        creditUsedUsd: body.creditUsedUsd ?? "0",
-        billingDay: body.billingDay,
-        invoiceTitle: normalizeNullableText(body.invoiceTitle),
-        taxNumber: normalizeNullableText(body.taxNumber),
-        billingEmail: normalizeNullableText(body.billingEmail),
-        remark: normalizeNullableText(body.remark),
-      },
-      create: {
-        userId: params.id,
-        status: body.status,
-        monthlySettlement: body.monthlySettlement,
-        creditLimitUsd: body.creditLimitUsd ?? "0",
-        creditUsedUsd: body.creditUsedUsd ?? "0",
-        billingDay: body.billingDay,
-        invoiceTitle: normalizeNullableText(body.invoiceTitle),
-        taxNumber: normalizeNullableText(body.taxNumber),
-        billingEmail: normalizeNullableText(body.billingEmail),
-        remark: normalizeNullableText(body.remark),
-      },
-      include: {
-        invoices: { orderBy: { createdAt: "desc" }, take: 20 },
-      },
-    });
-
-    return { billingAccount };
-  });
-
-  app.get("/admin/invoices", async () => {
-    const invoices = await prisma.invoice.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 200,
-      include: {
-        billingAccount: {
-          select: {
-            id: true,
-            user: { select: { id: true, email: true } },
-          },
-        },
-      },
-    });
-    return { invoices };
-  });
-
-  app.post("/admin/invoices", async (request, reply) => {
-    const body = invoiceSchema.parse(request.body);
-    const billingAccount = await prisma.billingAccount.upsert({
-      where: { userId: body.userId },
-      update: {},
-      create: { userId: body.userId },
-      select: { id: true },
-    }).catch((error: unknown) => {
-      if (isUniqueConstraintError(error)) {
-        throw error;
-      }
-      return null;
-    });
-
-    if (!billingAccount) {
-      return reply.status(404).send({ message: "User not found" });
-    }
-
-    const invoice = await prisma.invoice.create({
-      data: {
-        billingAccountId: billingAccount.id,
-        invoiceNo: body.invoiceNo,
-        status: body.status,
-        amountUsd: body.amountUsd,
-        periodStart: body.periodStart,
-        periodEnd: body.periodEnd,
-        issuedAt: body.issuedAt,
-        paidAt: body.paidAt,
-        title: normalizeNullableText(body.title),
-        taxNumber: normalizeNullableText(body.taxNumber),
-        remark: normalizeNullableText(body.remark),
-      },
-    });
-
-    return { invoice };
-  });
-
-  app.patch("/admin/invoices/:id", async (request) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = invoiceSchema.partial({ userId: true, invoiceNo: true }).parse(request.body);
-    const invoice = await prisma.invoice.update({
-      where: { id: params.id },
-      data: {
-        ...(body.invoiceNo !== undefined ? { invoiceNo: body.invoiceNo } : {}),
-        ...(body.status !== undefined ? { status: body.status } : {}),
-        ...(body.amountUsd !== undefined ? { amountUsd: body.amountUsd } : {}),
-        ...(body.periodStart !== undefined ? { periodStart: body.periodStart } : {}),
-        ...(body.periodEnd !== undefined ? { periodEnd: body.periodEnd } : {}),
-        ...(body.issuedAt !== undefined ? { issuedAt: body.issuedAt } : {}),
-        ...(body.paidAt !== undefined ? { paidAt: body.paidAt } : {}),
-        ...(body.title !== undefined ? { title: normalizeNullableText(body.title) } : {}),
-        ...(body.taxNumber !== undefined
-          ? { taxNumber: normalizeNullableText(body.taxNumber) }
-          : {}),
-        ...(body.remark !== undefined ? { remark: normalizeNullableText(body.remark) } : {}),
-      },
-    });
-    return { invoice };
   });
 
   app.delete("/admin/users/:id", async (request, reply) => {

@@ -7,7 +7,6 @@ import {
   Pencil,
   Plus,
   Save,
-  Send,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
@@ -20,7 +19,6 @@ import { confirmAdminAction } from "../_components/admin-confirm";
 import { dateTime, formatNumber, money, parseModelList, splitList } from "../_components/admin-format";
 import {
   AdminDataTable,
-  InfoLine,
   Metric,
   ModalShell,
   MobileField,
@@ -32,72 +30,6 @@ type AccessTierRef = {
   id: string;
   code: string;
   name: string;
-};
-
-type Tenant = {
-  id: string;
-  name: string;
-  code: string;
-  status: "ACTIVE" | "DISABLED" | string;
-  reseller: boolean;
-  contactEmail?: string | null;
-  remark?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-  _count?: { users: number };
-};
-
-type PackageTemplate = {
-  id: string;
-  name: string;
-  code: string;
-  status: "ACTIVE" | "DISABLED" | string;
-  tierId?: string | null;
-  tier?: AccessTierRef | null;
-  allowedModels: string[];
-  rateLimitPerMinute: number;
-  concurrencyLimit: number;
-  initialBalanceUsd: string;
-  monthlyCreditLimitUsd: string;
-  remark?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-  _count?: { users: number };
-};
-
-type BillingAccount = {
-  id: string;
-  userId: string;
-  status: "ACTIVE" | "SUSPENDED" | string;
-  monthlySettlement: boolean;
-  creditLimitUsd: string;
-  creditUsedUsd: string;
-  billingDay: number;
-  invoiceTitle?: string | null;
-  taxNumber?: string | null;
-  billingEmail?: string | null;
-  remark?: string | null;
-  invoices?: Invoice[];
-};
-
-type Invoice = {
-  id: string;
-  billingAccountId: string;
-  invoiceNo: string;
-  status: "DRAFT" | "ISSUED" | "PAID" | "VOID" | string;
-  amountUsd: string;
-  periodStart?: string | null;
-  periodEnd?: string | null;
-  issuedAt?: string | null;
-  paidAt?: string | null;
-  title?: string | null;
-  taxNumber?: string | null;
-  remark?: string | null;
-  createdAt: string;
-  billingAccount?: {
-    id: string;
-    user?: { id: string; email: string } | null;
-  };
 };
 
 type Wallet = {
@@ -162,12 +94,7 @@ type AdminUser = {
   rateLimitPerMinute: number;
   concurrencyLimit: number;
   tierId?: string | null;
-  tenantId?: string | null;
-  packageTemplateId?: string | null;
   tier?: AccessTierRef | null;
-  tenant?: Tenant | null;
-  packageTemplate?: PackageTemplate | null;
-  billingAccount?: BillingAccount | null;
   charityEnabled?: boolean;
   charityDisplayName?: string | null;
   charityKey?: string | null;
@@ -268,19 +195,6 @@ export function AdminUsersPage({
   onError: (error: string | null) => void;
 }) {
   const users = useAdminResource<{ users: AdminUser[] }>("users", "/admin/users");
-  const tenants = useAdminResource<{ tenants: Tenant[] }>(
-    "tenants",
-    "/admin/tenants",
-    !charityOnly,
-  );
-  const packageTemplates = useAdminResource<{
-    packageTemplates: PackageTemplate[];
-  }>("packageTemplates", "/admin/package-templates", !charityOnly);
-  const invoices = useAdminResource<{ invoices: Invoice[] }>(
-    "invoices",
-    "/admin/invoices",
-    !charityOnly,
-  );
   const modelPools = useAdminResource<ModelPoolResponse>(
     "modelPools",
     "/admin/model-pools",
@@ -300,9 +214,6 @@ export function AdminUsersPage({
   useEffect(() => {
     const firstError =
       users.error ??
-      tenants.error ??
-      packageTemplates.error ??
-      invoices.error ??
       modelPools.error ??
       accessTiers.error ??
       charitySettings.error;
@@ -310,11 +221,8 @@ export function AdminUsersPage({
   }, [
     accessTiers.error,
     charitySettings.error,
-    invoices.error,
     modelPools.error,
     onError,
-    packageTemplates.error,
-    tenants.error,
     users.error,
   ]);
 
@@ -322,11 +230,7 @@ export function AdminUsersPage({
     void users.refetch();
     void modelPools.refetch();
     void accessTiers.refetch();
-    if (!charityOnly) {
-      void tenants.refetch();
-      void packageTemplates.refetch();
-      void invoices.refetch();
-    } else {
+    if (charityOnly) {
       void charitySettings.refetch();
     }
   };
@@ -336,9 +240,6 @@ export function AdminUsersPage({
       users={users.data?.users ?? []}
       modelPools={modelPools.data?.modelPools ?? []}
       accessTiers={accessTiers.data?.tiers ?? modelPools.data?.accessTiers ?? []}
-      tenants={tenants.data?.tenants ?? []}
-      packageTemplates={packageTemplates.data?.packageTemplates ?? []}
-      invoices={invoices.data?.invoices ?? []}
       charityOnly={charityOnly}
       charityAnnouncementSettings={charitySettings.data?.settings ?? null}
       onChanged={refetchAll}
@@ -351,9 +252,6 @@ export function AdminUsers({
   users,
   modelPools,
   accessTiers,
-  tenants,
-  packageTemplates,
-  invoices,
   charityOnly = false,
   charityAnnouncementSettings = null,
   onChanged,
@@ -362,9 +260,6 @@ export function AdminUsers({
   users: AdminUser[];
   modelPools: ModelPool[];
   accessTiers: AccessTier[];
-  tenants: Tenant[];
-  packageTemplates: PackageTemplate[];
-  invoices: Invoice[];
   charityOnly?: boolean;
   charityAnnouncementSettings?: CharityAnnouncementSettings | null;
   onChanged: () => void;
@@ -376,8 +271,6 @@ export function AdminUsers({
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState(0);
   const [concurrencyLimit, setConcurrencyLimit] = useState(0);
   const [tierId, setTierId] = useState("");
-  const [tenantId, setTenantId] = useState("");
-  const [packageTemplateId, setPackageTemplateId] = useState("");
   const [charityEnabled, setCharityEnabled] = useState(charityOnly);
   const [charityDisplayName, setCharityDisplayName] = useState(
     charityOnly ? "APIshare Free" : "",
@@ -404,9 +297,6 @@ export function AdminUsers({
   const [editRateLimitPerMinute, setEditRateLimitPerMinute] = useState(0);
   const [editConcurrencyLimit, setEditConcurrencyLimit] = useState(0);
   const [editTierId, setEditTierId] = useState("");
-  const [editTenantId, setEditTenantId] = useState("");
-  const [editPackageTemplateId, setEditPackageTemplateId] = useState("");
-  const [billingUser, setBillingUser] = useState<AdminUser | null>(null);
   const [editCharityEnabled, setEditCharityEnabled] = useState(false);
   const [editCharityDisplayName, setEditCharityDisplayName] = useState("");
   const [editCharityKey, setEditCharityKey] = useState("");
@@ -499,8 +389,6 @@ export function AdminUsers({
     setEditRateLimitPerMinute(item.rateLimitPerMinute ?? 0);
     setEditConcurrencyLimit(item.concurrencyLimit ?? 0);
     setEditTierId(item.tierId ?? defaultTierId);
-    setEditTenantId(item.tenantId ?? "");
-    setEditPackageTemplateId(item.packageTemplateId ?? "");
     setEditCharityEnabled(Boolean(item.charityEnabled));
     setEditCharityDisplayName(item.charityDisplayName ?? "");
     setEditCharityKey(item.charityKey ?? "");
@@ -528,8 +416,6 @@ export function AdminUsers({
           rateLimitPerMinute: Number(rateLimitPerMinute),
           concurrencyLimit: Number(concurrencyLimit),
           tierId: tierId || defaultTierId || null,
-          tenantId: tenantId || null,
-          packageTemplateId: packageTemplateId || null,
           charityEnabled,
           charityDisplayName:
             charityOnly && !charityDisplayName.trim()
@@ -547,8 +433,6 @@ export function AdminUsers({
       setRateLimitPerMinute(0);
       setConcurrencyLimit(0);
       setTierId(defaultTierId);
-      setTenantId("");
-      setPackageTemplateId("");
       setCharityEnabled(charityOnly);
       setCharityDisplayName(charityOnly ? "APIshare Free" : "");
       setCharityKey("");
@@ -636,8 +520,6 @@ export function AdminUsers({
           rateLimitPerMinute: Number(editRateLimitPerMinute),
           concurrencyLimit: Number(editConcurrencyLimit),
           tierId: editTierId || null,
-          tenantId: editTenantId || null,
-          packageTemplateId: editPackageTemplateId || null,
           charityEnabled: editCharityEnabled,
           charityDisplayName: editCharityDisplayName,
           charityKey: editCharityKey,
@@ -720,34 +602,12 @@ export function AdminUsers({
     }
   }
 
-  async function applyPackageTemplate(
-    item: AdminUser,
-    templateIdValue: string,
-  ) {
-    if (!templateIdValue) {
-      return;
-    }
-    onError(null);
-    try {
-      await apiFetch(
-        `/admin/users/${item.id}/package-template/${templateIdValue}/apply`,
-        {
-          method: "POST",
-        },
-      );
-      onChanged();
-    } catch (error) {
-      onError(errorToText(error));
-    }
-  }
   const userDirectoryColumns = [
     { accessorKey: "email", header: "邮箱" },
     { accessorKey: "role", header: "角色" },
     { accessorKey: "status", header: "状态" },
     { accessorKey: "balance", header: "余额" },
-    ...(!charityOnly
-      ? [{ accessorKey: "tenantPackage", header: "租户/套餐" }]
-      : []),
+    { accessorKey: "tier", header: "等级" },
     { accessorKey: "charity", header: "公益" },
     ...(charityOnly ? [{ accessorKey: "charityKey", header: "公开 Key" }] : []),
     { accessorKey: "allowedModels", header: "模型白名单" },
@@ -764,12 +624,7 @@ export function AdminUsers({
     role: item.role,
     status: <StatusPill status={item.status} />,
     balance: `$${money(item.wallet?.balance ?? "0")}`,
-    tenantPackage: (
-      <>
-        <strong>{item.tenant?.name ?? "未分配"}</strong>
-        <div className="muted">{item.packageTemplate?.name ?? "无套餐"}</div>
-      </>
-    ),
+    tier: item.tier ? `${item.tier.name} (${item.tier.code})` : "默认等级",
     charity: item.charityEnabled ? (
       <span className="pill ok">{item.charityDisplayName || "已公开"}</span>
     ) : (
@@ -816,15 +671,6 @@ export function AdminUsers({
         >
           Key 管理
         </button>
-        {!charityOnly ? (
-          <button
-            className="button secondary"
-            onClick={() => setBillingUser(item)}
-            type="button"
-          >
-            月结
-          </button>
-        ) : null}
         <button
           className="button secondary"
           onClick={() => toggleUserStatus(item)}
@@ -855,7 +701,7 @@ export function AdminUsers({
             <p>
               {charityOnly
                 ? "公益服务、公开 Key、单 IP 限流和用户 Key 管理集中处理。"
-                : "账号开通、余额、套餐、模型权限和 Key 管理按运营任务组织。"}
+                : "账号开通、余额、等级、模型权限和 Key 管理按运营任务组织。"}
             </p>
           </div>
           <div className="admin-hero-actions">
@@ -1023,18 +869,6 @@ export function AdminUsers({
               </div>
             </form>
           </section>
-        ) : null}
-
-        {!charityOnly ? (
-          <AdminCommercialOps
-            accessTiers={accessTiers}
-            invoices={invoices}
-            packageTemplates={packageTemplates}
-            tenants={tenants}
-            users={users}
-            onChanged={onChanged}
-            onError={onError}
-          />
         ) : null}
 
         <section className="action-panel admin-toolbar admin-secondary-toolbar">
@@ -1297,42 +1131,6 @@ export function AdminUsers({
                   />
                 </label>
               </div>
-              {!charityOnly ? (
-                <div className="grid cols-2">
-                  <label className="field">
-                    <span>租户/代理商</span>
-                    <select
-                      className="input"
-                      value={tenantId}
-                      onChange={(event) => setTenantId(event.target.value)}
-                    >
-                      <option value="">未分配</option>
-                      {tenants.map((tenant) => (
-                        <option key={tenant.id} value={tenant.id}>
-                          {tenant.name} ({tenant.code})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>套餐模板</span>
-                    <select
-                      className="input"
-                      value={packageTemplateId}
-                      onChange={(event) =>
-                        setPackageTemplateId(event.target.value)
-                      }
-                    >
-                      <option value="">不套用</option>
-                      {packageTemplates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name} ({template.code})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              ) : null}
               {charityOnly ? null : (
                 <label className="checkbox-row">
                   <input
@@ -1656,64 +1454,6 @@ export function AdminUsers({
                   />
                 </label>
               </div>
-              {!charityOnly ? (
-                <div className="grid cols-3">
-                  <label className="field">
-                    <span>租户/代理商</span>
-                    <select
-                      className="input"
-                      value={editTenantId}
-                      onChange={(event) => setEditTenantId(event.target.value)}
-                    >
-                      <option value="">未分配</option>
-                      {tenants.map((tenant) => (
-                        <option key={tenant.id} value={tenant.id}>
-                          {tenant.name} ({tenant.code})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>套餐模板</span>
-                    <select
-                      className="input"
-                      value={editPackageTemplateId}
-                      onChange={(event) =>
-                        setEditPackageTemplateId(event.target.value)
-                      }
-                    >
-                      <option value="">无套餐</option>
-                      {packageTemplates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name} ({template.code})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>立即套用模板</span>
-                    <select
-                      className="input"
-                      onChange={(event) =>
-                        void applyPackageTemplate(
-                          editingUser,
-                          event.target.value,
-                        )
-                      }
-                      value=""
-                    >
-                      <option value="">选择后立即应用</option>
-                      {packageTemplates
-                        .filter((template) => template.status === "ACTIVE")
-                        .map((template) => (
-                          <option key={template.id} value={template.id}>
-                            {template.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                </div>
-              ) : null}
               <label className="field">
                 <span>公开页 API Key</span>
                 <input
@@ -1811,14 +1551,6 @@ export function AdminUsers({
             </div>
           </form>
         </ModalShell>
-      ) : null}
-      {billingUser ? (
-        <BillingAccountModal
-          user={billingUser}
-          onChanged={onChanged}
-          onClose={() => setBillingUser(null)}
-          onError={onError}
-        />
       ) : null}
     </>
   );
@@ -2778,619 +2510,5 @@ function AdminUserKeysModal({
         </ModalShell>
       ) : null}
     </>
-  );
-}
-
-function AdminCommercialOps({
-  accessTiers,
-  tenants,
-  packageTemplates,
-  users,
-  invoices,
-  onChanged,
-  onError,
-}: {
-  accessTiers: AccessTier[];
-  tenants: Tenant[];
-  packageTemplates: PackageTemplate[];
-  users: AdminUser[];
-  invoices: Invoice[];
-  onChanged: () => void;
-  onError: (error: string | null) => void;
-}) {
-  const [tenantName, setTenantName] = useState("");
-  const [tenantCode, setTenantCode] = useState("");
-  const [tenantReseller, setTenantReseller] = useState(true);
-  const [templateName, setTemplateName] = useState("");
-  const [templateCode, setTemplateCode] = useState("");
-  const [templateTierId, setTemplateTierId] = useState("");
-  const [templateRateLimit, setTemplateRateLimit] = useState(0);
-  const [templateConcurrency, setTemplateConcurrency] = useState(0);
-  const [templateInitialBalance, setTemplateInitialBalance] = useState("0");
-  const [templateCreditLimit, setTemplateCreditLimit] = useState("0");
-  const [templateModels, setTemplateModels] = useState("");
-  const [invoiceUserId, setInvoiceUserId] = useState(users[0]?.id ?? "");
-  const [invoiceNo, setInvoiceNo] = useState(
-    `INV-${Date.now().toString(36).toUpperCase()}`,
-  );
-  const [invoiceAmount, setInvoiceAmount] = useState("0");
-  const [invoiceStatus, setInvoiceStatus] =
-    useState<Invoice["status"]>("DRAFT");
-  const [commercialModal, setCommercialModal] = useState<
-    "tenant" | "template" | "invoice" | null
-  >(null);
-
-  async function createTenant(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onError(null);
-    try {
-      await apiFetch("/admin/tenants", {
-        method: "POST",
-        body: JSON.stringify({
-          name: tenantName,
-          code: tenantCode,
-          reseller: tenantReseller,
-          status: "ACTIVE",
-        }),
-      });
-      setTenantName("");
-      setTenantCode("");
-      onChanged();
-    } catch (error) {
-      onError(errorToText(error));
-    }
-  }
-
-  async function createPackageTemplate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onError(null);
-    try {
-      await apiFetch("/admin/package-templates", {
-        method: "POST",
-        body: JSON.stringify({
-          name: templateName,
-          code: templateCode,
-          tierId: templateTierId || null,
-          allowedModels: parseModelList(templateModels),
-          rateLimitPerMinute: Number(templateRateLimit),
-          concurrencyLimit: Number(templateConcurrency),
-          initialBalanceUsd: templateInitialBalance,
-          monthlyCreditLimitUsd: templateCreditLimit,
-          status: "ACTIVE",
-        }),
-      });
-      setTemplateName("");
-      setTemplateCode("");
-      setTemplateModels("");
-      setTemplateInitialBalance("0");
-      setTemplateCreditLimit("0");
-      onChanged();
-    } catch (error) {
-      onError(errorToText(error));
-    }
-  }
-
-  async function createInvoice(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onError(null);
-    try {
-      await apiFetch("/admin/invoices", {
-        method: "POST",
-        body: JSON.stringify({
-          userId: invoiceUserId,
-          invoiceNo,
-          amountUsd: invoiceAmount,
-          status: invoiceStatus,
-        }),
-      });
-      setInvoiceNo(`INV-${Date.now().toString(36).toUpperCase()}`);
-      setInvoiceAmount("0");
-      onChanged();
-    } catch (error) {
-      onError(errorToText(error));
-    }
-  }
-
-  return (
-    <section className="card">
-      <div className="section-head">
-        <div>
-          <h2 className="section-title">商业化配置</h2>
-          <p className="section-subtitle">
-            套餐模板、代理商租户、月结信用额度和发票记录集中维护。
-          </p>
-        </div>
-      </div>
-      <div className="commercial-summary-grid">
-        <div className="commercial-summary-card">
-          <div>
-            <h3>租户/代理商</h3>
-            <p>
-              {tenants.length} 个租户 ·{" "}
-              {tenants.filter((tenant) => tenant.reseller).length} 个代理商
-            </p>
-          </div>
-          <button
-            className="button"
-            onClick={() => setCommercialModal("tenant")}
-            type="button"
-          >
-            <Plus size={17} />
-            新增租户
-          </button>
-          <div className="info-list compact-info-list">
-            {tenants.slice(0, 3).map((tenant) => (
-              <InfoLine
-                key={tenant.id}
-                label={tenant.reseller ? "代理商" : "租户"}
-                value={`${tenant.name} · ${tenant._count?.users ?? 0} 用户`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="commercial-summary-card">
-          <div>
-            <h3>套餐模板</h3>
-            <p>{packageTemplates.length} 个模板 · 用于批量初始化用户权限</p>
-          </div>
-          <button
-            className="button"
-            onClick={() => setCommercialModal("template")}
-            type="button"
-          >
-            <Save size={17} />
-            新增模板
-          </button>
-          <div className="info-list compact-info-list">
-            {packageTemplates.slice(0, 3).map((template) => (
-              <InfoLine
-                key={template.id}
-                label={template.name}
-                value={`$${money(template.initialBalanceUsd)} · 信用 $${money(template.monthlyCreditLimitUsd)}`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="commercial-summary-card">
-          <div>
-            <h3>发票/月结</h3>
-            <p>{invoices.length} 张发票 · 记录月结和信用账单</p>
-          </div>
-          <button
-            className="button"
-            onClick={() => setCommercialModal("invoice")}
-            type="button"
-          >
-            <Plus size={17} />
-            新增发票
-          </button>
-          <div className="info-list compact-info-list">
-            {invoices.slice(0, 3).map((invoice) => (
-              <InfoLine
-                key={invoice.id}
-                label={invoice.invoiceNo}
-                value={`${invoice.status} · $${money(invoice.amountUsd)}`}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {commercialModal === "tenant" ? (
-        <ModalShell
-          title="新增租户/代理商"
-          description="创建普通租户或代理商租户。"
-          onClose={() => setCommercialModal(null)}
-        >
-          <form className="form" onSubmit={createTenant}>
-            <div className="modal-body">
-              <label className="field">
-                <span>名称</span>
-                <input
-                  className="input"
-                  onChange={(event) => setTenantName(event.target.value)}
-                  value={tenantName}
-                />
-              </label>
-              <label className="field">
-                <span>代码</span>
-                <input
-                  className="input"
-                  onChange={(event) => setTenantCode(event.target.value)}
-                  placeholder="reseller_a"
-                  value={tenantCode}
-                />
-              </label>
-              <label className="checkbox-row">
-                <input
-                  checked={tenantReseller}
-                  onChange={(event) => setTenantReseller(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>代理商租户</span>
-              </label>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="button secondary"
-                onClick={() => setCommercialModal(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button className="button" type="submit">
-                <Plus size={17} />
-                新增租户
-              </button>
-            </div>
-          </form>
-        </ModalShell>
-      ) : null}
-
-      {commercialModal === "template" ? (
-        <ModalShell
-          title="新增套餐模板"
-          description="预设等级、额度、限流和模型白名单。"
-          onClose={() => setCommercialModal(null)}
-          wide
-        >
-          <form className="form" onSubmit={createPackageTemplate}>
-            <div className="modal-body">
-              <div className="grid cols-2">
-                <label className="field">
-                  <span>名称</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setTemplateName(event.target.value)}
-                    value={templateName}
-                  />
-                </label>
-                <label className="field">
-                  <span>代码</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setTemplateCode(event.target.value)}
-                    placeholder="pro_monthly"
-                    value={templateCode}
-                  />
-                </label>
-              </div>
-              <div className="grid cols-2">
-                <label className="field">
-                  <span>默认等级</span>
-                  <select
-                    className="input"
-                    onChange={(event) => setTemplateTierId(event.target.value)}
-                    value={templateTierId}
-                  >
-                    <option value="">不指定</option>
-                    {accessTiers.map((tier) => (
-                      <option key={tier.id} value={tier.id}>
-                        {tier.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>赠送余额</span>
-                  <input
-                    className="input"
-                    onChange={(event) =>
-                      setTemplateInitialBalance(event.target.value)
-                    }
-                    value={templateInitialBalance}
-                  />
-                </label>
-                <label className="field">
-                  <span>每分钟限流</span>
-                  <input
-                    className="input"
-                    min={0}
-                    onChange={(event) =>
-                      setTemplateRateLimit(Number(event.target.value))
-                    }
-                    type="number"
-                    value={templateRateLimit}
-                  />
-                </label>
-                <label className="field">
-                  <span>并发限制</span>
-                  <input
-                    className="input"
-                    min={0}
-                    onChange={(event) =>
-                      setTemplateConcurrency(Number(event.target.value))
-                    }
-                    type="number"
-                    value={templateConcurrency}
-                  />
-                </label>
-              </div>
-              <label className="field">
-                <span>月结信用额度</span>
-                <input
-                  className="input"
-                  onChange={(event) =>
-                    setTemplateCreditLimit(event.target.value)
-                  }
-                  value={templateCreditLimit}
-                />
-              </label>
-              <label className="field">
-                <span>模型白名单</span>
-                <textarea
-                  className="input textarea compact-textarea"
-                  onChange={(event) => setTemplateModels(event.target.value)}
-                  placeholder="留空表示不限"
-                  value={templateModels}
-                />
-              </label>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="button secondary"
-                onClick={() => setCommercialModal(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button className="button" type="submit">
-                <Save size={17} />
-                新增模板
-              </button>
-            </div>
-          </form>
-        </ModalShell>
-      ) : null}
-
-      {commercialModal === "invoice" ? (
-        <ModalShell
-          title="新增发票/月结"
-          description="为用户创建发票或月结账单记录。"
-          onClose={() => setCommercialModal(null)}
-        >
-          <form className="form" onSubmit={createInvoice}>
-            <div className="modal-body">
-              <label className="field">
-                <span>用户</span>
-                <select
-                  className="input"
-                  onChange={(event) => setInvoiceUserId(event.target.value)}
-                  value={invoiceUserId}
-                >
-                  {users.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.email}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="grid cols-2">
-                <label className="field">
-                  <span>发票号</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setInvoiceNo(event.target.value)}
-                    value={invoiceNo}
-                  />
-                </label>
-                <label className="field">
-                  <span>金额 USD</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setInvoiceAmount(event.target.value)}
-                    value={invoiceAmount}
-                  />
-                </label>
-              </div>
-              <label className="field">
-                <span>状态</span>
-                <select
-                  className="input"
-                  onChange={(event) => setInvoiceStatus(event.target.value)}
-                  value={invoiceStatus}
-                >
-                  <option value="DRAFT">DRAFT</option>
-                  <option value="ISSUED">ISSUED</option>
-                  <option value="PAID">PAID</option>
-                  <option value="VOID">VOID</option>
-                </select>
-              </label>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="button secondary"
-                onClick={() => setCommercialModal(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button className="button" type="submit">
-                <Plus size={17} />
-                新增发票
-              </button>
-            </div>
-          </form>
-        </ModalShell>
-      ) : null}
-    </section>
-  );
-}
-
-function BillingAccountModal({
-  user,
-  onChanged,
-  onClose,
-  onError,
-}: {
-  user: AdminUser;
-  onChanged: () => void;
-  onClose: () => void;
-  onError: (error: string | null) => void;
-}) {
-  const account = user.billingAccount;
-  const [monthlySettlement, setMonthlySettlement] = useState(
-    account?.monthlySettlement ?? false,
-  );
-  const [status, setStatus] = useState<BillingAccount["status"]>(
-    account?.status ?? "ACTIVE",
-  );
-  const [creditLimitUsd, setCreditLimitUsd] = useState(
-    account?.creditLimitUsd ?? "0",
-  );
-  const [creditUsedUsd, setCreditUsedUsd] = useState(
-    account?.creditUsedUsd ?? "0",
-  );
-  const [billingDay, setBillingDay] = useState(account?.billingDay ?? 1);
-  const [invoiceTitle, setInvoiceTitle] = useState(account?.invoiceTitle ?? "");
-  const [taxNumber, setTaxNumber] = useState(account?.taxNumber ?? "");
-  const [billingEmail, setBillingEmail] = useState(
-    account?.billingEmail ?? user.email,
-  );
-  const [remark, setRemark] = useState(account?.remark ?? "");
-
-  async function saveBillingAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onError(null);
-    try {
-      await apiFetch(`/admin/users/${user.id}/billing-account`, {
-        method: "PUT",
-        body: JSON.stringify({
-          status,
-          monthlySettlement,
-          creditLimitUsd,
-          creditUsedUsd,
-          billingDay: Number(billingDay),
-          invoiceTitle,
-          taxNumber,
-          billingEmail,
-          remark,
-        }),
-      });
-      onClose();
-      onChanged();
-    } catch (error) {
-      onError(errorToText(error));
-    }
-  }
-
-  return (
-    <ModalShell
-      title="月结与信用额度"
-      description={user.email}
-      onClose={onClose}
-      wide
-    >
-      <form className="form" onSubmit={saveBillingAccount}>
-        <div className="modal-body">
-          <div className="grid cols-3">
-            <label className="checkbox-row">
-              <input
-                checked={monthlySettlement}
-                onChange={(event) => setMonthlySettlement(event.target.checked)}
-                type="checkbox"
-              />
-              <span>启用月结</span>
-            </label>
-            <label className="field">
-              <span>状态</span>
-              <select
-                className="input"
-                onChange={(event) => setStatus(event.target.value)}
-                value={status}
-              >
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="SUSPENDED">SUSPENDED</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>账单日</span>
-              <input
-                className="input"
-                max={28}
-                min={1}
-                onChange={(event) => setBillingDay(Number(event.target.value))}
-                type="number"
-                value={billingDay}
-              />
-            </label>
-            <label className="field">
-              <span>信用额度 USD</span>
-              <input
-                className="input"
-                onChange={(event) => setCreditLimitUsd(event.target.value)}
-                value={creditLimitUsd}
-              />
-            </label>
-            <label className="field">
-              <span>已用信用 USD</span>
-              <input
-                className="input"
-                onChange={(event) => setCreditUsedUsd(event.target.value)}
-                value={creditUsedUsd}
-              />
-            </label>
-            <label className="field">
-              <span>开票邮箱</span>
-              <input
-                className="input"
-                onChange={(event) => setBillingEmail(event.target.value)}
-                type="email"
-                value={billingEmail}
-              />
-            </label>
-          </div>
-          <div className="grid cols-2">
-            <label className="field">
-              <span>发票抬头</span>
-              <input
-                className="input"
-                onChange={(event) => setInvoiceTitle(event.target.value)}
-                value={invoiceTitle}
-              />
-            </label>
-            <label className="field">
-              <span>税号</span>
-              <input
-                className="input"
-                onChange={(event) => setTaxNumber(event.target.value)}
-                value={taxNumber}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span>备注</span>
-            <textarea
-              className="input textarea compact-textarea"
-              onChange={(event) => setRemark(event.target.value)}
-              value={remark}
-            />
-          </label>
-          <div className="info-list">
-            {(account?.invoices ?? []).slice(0, 5).map((invoice) => (
-              <InfoLine
-                key={invoice.id}
-                label={invoice.invoiceNo}
-                value={`${invoice.status} · $${money(invoice.amountUsd)}`}
-              />
-            ))}
-            {(account?.invoices ?? []).length === 0 ? (
-              <InfoLine label="发票" value="暂无记录" />
-            ) : null}
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="button secondary" onClick={onClose} type="button">
-            取消
-          </button>
-          <button className="button" type="submit">
-            <Save size={17} />
-            保存月结设置
-          </button>
-        </div>
-      </form>
-    </ModalShell>
   );
 }

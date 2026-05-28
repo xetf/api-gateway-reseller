@@ -28,6 +28,14 @@ type AccessTier = {
   code: string;
   name: string;
   status: string;
+  sortOrder?: number;
+  description?: string | null;
+  _count?: {
+    users?: number;
+    apiKeys?: number;
+    modelPools?: number;
+    dedicatedRouteRules?: number;
+  };
 };
 
 type IpAccessTierRule = {
@@ -83,6 +91,12 @@ export function AdminDispatchPage({
     tierId: "",
     priority: "100",
     remark: "",
+  });
+  const [tierDraft, setTierDraft] = useState({
+    name: "",
+    code: "",
+    sortOrder: "100",
+    description: "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -206,6 +220,113 @@ export function AdminDispatchPage({
       setBusy(false);
     }
   }
+
+  async function addTier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!tierDraft.name.trim() || !tierDraft.code.trim()) {
+      onError("请填写等级名称和代码。");
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      await apiFetch("/admin/access-tiers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: tierDraft.name.trim(),
+          code: tierDraft.code.trim(),
+          sortOrder: Number(tierDraft.sortOrder),
+          description: tierDraft.description.trim() || null,
+          status: "ACTIVE",
+        }),
+      });
+      setTierDraft({
+        name: "",
+        code: "",
+        sortOrder: "100",
+        description: "",
+      });
+      void tiersQuery.refetch();
+    } catch (error) {
+      onError(errorToText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleTier(tier: AccessTier) {
+    setBusy(true);
+    onError(null);
+    try {
+      await apiFetch(`/admin/access-tiers/${tier.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: tier.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
+        }),
+      });
+      void tiersQuery.refetch();
+    } catch (error) {
+      onError(errorToText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteTier(tier: AccessTier) {
+    const confirmed = await confirmAdminAction({
+      title: "删除等级预设",
+      description: `确定删除等级「${tier.name}」吗？已被用户、Key 或模型池使用的等级不会被删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      await apiFetch(`/admin/access-tiers/${tier.id}`, {
+        method: "DELETE",
+      });
+      void tiersQuery.refetch();
+      void ipRulesQuery.refetch();
+    } catch (error) {
+      onError(errorToText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const tierRows = tiers.map((tier) => ({
+    id: tier.id,
+    name: tier.name,
+    code: tier.code,
+    sortOrder: tier.sortOrder ?? 0,
+    status: <StatusPill status={tier.status} />,
+    usage: `${tier._count?.users ?? 0} 用户 / ${tier._count?.apiKeys ?? 0} Key / ${tier._count?.modelPools ?? 0} 池`,
+    description: tier.description ?? "-",
+    actions: (
+      <div className="button-row compact">
+        <button
+          className="button secondary"
+          disabled={busy}
+          onClick={() => void toggleTier(tier)}
+          type="button"
+        >
+          {tier.status === "ACTIVE" ? "停用" : "启用"}
+        </button>
+        <button
+          className="button danger"
+          disabled={busy}
+          onClick={() => void deleteTier(tier)}
+          type="button"
+        >
+          <Trash2 size={14} />
+          删除
+        </button>
+      </div>
+    ),
+  }));
 
   const ruleRows = rules.map((rule) => ({
     id: rule.id,
@@ -361,6 +482,73 @@ export function AdminDispatchPage({
           </button>
         </div>
       </form>
+
+      <section className="card">
+        <div className="section-head">
+          <div>
+            <h2 className="section-title">等级预设</h2>
+            <p className="section-subtitle">
+              这里维护系统等级；用户管理里给每个用户设置等级，IP 等级命中时优先覆盖用户等级。
+            </p>
+          </div>
+        </div>
+        <form className="filter-row" onSubmit={addTier}>
+          <input
+            className="input"
+            placeholder="等级名称，例如 VIP"
+            value={tierDraft.name}
+            onChange={(event) =>
+              setTierDraft((current) => ({ ...current, name: event.target.value }))
+            }
+          />
+          <input
+            className="input"
+            placeholder="代码，例如 vip"
+            value={tierDraft.code}
+            onChange={(event) =>
+              setTierDraft((current) => ({ ...current, code: event.target.value }))
+            }
+          />
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={10000}
+            value={tierDraft.sortOrder}
+            onChange={(event) =>
+              setTierDraft((current) => ({ ...current, sortOrder: event.target.value }))
+            }
+          />
+          <input
+            className="input"
+            placeholder="说明：这个等级用于哪些用户或模型池"
+            value={tierDraft.description}
+            onChange={(event) =>
+              setTierDraft((current) => ({
+                ...current,
+                description: event.target.value,
+              }))
+            }
+          />
+          <button className="button" disabled={busy} type="submit">
+            <Plus size={16} />
+            添加等级
+          </button>
+        </form>
+        <AdminDataTable
+          columns={[
+            { accessorKey: "name", header: "名称" },
+            { accessorKey: "code", header: "代码" },
+            { accessorKey: "sortOrder", header: "排序" },
+            { accessorKey: "status", header: "状态" },
+            { accessorKey: "usage", header: "使用中" },
+            { accessorKey: "description", header: "说明" },
+            { accessorKey: "actions", header: "操作" },
+          ]}
+          data={tierRows}
+          empty="暂无等级预设"
+        />
+      </section>
 
       <section className="card">
         <div className="section-head">

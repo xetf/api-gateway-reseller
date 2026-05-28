@@ -107,12 +107,7 @@ type User = {
   rateLimitPerMinute: number;
   concurrencyLimit: number;
   tierId?: string | null;
-  tenantId?: string | null;
-  packageTemplateId?: string | null;
   tier?: AccessTierRef | null;
-  tenant?: Tenant | null;
-  packageTemplate?: PackageTemplate | null;
-  billingAccount?: BillingAccount | null;
   charityEnabled?: boolean;
   charityDisplayName?: string | null;
   charityKey?: string | null;
@@ -120,72 +115,6 @@ type User = {
   charityIpRateLimitPerMinute?: number;
   createdAt?: string;
   wallet?: Wallet | null;
-};
-
-type Tenant = {
-  id: string;
-  name: string;
-  code: string;
-  status: "ACTIVE" | "DISABLED" | string;
-  reseller: boolean;
-  contactEmail?: string | null;
-  remark?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-  _count?: { users: number };
-};
-
-type PackageTemplate = {
-  id: string;
-  name: string;
-  code: string;
-  status: "ACTIVE" | "DISABLED" | string;
-  tierId?: string | null;
-  tier?: AccessTierRef | null;
-  allowedModels: string[];
-  rateLimitPerMinute: number;
-  concurrencyLimit: number;
-  initialBalanceUsd: string;
-  monthlyCreditLimitUsd: string;
-  remark?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-  _count?: { users: number };
-};
-
-type BillingAccount = {
-  id: string;
-  userId: string;
-  status: "ACTIVE" | "SUSPENDED" | string;
-  monthlySettlement: boolean;
-  creditLimitUsd: string;
-  creditUsedUsd: string;
-  billingDay: number;
-  invoiceTitle?: string | null;
-  taxNumber?: string | null;
-  billingEmail?: string | null;
-  remark?: string | null;
-  invoices?: Invoice[];
-};
-
-type Invoice = {
-  id: string;
-  billingAccountId: string;
-  invoiceNo: string;
-  status: "DRAFT" | "ISSUED" | "PAID" | "VOID" | string;
-  amountUsd: string;
-  periodStart?: string | null;
-  periodEnd?: string | null;
-  issuedAt?: string | null;
-  paidAt?: string | null;
-  title?: string | null;
-  taxNumber?: string | null;
-  remark?: string | null;
-  createdAt: string;
-  billingAccount?: {
-    id: string;
-    user?: { id: string; email: string } | null;
-  };
 };
 
 type Summary = {
@@ -767,11 +696,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [riskCenter, setRiskCenter] = useState<RiskCenter | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [packageTemplates, setPackageTemplates] = useState<PackageTemplate[]>(
-    [],
-  );
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [ipBanRules, setIpBanRules] = useState<IpBanRule[]>([]);
   const [accessTiers, setAccessTiers] = useState<AccessTier[]>([]);
   const [dedicatedRouteRules, setDedicatedRouteRules] = useState<
@@ -903,9 +827,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     if (mode === "user") {
       setRiskCenter(null);
       setAdminUsers([]);
-      setTenants([]);
-      setPackageTemplates([]);
-      setInvoices([]);
       setAccessTiers([]);
       setDedicatedRouteRules([]);
       setPendingAutoTerminateSettings(null);
@@ -970,15 +891,11 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         await refreshRiskCenter(authToken);
         break;
       case "admin-users":
-        await Promise.all([
-          refreshAdminUsers(authToken),
-          refreshCommercialOps(authToken),
-        ]);
+        await refreshAdminUsers(authToken);
         break;
       case "admin-charity":
         await Promise.all([
           refreshAdminUsers(authToken),
-          refreshCommercialOps(authToken),
           refreshSettings(authToken),
         ]);
         break;
@@ -1022,23 +939,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       token: authToken,
     });
     setAdminUsers(result.users);
-  }
-
-  async function refreshCommercialOps(authToken = token) {
-    if (!authToken) return;
-    const [tenantsResult, templatesResult, invoicesResult] = await Promise.all([
-      apiFetch<{ tenants: Tenant[] }>("/admin/tenants", { token: authToken }),
-      apiFetch<{ packageTemplates: PackageTemplate[] }>(
-        "/admin/package-templates",
-        { token: authToken },
-      ),
-      apiFetch<{ invoices: Invoice[] }>("/admin/invoices", {
-        token: authToken,
-      }),
-    ]);
-    setTenants(tenantsResult.tenants);
-    setPackageTemplates(templatesResult.packageTemplates);
-    setInvoices(invoicesResult.invoices);
   }
 
   async function refreshSettings(authToken = token) {
@@ -1136,7 +1036,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         case "admin-charity":
           await Promise.all([
             refreshAdminUsers(),
-            refreshCommercialOps(),
             refreshSettings(),
           ]);
           break;
