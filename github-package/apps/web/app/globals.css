@@ -6703,11 +6703,11 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-users-page {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page:has(.charity-announcement-settings) {
-  grid-template-rows: auto auto minmax(150px, 0.7fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(150px, 0.7fr) minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page .admin-user-directory,
@@ -7887,11 +7887,16 @@ td .button-row.compact {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  min-width: min(420px, 100%);
+  flex-wrap: wrap;
+  min-width: min(720px, 100%);
+}
+
+.shell-admin .admin-user-list-actions {
+  gap: 6px;
 }
 
 .shell-admin .admin-directory-tools .search-input {
-  width: min(360px, 100%);
+  width: min(300px, 100%);
 }
 
 .shell-admin .admin-gateway-page .upstream-workbench,

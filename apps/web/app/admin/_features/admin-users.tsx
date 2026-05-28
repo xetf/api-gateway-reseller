@@ -692,54 +692,6 @@ export function AdminUsers({
   return (
     <>
       <div className="grid admin-page admin-users-page">
-        <section className="admin-hero-panel">
-          <div>
-            <span className="eyebrow">
-              {charityOnly ? "Charity Accounts" : "Customer Operations"}
-            </span>
-            <h2>{charityOnly ? "公益账号运营台" : "用户运营台"}</h2>
-            <p>
-              {charityOnly
-                ? "公益服务、公开 Key、单 IP 限流和用户 Key 管理集中处理。"
-                : "账号开通、余额、等级、模型权限和 Key 管理按运营任务组织。"}
-            </p>
-          </div>
-          <div className="admin-hero-actions">
-            <button
-              className="button"
-              onClick={() => {
-                setEditingUser(null);
-                setUserModal("create");
-              }}
-              type="button"
-            >
-              <Plus size={17} />
-              {charityOnly ? "创建公益用户" : "创建用户"}
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => {
-                setEditingUser(null);
-                setUserModal("balance");
-              }}
-              type="button"
-            >
-              <CreditCard size={17} />
-              余额调整
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => {
-                setEditingUser(null);
-                setUserModal("models");
-              }}
-              type="button"
-            >
-              <SlidersHorizontal size={17} />
-              模型白名单
-            </button>
-          </div>
-        </section>
         <div className="admin-kpi-strip">
           <Metric label="当前列表" value={String(filteredUsers.length)} caption={`全部 ${users.length}`} />
           <Metric label="启用账号" value={String(activeUserCount)} caption={`停用 ${disabledUserCount}`} />
@@ -930,6 +882,41 @@ export function AdminUsers({
               </p>
             </div>
             <div className="admin-directory-tools">
+              <div className="button-row admin-user-list-actions">
+                <button
+                  className="button"
+                  onClick={() => {
+                    setEditingUser(null);
+                    setUserModal("create");
+                  }}
+                  type="button"
+                >
+                  <Plus size={17} />
+                  {charityOnly ? "创建公益用户" : "创建用户"}
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => {
+                    setEditingUser(null);
+                    setUserModal("balance");
+                  }}
+                  type="button"
+                >
+                  <CreditCard size={17} />
+                  余额调整
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => {
+                    setEditingUser(null);
+                    setUserModal("models");
+                  }}
+                  type="button"
+                >
+                  <SlidersHorizontal size={17} />
+                  模型白名单
+                </button>
+              </div>
               <input
                 className="input search-input"
                 value={userSearch}
