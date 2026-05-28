@@ -117,11 +117,16 @@ export function AdminDispatchPage({
   const [busy, setBusy] = useState(false);
 
   const tiers = tiersQuery.data?.tiers ?? [];
+  const standardTier = useMemo(
+    () => tiers.find((tier) => tier.code === "standard") ?? null,
+    [tiers],
+  );
   const activeTiers = useMemo(
     () => tiers.filter((tier) => tier.status === "ACTIVE"),
     [tiers],
   );
-  const defaultTierId = activeTiers[0]?.id ?? "";
+  const defaultTierId =
+    standardTier?.id ?? activeTiers[0]?.id ?? tiers[0]?.id ?? "";
   const rules = ipRulesQuery.data?.rules ?? [];
   const activeIpRuleCount = rules.filter((rule) => rule.status === "ACTIVE").length;
 
@@ -272,6 +277,10 @@ export function AdminDispatchPage({
   }
 
   async function toggleTier(tier: AccessTier) {
+    if (tier.code === "standard" && tier.status === "ACTIVE") {
+      onError("standard 是新用户和新 IP 的默认等级，不能停用。");
+      return;
+    }
     setBusy(true);
     onError(null);
     try {
@@ -315,7 +324,9 @@ export function AdminDispatchPage({
         method: "PATCH",
         body: JSON.stringify({
           name: tierEditDraft.name.trim(),
-          code: tierEditDraft.code.trim(),
+          ...(editingTier.code === "standard"
+            ? {}
+            : { code: tierEditDraft.code.trim() }),
           sortOrder: Number(tierEditDraft.sortOrder),
           description: tierEditDraft.description.trim() || null,
         }),
@@ -361,6 +372,12 @@ export function AdminDispatchPage({
     code: tier.code,
     sortOrder: tier.sortOrder ?? 0,
     status: <StatusPill status={tier.status} />,
+    defaultFlag:
+      tier.code === "standard" ? (
+        <span className="pill ok">新用户 / 新 IP 默认</span>
+      ) : (
+        "-"
+      ),
     usage: `${tier._count?.users ?? 0} 用户 / ${tier._count?.apiKeys ?? 0} Key / ${tier._count?.modelPools ?? 0} 池`,
     description: tier.description ?? "-",
     actions: (
@@ -376,7 +393,7 @@ export function AdminDispatchPage({
         </button>
         <button
           className="button secondary"
-          disabled={busy}
+          disabled={busy || (tier.code === "standard" && tier.status === "ACTIVE")}
           onClick={() => void toggleTier(tier)}
           type="button"
         >
@@ -562,10 +579,12 @@ export function AdminDispatchPage({
             <div>
               <h2 className="section-title">等级预设</h2>
               <p className="section-subtitle">
-                用户管理直接选择这些等级；显示位置数字小的排前面，IP 命中时优先覆盖用户等级。
+                standard 是新用户、新 IP 和未指定等级时的默认等级；名称、说明和显示位置可编辑，代码固定为 standard。
               </p>
             </div>
-            <span className="pill ok">{activeTiers.length} 个启用</span>
+            <span className="pill ok">
+              默认：{standardTier?.name ?? "Standard"}
+            </span>
           </div>
           <form className="dispatch-add-row tier" onSubmit={addTier}>
             <input
@@ -590,7 +609,7 @@ export function AdminDispatchPage({
               title="显示位置：数字小的排前面"
               placeholder="显示位置"
               type="number"
-              min={0}
+              min={1}
               max={10000}
               value={tierDraft.sortOrder}
               onChange={(event) =>
@@ -618,6 +637,7 @@ export function AdminDispatchPage({
               { accessorKey: "name", header: "名称" },
               { accessorKey: "code", header: "代码" },
               { accessorKey: "sortOrder", header: "显示位置" },
+              { accessorKey: "defaultFlag", header: "默认" },
               { accessorKey: "status", header: "状态" },
               { accessorKey: "usage", header: "使用中" },
               { accessorKey: "actions", header: "操作" },
@@ -704,6 +724,7 @@ export function AdminDispatchPage({
                     <span>等级代码</span>
                     <input
                       className="input"
+                      disabled={editingTier.code === "standard"}
                       value={tierEditDraft.code}
                       onChange={(event) =>
                         setTierEditDraft((current) => ({

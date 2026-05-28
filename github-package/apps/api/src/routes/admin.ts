@@ -1280,6 +1280,12 @@ export async function adminRoutes(app: FastifyInstance) {
         .send({ message: "Standard tier code cannot be changed" });
     }
 
+    if (existing.code === standardAccessTierCode && body.status === "DISABLED") {
+      return reply
+        .status(400)
+        .send({ message: "Standard tier is the default tier and cannot be disabled" });
+    }
+
     try {
       const tier = await prisma.accessTier.update({
         where: { id: params.id },
