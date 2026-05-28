@@ -6610,6 +6610,8 @@ td .button-row.compact {
 
 .shell-admin .topbar-side {
   gap: 8px;
+  align-self: center;
+  max-width: min(720px, 58%);
 }
 
 .shell-admin .account-chip {
@@ -7385,7 +7387,7 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-segmented-control.admin-workspace-tabs {
-  margin-top: 10px;
+  margin: 0;
   min-height: 44px;
   max-height: 44px;
   overflow-x: auto;
