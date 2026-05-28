@@ -6580,6 +6580,10 @@ td .button-row.compact {
   position: sticky;
   top: 0;
   z-index: 12;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto minmax(260px, 1fr);
+  align-items: center;
+  gap: 12px;
   margin: 0 0 12px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
@@ -6619,7 +6623,8 @@ td .button-row.compact {
 .shell-admin .topbar-side {
   gap: 8px;
   align-self: center;
-  max-width: min(720px, 58%);
+  justify-self: end;
+  max-width: 100%;
 }
 
 .shell-admin .account-chip {
@@ -7418,6 +7423,7 @@ td .button-row.compact {
 
 .shell-admin .admin-segmented-control.admin-workspace-tabs {
   margin: 0;
+  justify-self: center;
   min-height: 44px;
   max-height: 44px;
   overflow-x: auto;
@@ -8030,7 +8036,13 @@ td .button-row.compact {
 
   .shell-admin .admin-command-bar {
     position: static;
+    grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .shell-admin .admin-command-bar .admin-workspace-tabs,
+  .shell-admin .admin-command-bar .topbar-side {
+    justify-self: stretch;
   }
 
   .shell-admin .admin-segmented-control {

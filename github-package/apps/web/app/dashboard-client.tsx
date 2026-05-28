@@ -1144,14 +1144,14 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <h1>{currentPage.title}</h1>
             <p>{currentPage.description}</p>
           </div>
+          {mode === "admin" && activeAdminWorkspace ? (
+            <AdminWorkspaceTabs
+              activeTab={activeTab as AdminTab}
+              tabs={activeAdminWorkspace.tabs}
+              onSelect={(tab) => switchTab(tab)}
+            />
+          ) : null}
           <div className="topbar-side">
-            {mode === "admin" && activeAdminWorkspace ? (
-              <AdminWorkspaceTabs
-                activeTab={activeTab as AdminTab}
-                tabs={activeAdminWorkspace.tabs}
-                onSelect={(tab) => switchTab(tab)}
-              />
-            ) : null}
             <div className="account-chip">
               <span>{user.email}</span>
               {user.role === "ADMIN" ? <strong>管理员</strong> : null}
