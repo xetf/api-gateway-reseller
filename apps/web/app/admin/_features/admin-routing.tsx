@@ -6,7 +6,7 @@ import { apiFetch } from "../../../lib/api";
 import { confirmAdminAction } from "../_components/admin-confirm";
 import { dateTime, money } from "../_components/admin-format";
 import { useAdminResource } from "../_components/admin-hooks";
-import { AdminDataTable, Metric, StatusPill } from "../_components/admin-ui";
+import { AdminDataTable, Metric, ModalShell, StatusPill } from "../_components/admin-ui";
 
 type ApiKey = {
   id: string;
@@ -181,6 +181,7 @@ export function AdminRouting({
   });
   const [simulation, setSimulation] = useState<RouteSimulation | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [ruleModalOpen, setRuleModalOpen] = useState(false);
 
   useEffect(() => {
     setRuleDraft((current) => ({
@@ -457,6 +458,7 @@ export function AdminRouting({
         expiresAt: "",
         remark: "",
       }));
+      setRuleModalOpen(false);
       onChanged();
     } catch (createError) {
       onError(errorToText(createError));
@@ -517,9 +519,15 @@ export function AdminRouting({
               <h2 className="section-title">专线规则</h2>
               <p className="section-subtitle">生效优先级固定为 IP、API Key、用户；同层级按优先级升序。</p>
             </div>
-            <StatusPill status={dedicatedRouteRules.some((rule) => rule.status === "ACTIVE") ? "ACTIVE" : "DISABLED"} />
+            <div className="button-row">
+              <button className="button" onClick={() => setRuleModalOpen(true)} type="button">
+                <Plus size={17} />
+                新增专线
+              </button>
+              <StatusPill status={dedicatedRouteRules.some((rule) => rule.status === "ACTIVE") ? "ACTIVE" : "DISABLED"} />
+            </div>
           </div>
-          <form className="grid-form compact-routing-form" onSubmit={createRule}>
+          <form className="grid-form compact-routing-form routing-inline-create" onSubmit={createRule}>
             <label>规则名<input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, name: event.target.value }))} required value={ruleDraft.name} /></label>
             <label>目标类型<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, targetType: event.target.value }))} value={ruleDraft.targetType}><option value="USER">用户</option><option value="API_KEY">API Key</option><option value="IP">IP / CIDR</option></select></label>
             {ruleDraft.targetType === "USER" ? <label>用户<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, userId: event.target.value }))} required value={ruleDraft.userId}>{users.map((item) => <option key={item.id} value={item.id}>{item.email}</option>)}</select></label> : null}
@@ -1032,6 +1040,43 @@ export function AdminRouting({
       </section>
         </div>
       </div>
+      {ruleModalOpen ? (
+        <ModalShell
+          title="新增专线"
+          description="按目标、等级和上游约束创建一条专线路由。"
+          onClose={() => setRuleModalOpen(false)}
+          wide
+        >
+          <form className="form" onSubmit={createRule}>
+            <div className="modal-body">
+              <div className="grid cols-3">
+                <label className="field"><span>规则名</span><input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, name: event.target.value }))} required value={ruleDraft.name} /></label>
+                <label className="field"><span>目标类型</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, targetType: event.target.value }))} value={ruleDraft.targetType}><option value="USER">用户</option><option value="API_KEY">API Key</option><option value="IP">IP / CIDR</option></select></label>
+                <label className="field"><span>访问等级</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, accessTierId: event.target.value }))} required value={ruleDraft.accessTierId}>{activeTiers.map((tier) => <option key={tier.id} value={tier.id}>{tier.name} ({tier.code})</option>)}</select></label>
+              </div>
+              <div className="grid cols-2">
+                {ruleDraft.targetType === "USER" ? <label className="field"><span>用户</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, userId: event.target.value }))} required value={ruleDraft.userId}>{users.map((item) => <option key={item.id} value={item.id}>{item.email}</option>)}</select></label> : null}
+                {ruleDraft.targetType === "API_KEY" ? <label className="field"><span>API Key</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, apiKeyId: event.target.value }))} required value={ruleDraft.apiKeyId}>{users.flatMap((item) => (item.apiKeys ?? []).map((key) => <option key={key.id} value={key.id}>{item.email} · {key.name} ({key.keyPrefix})</option>))}</select></label> : null}
+                {ruleDraft.targetType === "IP" ? <label className="field"><span>IP / CIDR</span><input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, ipPattern: event.target.value }))} placeholder="203.0.113.10 或 203.0.113.0/24" required value={ruleDraft.ipPattern} /></label> : null}
+                <label className="field"><span>优先级</span><input className="input" min={1} onChange={(event) => setRuleDraft((current) => ({ ...current, priority: event.target.value }))} type="number" value={ruleDraft.priority} /></label>
+              </div>
+              <div className="grid cols-2">
+                <label className="field"><span>专用上游</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, upstreamProvider: event.target.value, upstreamProviderKeyId: "" }))} value={ruleDraft.upstreamProvider}><option value="">不限制</option>{providerNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+                <label className="field"><span>专用 Key</span><select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, upstreamProviderKeyId: event.target.value }))} value={ruleDraft.upstreamProviderKeyId}><option value="">不限制</option>{selectedProviderKeys.map((key) => <option key={key.id} value={key.id}>{key.providerName} · {key.name} ({key.keyPrefix})</option>)}</select></label>
+              </div>
+              <div className="grid cols-3">
+                <label className="field"><span>生效时间</span><input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, startsAt: event.target.value }))} type="datetime-local" value={ruleDraft.startsAt} /></label>
+                <label className="field"><span>过期时间</span><input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, expiresAt: event.target.value }))} type="datetime-local" value={ruleDraft.expiresAt} /></label>
+                <label className="field"><span>备注</span><input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, remark: event.target.value }))} value={ruleDraft.remark} /></label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setRuleModalOpen(false)} type="button">取消</button>
+              <button className="button" type="submit"><Plus size={17} />新增专线</button>
+            </div>
+          </form>
+        </ModalShell>
+      ) : null}
     </div>
   );
 }

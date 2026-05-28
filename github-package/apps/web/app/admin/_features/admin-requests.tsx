@@ -1857,6 +1857,7 @@ function AdminRequests({
   const [autoTerminateModalOpen, setAutoTerminateModalOpen] = useState(false);
   const [reasoningTransformModalOpen, setReasoningTransformModalOpen] =
     useState(false);
+  const [governanceModalOpen, setGovernanceModalOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [autoTerminateBusy, setAutoTerminateBusy] = useState(false);
   const [autoTerminateError, setAutoTerminateError] = useState<string | null>(
@@ -2225,39 +2226,13 @@ function AdminRequests({
         </div>
         <div className="admin-hero-actions">
           <button
-            className="button secondary"
-            onClick={() => openBanModal()}
+            className="button"
+            onClick={() => setGovernanceModalOpen(true)}
             type="button"
           >
             <Shield size={17} />
-            IP 封禁
+            调用治理
             <span className="button-count">{ipBanRules.length}</span>
-          </button>
-          <button
-            className="button secondary"
-            onClick={() => setAutoTerminateModalOpen(true)}
-            type="button"
-          >
-            <CircleStop size={17} />
-            自动终止
-            <span className="button-count">
-              {pendingAutoTerminateSettings?.enabled
-                ? `${pendingAutoTerminateSettings.timeoutSeconds}s`
-                : "关"}
-            </span>
-          </button>
-          <button
-            className="button secondary"
-            onClick={() => setReasoningTransformModalOpen(true)}
-            type="button"
-          >
-            <SlidersHorizontal size={17} />
-            推理转换
-            <span className="button-count">
-              {getEnabledReasoningRulesSummary(
-                reasoningEffortTransformSettings,
-              )}
-            </span>
           </button>
         </div>
       </section>
@@ -2531,6 +2506,56 @@ function AdminRequests({
           onRequestTerminated={onRequestTerminated}
         />
       </section>
+      {governanceModalOpen ? (
+        <ModalShell
+          title="调用治理"
+          description="封禁、自动终止和推理转换集中入口，避免占用请求列表空间。"
+          onClose={() => setGovernanceModalOpen(false)}
+          wide
+        >
+          <div className="modal-body admin-governance-grid">
+            <button className="admin-action-card" onClick={() => openBanModal()} type="button">
+              <div>
+                <strong>IP 封禁</strong>
+                <small>手动限制 IP，并查看当前规则数量。</small>
+              </div>
+              <div className="admin-action-card-side">
+                <span className="button-count">{ipBanRules.length}</span>
+                <Shield size={18} />
+              </div>
+            </button>
+            <button className="admin-action-card" onClick={() => setAutoTerminateModalOpen(true)} type="button">
+              <div>
+                <strong>Pending 自动终止</strong>
+                <small>
+                  {pendingAutoTerminateSettings?.enabled
+                    ? `超过 ${pendingAutoTerminateSettings.timeoutSeconds}s 自动终止`
+                    : "当前关闭"}
+                </small>
+              </div>
+              <div className="admin-action-card-side">
+                <StatusPill status={pendingAutoTerminateSettings?.enabled ? "AUTO_TERMINATE_ON" : "AUTO_TERMINATE_OFF"} />
+                <CircleStop size={18} />
+              </div>
+            </button>
+            <button className="admin-action-card" onClick={() => setReasoningTransformModalOpen(true)} type="button">
+              <div>
+                <strong>推理转换</strong>
+                <small>将高推理等级映射到更温和的请求参数。</small>
+              </div>
+              <div className="admin-action-card-side">
+                <span className="button-count">{getEnabledReasoningRulesSummary(reasoningEffortTransformSettings)}</span>
+                <SlidersHorizontal size={18} />
+              </div>
+            </button>
+          </div>
+          <div className="modal-footer">
+            <button className="button secondary" onClick={() => setGovernanceModalOpen(false)} type="button">
+              关闭
+            </button>
+          </div>
+        </ModalShell>
+      ) : null}
       {autoTerminateModalOpen ? (
         <ModalShell
           title="Pending 自动终止"

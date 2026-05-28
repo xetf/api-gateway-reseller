@@ -6701,11 +6701,11 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-users-page {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page:has(.charity-announcement-settings) {
-  grid-template-rows: auto auto minmax(150px, 0.85fr) auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(150px, 0.7fr) minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page .admin-user-directory,
@@ -6740,10 +6740,6 @@ td .button-row.compact {
 
 .shell-admin .admin-redeem-page {
   grid-template-rows: auto minmax(0, 1fr);
-}
-
-.shell-admin .admin-redeem-page:has(.generated-code-card) {
-  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .shell-admin .admin-redeem-page .generated-code-card,
@@ -6793,6 +6789,25 @@ td .button-row.compact {
   scrollbar-gutter: stable;
 }
 
+.shell-admin .admin-risk-page {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-risk-page > .card {
+  min-height: 0;
+}
+
+.shell-admin .admin-risk-page > .card:nth-of-type(3) .admin-settings-stack {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.shell-admin .admin-risk-page > .admin-panel-v2 {
+  min-height: 0;
+}
+
 .shell-admin .admin-log-page .admin-panel-v2,
 .shell-admin .admin-reports-page .admin-panel-v2,
 .shell-admin .admin-risk-page .admin-panel-v2 {
@@ -6822,6 +6837,95 @@ td .button-row.compact {
 
 .shell-admin .admin-reports-page .split-grid .admin-panel-v2 {
   min-height: 280px;
+}
+
+.shell-admin .admin-reports-page .admin-reports-console {
+  min-height: 0;
+}
+
+.shell-admin .admin-reports-page .admin-settings-console-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-admin .admin-reports-page .admin-settings-console-panel > .admin-panel-v2 {
+  flex: 1 1 auto;
+}
+
+.shell-admin .generated-code-drawer .code-block {
+  max-height: none;
+  min-height: 240px;
+  overflow: auto;
+}
+
+.shell-admin .admin-auth-console {
+  min-height: 0;
+}
+
+.shell-admin .routing-inline-create {
+  display: none;
+}
+
+.shell-admin .admin-governance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.shell-admin .admin-governance-grid .admin-action-card {
+  width: 100%;
+  min-height: 132px;
+  text-align: left;
+}
+
+.shell-admin .notice-field-editor {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 360px;
+}
+
+.shell-admin .notice-field-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.shell-admin .notice-field-item {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: rgb(248 250 252 / 80%);
+  padding: 10px;
+  color: var(--admin-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-admin .notice-field-item.active {
+  border-color: rgb(15 118 110 / 28%);
+  background: rgb(15 118 110 / 9%);
+}
+
+.shell-admin .notice-field-item span {
+  color: var(--admin-muted);
+  font-size: 12px;
+}
+
+.shell-admin .notice-field-current {
+  min-height: 0;
+}
+
+.shell-admin .notice-field-current textarea {
+  min-height: 280px;
+}
+
+.shell-admin .admin-users-page .admin-secondary-toolbar {
+  display: none;
 }
 
 .shell-admin .admin-requests-page {

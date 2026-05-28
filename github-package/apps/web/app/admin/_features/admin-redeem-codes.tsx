@@ -84,6 +84,7 @@ export function AdminRedeemCodes({
   const [perUserLimit, setPerUserLimit] = useState(1);
   const [codeSearch, setCodeSearch] = useState("");
   const [generated, setGenerated] = useState<RedeemCode[]>([]);
+  const [generatedOpen, setGeneratedOpen] = useState(false);
   const [redeemModalOpen, setRedeemModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -109,6 +110,7 @@ export function AdminRedeemCodes({
       }),
     onSuccess: (result) => {
       setGenerated(result.codes);
+      setGeneratedOpen(true);
       setRedeemModalOpen(false);
       void invalidateRedeemCodes();
     },
@@ -266,22 +268,6 @@ export function AdminRedeemCodes({
           </div>
         </section>
 
-        {generated.length > 0 ? (
-          <section className="card generated-code-card">
-            <div className="section-head">
-              <div>
-                <h2 className="section-title">刚生成的兑换码</h2>
-                <p className="section-subtitle">明文只在本次生成后显示。</p>
-              </div>
-            </div>
-            <pre className="code-block">
-              {generated
-                .map((item) => `${item.code}  $${money(item.amount)}`)
-                .join("\n")}
-            </pre>
-          </section>
-        ) : null}
-
         <AdminPanel
           className="redeem-list-panel"
           title="兑换码列表"
@@ -296,6 +282,17 @@ export function AdminRedeemCodes({
                 <Plus size={17} />
                 生成兑换码
               </button>
+              {generated.length > 0 ? (
+                <button
+                  className="button secondary"
+                  onClick={() => setGeneratedOpen(true)}
+                  type="button"
+                >
+                  <Ticket size={17} />
+                  查看刚生成
+                  <span className="button-count">{generated.length}</span>
+                </button>
+              ) : null}
               <button
                 className="button secondary"
                 disabled={isFetching}
@@ -376,6 +373,34 @@ export function AdminRedeemCodes({
           </div>
         </AdminPanel>
       </div>
+
+      {generatedOpen && generated.length > 0 ? (
+        <ModalShell
+          title="刚生成的兑换码"
+          description="明文只在本次生成后显示，关闭前请确认已经保存。"
+          onClose={() => setGeneratedOpen(false)}
+          wide
+        >
+          <div className="modal-body generated-code-drawer">
+            <pre className="code-block">
+              {generated
+                .map((item) => `${item.code}  $${money(item.amount)}`)
+                .join("\n")}
+            </pre>
+          </div>
+          <div className="modal-footer">
+            <button className="button secondary" onClick={() => setGeneratedOpen(false)} type="button">
+              关闭
+            </button>
+            <button className="button" onClick={() => {
+              setGenerated([]);
+              setGeneratedOpen(false);
+            }} type="button">
+              已保存，清除明文
+            </button>
+          </div>
+        </ModalShell>
+      ) : null}
 
       {redeemModalOpen ? (
         <ModalShell

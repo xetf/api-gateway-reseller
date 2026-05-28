@@ -7,7 +7,12 @@ import { z } from "zod";
 import { adminFetch, adminQueryKeys } from "../_components/admin-api";
 import { money } from "../_components/admin-format";
 import { useAdminResource } from "../_components/admin-hooks";
-import { AdminFoldout, InfoLine, StatusPill } from "../_components/admin-ui";
+import {
+  ConsoleNavButton,
+  InfoLine,
+  SettingsConsoleLayout,
+  StatusPill,
+} from "../_components/admin-ui";
 
 type AuthSettings = {
   emailCodeLoginEnabled: boolean;
@@ -77,6 +82,7 @@ export function AdminAuthSettings({
   const [testEmail, setTestEmail] = useState("");
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [activePanel, setActivePanel] = useState<"email" | "smtp" | "preview">("email");
 
   useEffect(() => {
     if (!settings) return;
@@ -183,13 +189,57 @@ export function AdminAuthSettings({
 
   return (
     <form className="form admin-settings-page" onSubmit={saveSettings}>
-      <div className="admin-settings-stack">
-        <AdminFoldout
-          title="邮箱验证码"
-          description={emailCodeLoginEnabled ? "用户账号使用邮箱验证码登录，自动注册可单独控制。" : "邮箱验证码登录已关闭。"}
-          badge={<StatusPill status={emailCodeLoginEnabled ? "ACTIVE" : "DISABLED"} />}
-        >
+      <SettingsConsoleLayout
+        className="admin-auth-console"
+        nav={
+          <>
+            <ConsoleNavButton
+              active={activePanel === "email"}
+              title="邮箱验证码"
+              description="登录、注册、赠送余额"
+              meta={emailCodeLoginEnabled ? "开启" : "关闭"}
+              onClick={() => setActivePanel("email")}
+            />
+            <ConsoleNavButton
+              active={activePanel === "smtp"}
+              title="SMTP 发信"
+              description="主机、账号、发件人"
+              meta={settings.smtpConfigured ? "已配置" : "未配置"}
+              onClick={() => setActivePanel("smtp")}
+            />
+            <ConsoleNavButton
+              active={activePanel === "preview"}
+              title="测试与预览"
+              description="测试发送验证码邮件"
+              meta={testMessage ? "已发送" : "预览"}
+              onClick={() => setActivePanel("preview")}
+            />
+          </>
+        }
+        summary={
+          <div className="admin-summary-card">
+            <strong>当前登录策略</strong>
+            <div className="info-list">
+              <InfoLine label="验证码" value={emailCodeLoginEnabled ? "开启" : "关闭"} />
+              <InfoLine label="自动注册" value={emailCodeAutoRegisterEnabled ? "允许" : "关闭"} />
+              <InfoLine label="赠送余额" value={`$${money(newUserBonusUsd)}`} />
+              <InfoLine label="SMTP" value={settings.smtpConfigured ? "已配置" : "未配置"} />
+            </div>
+          </div>
+        }
+      >
+        <div className="admin-settings-stack">
+          {activePanel === "email" ? (
           <div className="form">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">邮箱验证码</h2>
+                <p className="section-subtitle">
+                  用户账号使用邮箱验证码登录，自动注册可单独控制。
+                </p>
+              </div>
+              <StatusPill status={emailCodeLoginEnabled ? "ACTIVE" : "DISABLED"} />
+            </div>
             <div className="grid cols-2">
               <label className="check-row"><input checked={emailCodeLoginEnabled} onChange={(event) => setEmailCodeLoginEnabled(event.target.checked)} type="checkbox" />启用邮箱验证码登录</label>
               <label className="check-row"><input checked={emailCodeAutoRegisterEnabled} onChange={(event) => setEmailCodeAutoRegisterEnabled(event.target.checked)} type="checkbox" />允许新邮箱自动创建账号</label>
@@ -205,14 +255,19 @@ export function AdminAuthSettings({
               <InfoLine label="赠送余额" value={`$${money(newUserBonusUsd)}`} />
             </div>
           </div>
-        </AdminFoldout>
+          ) : null}
 
-        <AdminFoldout
-          title="SMTP 发信"
-          description="用于发送 APIshare 登录验证码邮件。"
-          badge={<span className={settings.smtpConfigured ? "pill ok" : "pill warn"}>{settings.smtpConfigured ? "已配置" : "未配置"}</span>}
-        >
+          {activePanel === "smtp" ? (
           <div className="form">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">SMTP 发信</h2>
+                <p className="section-subtitle">用于发送 APIshare 登录验证码邮件。</p>
+              </div>
+              <span className={settings.smtpConfigured ? "pill ok" : "pill warn"}>
+                {settings.smtpConfigured ? "已配置" : "未配置"}
+              </span>
+            </div>
             <div className="grid cols-2">
               <label className="field"><span>SMTP Host</span><input className="input" onChange={(event) => setSmtpHost(event.target.value)} value={smtpHost} /></label>
               <label className="field"><span>端口</span><input className="input" max={65535} min={1} onChange={(event) => setSmtpPort(Number(event.target.value))} type="number" value={smtpPort} /></label>
@@ -223,6 +278,10 @@ export function AdminAuthSettings({
               <label className="field"><span>SMTP 用户名</span><input className="input" onChange={(event) => setSmtpUser(event.target.value)} value={smtpUser} /></label>
               <label className="field"><span>SMTP 密码</span><input className="input" onChange={(event) => setSmtpPassword(event.target.value)} placeholder={settings.smtpConfigured ? "留空则不修改" : ""} type="password" value={smtpPassword} /></label>
             </div>
+          </div>
+          ) : null}
+
+          {activePanel === "preview" ? (
             <div className="email-preview">
               <div className="email-preview-toolbar"><div><span className="eyebrow">邮件预览</span><strong>APIshare 登录验证码</strong></div><span>{smtpSecure ? "SSL/TLS" : "STARTTLS"}</span></div>
               <div className="email-preview-meta"><span>From</span><strong>{previewFrom}</strong><span>To</span><strong>{previewTo}</strong></div>
@@ -233,9 +292,9 @@ export function AdminAuthSettings({
               {testMessage ? <div className="success compact-success">{testMessage}</div> : null}
               <div className="email-preview-body"><h3>APIshare 登录验证码</h3><p>你的验证码是：</p><div className="email-preview-code">482913</div><p>{previewTtlMinutes} 分钟内有效。若不是你本人操作，请忽略这封邮件。</p></div>
             </div>
-          </div>
-        </AdminFoldout>
-      </div>
+          ) : null}
+        </div>
+      </SettingsConsoleLayout>
       {savedMessage ? <div className="success">{savedMessage}</div> : null}
       <div className="button-row">
         <button className="button" disabled={saveMutation.isPending} type="submit">

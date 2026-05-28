@@ -211,6 +211,8 @@ function AdminGatewayNoticesPanel({
   const [activePanel, setActivePanel] = useState<
     "copy" | "charity" | "auto" | "ip"
   >("copy");
+  const [activeGatewayField, setActiveGatewayField] =
+    useState<keyof GatewayNoticeSettings>("userConcurrencyMessage");
 
   useEffect(
     () => setGatewayDraft(gatewayNoticeSettings),
@@ -527,25 +529,54 @@ function AdminGatewayNoticesPanel({
               </div>
               {gatewayDraft ? (
                 <form className="form" onSubmit={saveGateway}>
-                  <div className="grid cols-2">
-                    {gatewayNoticeFields.map((field) => (
-                      <label className="field" key={field.key}>
-                        <span>{field.label}</span>
-                        <textarea
-                          className="input textarea compact-textarea"
-                          maxLength={8000}
-                          onChange={(event) =>
-                            setGatewayDraft({
-                              ...gatewayDraft,
-                              [field.key]: event.target.value,
-                            })
+                  <div className="notice-field-editor">
+                    <div className="notice-field-list">
+                      {gatewayNoticeFields.map((field) => (
+                        <button
+                          className={
+                            activeGatewayField === field.key
+                              ? "notice-field-item active"
+                              : "notice-field-item"
                           }
-                          placeholder={gatewayNoticeDefaults?.[field.key] ?? ""}
-                          value={gatewayDraft[field.key]}
-                        />
-                        <small className="muted">{field.hint}</small>
-                      </label>
-                    ))}
+                          key={field.key}
+                          onClick={() => setActiveGatewayField(field.key)}
+                          type="button"
+                        >
+                          <strong>{field.label}</strong>
+                          <span>{field.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="field notice-field-current">
+                      <span>
+                        {
+                          gatewayNoticeFields.find(
+                            (field) => field.key === activeGatewayField,
+                          )?.label
+                        }
+                      </span>
+                      <textarea
+                        className="input textarea"
+                        maxLength={8000}
+                        onChange={(event) =>
+                          setGatewayDraft({
+                            ...gatewayDraft,
+                            [activeGatewayField]: event.target.value,
+                          })
+                        }
+                        placeholder={
+                          gatewayNoticeDefaults?.[activeGatewayField] ?? ""
+                        }
+                        value={gatewayDraft[activeGatewayField]}
+                      />
+                      <small className="muted">
+                        {
+                          gatewayNoticeFields.find(
+                            (field) => field.key === activeGatewayField,
+                          )?.hint
+                        }
+                      </small>
+                    </label>
                   </div>
                   <div className="button-row">
                     <button
