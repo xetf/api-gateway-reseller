@@ -17,6 +17,7 @@ import { dateTime, formatNumber, money, seconds } from "../_components/admin-for
 import { useAdminResource } from "../_components/admin-hooks";
 import {
   AdminDataTable,
+  ConsoleNavButton,
   InfoLine,
   Metric,
   ModalShell,
@@ -24,6 +25,7 @@ import {
   MobileRecord,
   StatusPill,
   StatusTile,
+  WorkbenchLayout,
 } from "../_components/admin-ui";
 
 type AccessTierRef = { id: string; code: string; name: string };
@@ -250,6 +252,8 @@ function AdminModelPools({
     "health" | "create" | "copy" | "bulk-toggle" | "bulk-add" | null
   >(null);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedPoolId, setSelectedPoolId] = useState("");
   const refreshTriggeredForKeyRef = useRef("");
   const lastDueRefreshAtRef = useRef(0);
   const activeTiers = accessTiers.filter((tier) => tier.status === "ACTIVE");
@@ -282,6 +286,43 @@ function AdminModelPools({
   const creatableModelKey = creatableModels.join("|");
   const selectedCreateModel = createModel || creatableModels[0] || "";
   const groupedModelPools = groupModelPools(modelPools);
+  const selectedModelGroup =
+    groupedModelPools.find((group) => group.model === selectedModel) ??
+    groupedModelPools[0] ??
+    null;
+  const selectedPool =
+    selectedModelGroup?.pools.find((pool) => pool.id === selectedPoolId) ??
+    selectedModelGroup?.pools[0] ??
+    null;
+  const selectableChannels = selectedPool ? channelsForPool(selectedPool) : [];
+  const selectedChannel =
+    selectedPool
+      ? channelSelections[selectedPool.id] ||
+        selectableChannels[0]?.upstreamProvider ||
+        ""
+      : "";
+  const callableChannels =
+    selectedPool?.channels.filter(isCallableModelPoolChannel) ?? [];
+  const unavailableChannels =
+    selectedPool?.channels.filter((channel) => !isCallableModelPoolChannel(channel)) ??
+    [];
+
+  useEffect(() => {
+    if (!selectedModelGroup) {
+      setSelectedModel("");
+      setSelectedPoolId("");
+      return;
+    }
+    if (selectedModel !== selectedModelGroup.model) {
+      setSelectedModel(selectedModelGroup.model);
+    }
+    if (
+      selectedModelGroup.pools.length > 0 &&
+      !selectedModelGroup.pools.some((pool) => pool.id === selectedPoolId)
+    ) {
+      setSelectedPoolId(selectedModelGroup.pools[0]?.id ?? "");
+    }
+  }, [selectedModel, selectedModelGroup, selectedPoolId]);
 
   useEffect(() => {
     if (healthCheck) {
@@ -334,14 +375,6 @@ function AdminModelPools({
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void onRefreshModelPools();
-    }, 2000);
-
-    return () => window.clearInterval(timer);
-  }, [onRefreshModelPools]);
-
-  useEffect(() => {
     const dueChannelIds = modelPools
       .flatMap((pool) =>
         pool.channels.map((channel) => ({
@@ -360,7 +393,7 @@ function AdminModelPools({
       )
       .sort();
     const dueKey = dueChannelIds.join("|");
-    const canRetryDueRefresh = nowMs - lastDueRefreshAtRef.current > 2000;
+    const canRetryDueRefresh = nowMs - lastDueRefreshAtRef.current > 5000;
 
     if (
       !dueKey ||
@@ -796,26 +829,7 @@ function AdminModelPools({
   }
 
   return (
-    <div className="grid admin-page admin-model-pool-page">
-      <section className="admin-hero-panel">
-        <div>
-          <span className="eyebrow">Model Pool Control</span>
-          <h2>模型池调度工作台</h2>
-          <p>模型池是用户可见模型、访问等级和上游渠道之间的调度层；这里按健康、覆盖和批量维护来组织。</p>
-        </div>
-        <div className="admin-hero-status">
-          <StatusTile
-            label="可调用模型池"
-            ok={modelPools.some((pool) => pool.readyChannelCount > 0)}
-            value={`${modelPools.filter((pool) => pool.readyChannelCount > 0).length}/${modelPools.length}`}
-          />
-          <StatusTile
-            label="自动检测"
-            ok={healthCheck ? healthCheck.intervalSeconds > 0 : undefined}
-            value={healthCheck ? `${healthCheck.intervalSeconds}s` : "加载中"}
-          />
-        </div>
-      </section>
+    <div className="admin-page admin-model-pool-page">
       {modelPoolModal === "health" ? (
         <ModalShell
           title="模型池检测参数"
@@ -1144,60 +1158,74 @@ function AdminModelPools({
         </ModalShell>
       ) : null}
 
-      <section className="action-panel admin-toolbar admin-secondary-toolbar">
-        <div>
-          <h2>模型池操作</h2>
-          <p>模型池决定用户侧能看到和能调用的模型。</p>
-        </div>
-        <div className="button-row admin-toolbar-actions">
-          <button
-            className="button"
-            disabled={creatableModels.length === 0 || !selectedCreateTierId}
-            onClick={() => setModelPoolModal("create")}
-            type="button"
-          >
-            <Plus size={17} />
-            添加模型池
-          </button>
-          <button
-            className="button secondary"
-            onClick={() => setModelPoolModal("health")}
-            type="button"
-          >
-            <Settings size={17} />
-            检测参数
-          </button>
-          <button
-            className="button secondary"
-            disabled={copyTargetTiers.length === 0}
-            onClick={() => setModelPoolModal("copy")}
-            type="button"
-          >
-            <Copy size={17} />
-            复制 standard
-          </button>
-          <button
-            className="button secondary"
-            disabled={bulkProviderOptions.length === 0}
-            onClick={() => setModelPoolModal("bulk-toggle")}
-            type="button"
-          >
-            <SlidersHorizontal size={17} />
-            批量启停
-          </button>
-          <button
-            className="button secondary"
-            disabled={bulkProviderOptions.length === 0}
-            onClick={() => setModelPoolModal("bulk-add")}
-            type="button"
-          >
-            <Plus size={17} />
-            批量加渠道
-          </button>
-        </div>
-      </section>
-
-      <section className="card model-pool-list-card">
+      <WorkbenchLayout
+        className="model-pool-workbench"
+        sidebar={
+          <>
+            <div className="console-side-head">
+              <div>
+                <h2 className="section-title">模型</h2>
+                <p className="section-subtitle">
+                  {modelPools.filter((pool) => pool.readyChannelCount > 0).length}/{modelPools.length} 池可调用 · 检测 {healthCheck ? `${healthCheck.intervalSeconds}s` : "加载中"}
+                </p>
+              </div>
+            </div>
+            <div className="console-nav-list">
+              {groupedModelPools.map((modelGroup) => (
+                <ConsoleNavButton
+                  key={modelGroup.model}
+                  active={selectedModelGroup?.model === modelGroup.model}
+                  title={modelGroup.model}
+                  description={`${modelGroup.pools.length} 个等级 · READY ${sumReadyChannels(modelGroup.pools)} · 渠道 ${sumChannels(modelGroup.pools)}`}
+                  meta={<StatusPill status={modelGroup.pools.some((pool) => pool.readyChannelCount > 0) ? "READY" : "UNAVAILABLE"} />}
+                  onClick={() => {
+                    setSelectedModel(modelGroup.model);
+                    setSelectedPoolId(modelGroup.pools[0]?.id ?? "");
+                  }}
+                />
+              ))}
+              {groupedModelPools.length === 0 ? (
+                <div className="empty-state compact">暂无模型池</div>
+              ) : null}
+            </div>
+          </>
+        }
+        toolbar={
+          <>
+            <div>
+              <h2 className="section-title">模型池调度工作台</h2>
+              <p className="section-subtitle">左侧选模型，中间选等级池，右侧维护渠道。</p>
+            </div>
+            <div className="button-row admin-toolbar-actions">
+              <button className="button secondary" onClick={onRefreshModelPools} type="button">
+                <RefreshCw size={17} />
+                刷新
+              </button>
+              <button className="button" disabled={creatableModels.length === 0 || !selectedCreateTierId} onClick={() => setModelPoolModal("create")} type="button">
+                <Plus size={17} />
+                添加模型池
+              </button>
+              <button className="button secondary" onClick={() => setModelPoolModal("health")} type="button">
+                <Settings size={17} />
+                检测参数
+              </button>
+              <button className="button secondary" disabled={copyTargetTiers.length === 0} onClick={() => setModelPoolModal("copy")} type="button">
+                <Copy size={17} />
+                复制 standard
+              </button>
+              <button className="button secondary" disabled={bulkProviderOptions.length === 0} onClick={() => setModelPoolModal("bulk-toggle")} type="button">
+                <SlidersHorizontal size={17} />
+                批量启停
+              </button>
+              <button className="button secondary" disabled={bulkProviderOptions.length === 0} onClick={() => setModelPoolModal("bulk-add")} type="button">
+                <Plus size={17} />
+                批量加渠道
+              </button>
+            </div>
+          </>
+        }
+      >
+      <section className="card model-pool-list-card legacy-model-pool-list">
         <div className="section-head">
           <div>
             <h2 className="section-title">模型池列表</h2>
@@ -1605,6 +1633,169 @@ function AdminModelPools({
           ) : null}
         </div>
       </section>
+      <div className="model-pool-triple">
+        <section className="card model-pool-tier-list">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">等级池</h2>
+              <p className="section-subtitle">{selectedModelGroup?.model ?? "未选择模型"}</p>
+            </div>
+          </div>
+          <div className="console-nav-list">
+            {selectedModelGroup?.pools.map((pool) => (
+              <ConsoleNavButton
+                key={pool.id}
+                active={selectedPool?.id === pool.id}
+                title={pool.tier?.name ?? "Standard"}
+                description={`${pool.tier?.code ?? "standard"} · READY ${pool.readyChannelCount}/${pool.channels.length} · ${modelPoolHealthCheckEndpointLabel(pool.healthCheckEndpoint)}`}
+                meta={<StatusPill status={pool.readyChannelCount > 0 ? "READY" : "UNAVAILABLE"} />}
+                onClick={() => setSelectedPoolId(pool.id)}
+              />
+            ))}
+            {!selectedModelGroup ? <div className="empty-state compact">暂无等级池</div> : null}
+          </div>
+        </section>
+
+        <section className="card model-pool-detail">
+          {selectedPool ? (
+            <>
+              <div className="section-head">
+                <div>
+                  <h2 className="section-title">
+                    {selectedPool.tier?.name ?? "Standard"} · {selectedPool.model}
+                  </h2>
+                  <p className="section-subtitle">
+                    READY {selectedPool.readyChannelCount} · 已定价 {selectedPool.pricedChannelCount} · 渠道 {selectedPool.channels.length}
+                  </p>
+                </div>
+                <div className="button-row">
+                  <select
+                    className="input compact-select"
+                    disabled={busyId === `${selectedPool.id}:health-endpoint`}
+                    value={normalizeModelPoolHealthCheckEndpoint(selectedPool.healthCheckEndpoint)}
+                    onChange={(event) =>
+                      setPoolHealthCheckEndpoint(
+                        selectedPool,
+                        event.target.value as ModelPoolHealthCheckEndpoint,
+                      )
+                    }
+                  >
+                    <option value="responses">Responses</option>
+                    <option value="chat.completions">Chat Completions</option>
+                  </select>
+                  <button
+                    className="button secondary"
+                    disabled={busyId === `${selectedPool.id}:auto-health`}
+                    onClick={() => setPoolAutoHealthCheck(selectedPool, !selectedPool.autoHealthCheckEnabled)}
+                    type="button"
+                  >
+                    {selectedPool.autoHealthCheckEnabled ? "关闭自动检测" : "开启自动检测"}
+                  </button>
+                  {selectedPool.status === "ACTIVE" ? (
+                    <button className="button secondary" disabled={busyId === selectedPool.id} onClick={() => setPoolStatus(selectedPool, "DISABLED")} type="button">
+                      停用模型池
+                    </button>
+                  ) : (
+                    <button className="button" disabled={busyId === selectedPool.id} onClick={() => setPoolStatus(selectedPool, "ACTIVE")} type="button">
+                      启用模型池
+                    </button>
+                  )}
+                  <button className="button danger" disabled={busyId === selectedPool.id} onClick={() => deletePool(selectedPool)} type="button">
+                    <Trash2 size={15} />
+                    删除
+                  </button>
+                </div>
+              </div>
+              <div className="section-head compact-head">
+                <div>
+                  <h3 className="section-title">上游渠道</h3>
+                  <p className="section-subtitle">
+                    {selectedPool.autoHealthCheckEnabled
+                      ? `自动检测使用 ${modelPoolHealthCheckEndpointLabel(selectedPool.healthCheckEndpoint)}。`
+                      : "已关闭自动检测；手动检测和用户调用不受影响。"}
+                  </p>
+                </div>
+                <div className="button-row">
+                  <select
+                    className="input compact-select"
+                    disabled={selectableChannels.length === 0}
+                    value={selectedChannel}
+                    onChange={(event) =>
+                      setChannelSelections((current) => ({
+                        ...current,
+                        [selectedPool.id]: event.target.value,
+                      }))
+                    }
+                  >
+                    {selectableChannels.map((channel) => (
+                      <option key={channel.id} value={channel.upstreamProvider}>
+                        {channel.upstreamProvider} · {channel.priceEnabled ? "价格启用" : "价格停用"} · {channel.providerStatus} · Key {channel.activeKeyCount}
+                      </option>
+                    ))}
+                    {selectableChannels.length === 0 ? <option value="">暂无可添加渠道</option> : null}
+                  </select>
+                  <button className="button secondary" disabled={busyId === selectedPool.id || !selectedChannel} onClick={() => addChannel(selectedPool)} type="button">
+                    <Plus size={17} />
+                    添加渠道
+                  </button>
+                </div>
+              </div>
+              <div className="pool-channel-groups compact">
+                <section className="pool-channel-section callable">
+                  <div className="pool-channel-section-head">
+                    <span>可调用池</span>
+                    <strong>{callableChannels.length}</strong>
+                  </div>
+                  <div className="pool-channel-list">
+                    {callableChannels.map((channel, index) => (
+                      <ModelPoolChannelCard
+                        key={channel.id}
+                        channel={channel}
+                        pool={selectedPool}
+                        rank={index + 1}
+                        healthCheck={healthCheck}
+                        nowMs={nowMs}
+                        busyId={busyId}
+                        onCheck={checkChannel}
+                        onDelete={deleteChannel}
+                        onSetStatus={setChannelStatus}
+                        forceAvailableButtonEnabled={forceAvailableButtonEnabled}
+                      />
+                    ))}
+                    {callableChannels.length === 0 ? <div className="pool-channel-empty">暂无可调用渠道</div> : null}
+                  </div>
+                </section>
+                <section className="pool-channel-section unavailable">
+                  <div className="pool-channel-section-head">
+                    <span>不可调用池</span>
+                    <strong>{unavailableChannels.length}</strong>
+                  </div>
+                  <div className="pool-channel-list">
+                    {unavailableChannels.map((channel) => (
+                      <ModelPoolChannelCard
+                        key={channel.id}
+                        channel={channel}
+                        pool={selectedPool}
+                        healthCheck={healthCheck}
+                        nowMs={nowMs}
+                        busyId={busyId}
+                        onCheck={checkChannel}
+                        onDelete={deleteChannel}
+                        onSetStatus={setChannelStatus}
+                        forceAvailableButtonEnabled={forceAvailableButtonEnabled}
+                      />
+                    ))}
+                    {unavailableChannels.length === 0 ? <div className="pool-channel-empty">暂无不可调用渠道</div> : null}
+                  </div>
+                </section>
+              </div>
+            </>
+          ) : (
+            <div className="empty-cell">请选择模型池</div>
+          )}
+        </section>
+      </div>
+      </WorkbenchLayout>
     </div>
   );
 }

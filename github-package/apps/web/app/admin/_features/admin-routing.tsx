@@ -509,7 +509,42 @@ export function AdminRouting({
   }
 
   return (
-    <div className="stack">
+    <div className="stack admin-routing-workbench">
+      <div className="routing-split">
+        <section className="card routing-rules-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">专线规则</h2>
+              <p className="section-subtitle">生效优先级固定为 IP、API Key、用户；同层级按优先级升序。</p>
+            </div>
+            <StatusPill status={dedicatedRouteRules.some((rule) => rule.status === "ACTIVE") ? "ACTIVE" : "DISABLED"} />
+          </div>
+          <form className="grid-form compact-routing-form" onSubmit={createRule}>
+            <label>规则名<input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, name: event.target.value }))} required value={ruleDraft.name} /></label>
+            <label>目标类型<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, targetType: event.target.value }))} value={ruleDraft.targetType}><option value="USER">用户</option><option value="API_KEY">API Key</option><option value="IP">IP / CIDR</option></select></label>
+            {ruleDraft.targetType === "USER" ? <label>用户<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, userId: event.target.value }))} required value={ruleDraft.userId}>{users.map((item) => <option key={item.id} value={item.id}>{item.email}</option>)}</select></label> : null}
+            {ruleDraft.targetType === "API_KEY" ? <label>API Key<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, apiKeyId: event.target.value }))} required value={ruleDraft.apiKeyId}>{users.flatMap((item) => (item.apiKeys ?? []).map((key) => <option key={key.id} value={key.id}>{item.email} · {key.name} ({key.keyPrefix})</option>))}</select></label> : null}
+            {ruleDraft.targetType === "IP" ? <label>IP / CIDR<input className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, ipPattern: event.target.value }))} placeholder="203.0.113.10 或 203.0.113.0/24" required value={ruleDraft.ipPattern} /></label> : null}
+            <label>访问等级<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, accessTierId: event.target.value }))} required value={ruleDraft.accessTierId}>{activeTiers.map((tier) => <option key={tier.id} value={tier.id}>{tier.name} ({tier.code})</option>)}</select></label>
+            <label>专用上游<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, upstreamProvider: event.target.value, upstreamProviderKeyId: "" }))} value={ruleDraft.upstreamProvider}><option value="">不限制</option>{providerNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label>专用 Key<select className="input" onChange={(event) => setRuleDraft((current) => ({ ...current, upstreamProviderKeyId: event.target.value }))} value={ruleDraft.upstreamProviderKeyId}><option value="">不限制</option>{selectedProviderKeys.map((key) => <option key={key.id} value={key.id}>{key.providerName} · {key.name} ({key.keyPrefix})</option>)}</select></label>
+            <label>优先级<input className="input" min={1} onChange={(event) => setRuleDraft((current) => ({ ...current, priority: event.target.value }))} type="number" value={ruleDraft.priority} /></label>
+            <div className="form-actions"><button className="button" type="submit"><Plus size={17} />新增专线</button></div>
+          </form>
+          <AdminDataTable
+            columns={[
+              { accessorKey: "rule", header: "规则" },
+              { accessorKey: "target", header: "目标" },
+              { accessorKey: "tier", header: "等级" },
+              { accessorKey: "route", header: "专线" },
+              { accessorKey: "status", header: "状态" },
+              { accessorKey: "actions", header: "操作" },
+            ]}
+            data={dedicatedRouteRows}
+            empty="暂无专线规则"
+          />
+        </section>
+        <div className="routing-side-panel">
       <section className="card">
         <div className="section-head">
           <div>
@@ -657,7 +692,7 @@ export function AdminRouting({
         ) : null}
       </section>
 
-      <section className="card">
+      <section className="card routing-tier-panel">
         <div className="section-head">
           <div>
             <h2 className="section-title">访问等级</h2>
@@ -747,7 +782,7 @@ export function AdminRouting({
         />
       </section>
 
-      <section className="card">
+      <section className="card legacy-routing-rules">
         <div className="section-head">
           <div>
             <h2 className="section-title">专线规则</h2>
@@ -995,6 +1030,8 @@ export function AdminRouting({
           empty="暂无专线规则"
         />
       </section>
+        </div>
+      </div>
     </div>
   );
 }

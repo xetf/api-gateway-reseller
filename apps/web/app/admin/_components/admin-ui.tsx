@@ -39,6 +39,101 @@ export function AdminEmptyState({ children }: { children: ReactNode }) {
   return <div className="admin-empty-state">{children}</div>;
 }
 
+export function WorkbenchLayout({
+  sidebar,
+  toolbar,
+  children,
+  className,
+}: {
+  sidebar: ReactNode;
+  toolbar?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className ? `admin-workbench ${className}` : "admin-workbench"}>
+      <aside className="admin-workbench-sidebar">{sidebar}</aside>
+      <section className="admin-workbench-main">
+        {toolbar ? <div className="admin-workbench-toolbar">{toolbar}</div> : null}
+        <div className="admin-workbench-content">{children}</div>
+      </section>
+    </div>
+  );
+}
+
+export function SettingsConsoleLayout({
+  nav,
+  summary,
+  children,
+  className,
+}: {
+  nav: ReactNode;
+  summary?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={
+        className
+          ? `admin-settings-console ${className}`
+          : "admin-settings-console"
+      }
+    >
+      <aside className="admin-settings-console-nav">{nav}</aside>
+      <section className="admin-settings-console-panel">{children}</section>
+      {summary ? (
+        <aside className="admin-settings-console-summary">{summary}</aside>
+      ) : null}
+    </div>
+  );
+}
+
+export function DataConsoleLayout({
+  toolbar,
+  children,
+  className,
+}: {
+  toolbar?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className ? `admin-data-console ${className}` : "admin-data-console"}>
+      {toolbar ? <div className="admin-data-console-toolbar">{toolbar}</div> : null}
+      <div className="admin-data-console-body">{children}</div>
+    </div>
+  );
+}
+
+export function ConsoleNavButton({
+  active,
+  title,
+  description,
+  meta,
+  onClick,
+}: {
+  active: boolean;
+  title: ReactNode;
+  description?: ReactNode;
+  meta?: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={active ? "console-nav-button active" : "console-nav-button"}
+      onClick={onClick}
+      type="button"
+    >
+      <span>
+        <strong>{title}</strong>
+        {description ? <small>{description}</small> : null}
+      </span>
+      {meta ? <em>{meta}</em> : null}
+    </button>
+  );
+}
+
 export function ModalShell({
   title,
   description,
@@ -56,9 +151,7 @@ export function ModalShell({
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="modal-backdrop" />
-        <Dialog.Content
-          className={wide ? "form-modal modal-wide" : "form-modal"}
-        >
+        <Dialog.Content className={wide ? "form-modal modal-wide" : "form-modal"}>
           <div className="modal-header">
             <div>
               <Dialog.Title asChild>
@@ -74,7 +167,7 @@ export function ModalShell({
               ×
             </Dialog.Close>
           </div>
-          {children}
+          <div className="modal-shell-content">{children}</div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

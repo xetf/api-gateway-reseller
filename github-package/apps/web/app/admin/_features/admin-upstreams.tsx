@@ -26,6 +26,7 @@ import {
 import {
   AdminDataTable,
   AdminFoldout,
+  ConsoleNavButton,
   InfoLine,
   Metric,
   ModalShell,
@@ -33,6 +34,7 @@ import {
   MobileRecord,
   StatusPill,
   StatusTile,
+  WorkbenchLayout,
 } from "../_components/admin-ui";
 import { useAdminResource } from "../_components/admin-hooks";
 
@@ -240,6 +242,11 @@ export function UpstreamProviders({
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(
     null,
   );
+  const [providerDetailTab, setProviderDetailTab] = useState<
+    "overview" | "keys" | "prices" | "tools"
+  >("overview");
+  const [providerSearch, setProviderSearch] = useState("");
+  const [priceSearch, setPriceSearch] = useState("");
   const [keyModalProvider, setKeyModalProvider] =
     useState<UpstreamProvider | null>(null);
   const [keyName, setKeyName] = useState("key-1");
@@ -884,6 +891,28 @@ export function UpstreamProviders({
   const selectedProviderPrices = selectedProvider
     ? pricesForProvider(selectedProvider.name)
     : [];
+  const filteredProviders = providers.filter((provider) => {
+    const keyword = providerSearch.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return (
+      provider.name.toLowerCase().includes(keyword) ||
+      provider.baseUrl.toLowerCase().includes(keyword) ||
+      provider.status.toLowerCase().includes(keyword)
+    );
+  });
+  const filteredSelectedProviderPrices = selectedProviderPrices.filter((price) => {
+    const keyword = priceSearch.trim().toLowerCase();
+    if (!keyword) {
+      return true;
+    }
+    return (
+      price.model.toLowerCase().includes(keyword) ||
+      price.priceVersion.toLowerCase().includes(keyword) ||
+      price.upstreamProvider.toLowerCase().includes(keyword)
+    );
+  });
   const selectedProviderKeyRows = (selectedProvider?.keys ?? []).map((key) => ({
     id: key.id,
     name: displayUpstreamProviderKeyName(key.name),
@@ -938,7 +967,7 @@ export function UpstreamProviders({
       </div>
     ),
   }));
-  const selectedProviderPriceRows = selectedProviderPrices.map((price) => ({
+  const selectedProviderPriceRows = filteredSelectedProviderPrices.map((price) => ({
     id: price.id,
     model: price.model,
     status: <StatusPill status={price.enabled ? "ACTIVE" : "DISABLED"} />,
@@ -1025,24 +1054,55 @@ export function UpstreamProviders({
 
   return (
     <>
-      <div className="grid admin-page admin-gateway-page">
-        <section className="admin-hero-panel">
-          <div>
-            <span className="eyebrow">Upstream Control</span>
-            <h2>上游渠道工作台</h2>
-            <p>先选渠道，再处理 Key、价格、导入和导出；避免所有上游和价格表同时摊开。</p>
-          </div>
-          <div className="admin-hero-status">
-            <StatusTile label="启用渠道" ok={activeProviderCount > 0} value={`${activeProviderCount}/${providers.length}`} />
-            <StatusTile label="启用价格" ok={enabledPriceCount > 0} value={`${enabledPriceCount}`} />
-          </div>
-        </section>
-        <section className="action-panel admin-toolbar admin-secondary-toolbar">
-          <div>
-            <h2>上游操作</h2>
-            <p>新增和编辑上游配置都在弹窗里完成，密钥不会占用列表空间。</p>
-          </div>
-          <div className="button-row admin-toolbar-actions">
+      <div className="admin-page admin-gateway-page">
+        <WorkbenchLayout
+          className="upstream-console-workbench"
+          sidebar={
+            <>
+              <div className="console-side-head">
+                <div>
+                  <h2 className="section-title">上游渠道</h2>
+                  <p className="section-subtitle">
+                    {activeProviderCount}/{providers.length} 启用 · {totalProviderKeyCount} Key · {enabledPriceCount} 价格
+                  </p>
+                </div>
+                <input
+                  className="input search-input"
+                  placeholder="搜索渠道 / URL"
+                  value={providerSearch}
+                  onChange={(event) => setProviderSearch(event.target.value)}
+                />
+              </div>
+              <div className="console-nav-list">
+                {filteredProviders.map((provider) => {
+                  const activeKeys =
+                    provider.keys?.filter((key) => key.status === "ACTIVE")
+                      .length ?? 0;
+                  const providerPrices = pricesForProvider(provider.name);
+                  return (
+                    <ConsoleNavButton
+                      key={provider.id}
+                      active={selectedProvider?.id === provider.id}
+                      title={provider.name}
+                      description={`${provider.baseUrl} · Key ${activeKeys}/${provider.keys?.length ?? 0} · 价格 ${providerPrices.filter((price) => price.enabled).length}/${providerPrices.length}`}
+                      meta={<StatusPill status={provider.status} />}
+                      onClick={() => setSelectedProviderId(provider.id)}
+                    />
+                  );
+                })}
+                {filteredProviders.length === 0 ? (
+                  <div className="empty-state compact">暂无匹配渠道</div>
+                ) : null}
+              </div>
+            </>
+          }
+          toolbar={
+            <>
+              <div>
+                <h2 className="section-title">上游渠道工作台</h2>
+                <p className="section-subtitle">选中渠道后，在右侧处理概览、Key、模型价格和导入导出。</p>
+              </div>
+              <div className="button-row admin-toolbar-actions">
             <button
               className="button"
               onClick={openCreateProvider}
@@ -1069,91 +1129,16 @@ export function UpstreamProviders({
               统一定价
             </button>
           </div>
-        </section>
-
-        <div className="upstream-workbench">
-          <aside className="card upstream-provider-browser">
-            <div className="section-head">
-              <div>
-                <h2 className="section-title">上游渠道</h2>
-                <p className="section-subtitle">
-                  {activeProviderCount} 个启用 / {providers.length} 个渠道 ·{" "}
-                  {totalProviderKeyCount} 个 Key · {enabledPriceCount}{" "}
-                  条启用价格
-                </p>
-              </div>
-            </div>
-            <div className="upstream-provider-list">
-              {providers.map((provider) => {
-                const activeKeys =
-                  provider.keys?.filter((key) => key.status === "ACTIVE")
-                    .length ?? 0;
-                const providerPrices = pricesForProvider(provider.name);
-                return (
-                  <button
-                    className={
-                      selectedProvider?.id === provider.id
-                        ? "upstream-provider-item active"
-                        : "upstream-provider-item"
-                    }
-                    key={provider.id}
-                    onClick={() => setSelectedProviderId(provider.id)}
-                    type="button"
-                  >
-                    <span className="upstream-provider-item-head">
-                      <strong>{provider.name}</strong>
-                      <StatusPill status={provider.status} />
-                    </span>
-                    <span className="upstream-provider-item-meta">
-                      Key {activeKeys}/{provider.keys?.length ?? 0} · 价格{" "}
-                      {providerPrices.filter((price) => price.enabled).length}/
-                      {providerPrices.length}
-                    </span>
-                    <span className="upstream-provider-item-url">
-                      {provider.baseUrl}
-                    </span>
-                  </button>
-                );
-              })}
-              {providers.length === 0 ? (
-                <div className="empty-state compact">
-                  还没有上游渠道，先添加一个上游和首个 Key。
-                </div>
-              ) : null}
-            </div>
-          </aside>
-
-          <section className="card">
-            <div className="section-head">
-              <div>
-                <h2 className="section-title">渠道详情与模型价格</h2>
-                <p className="section-subtitle">
-                  当前只展开选中的上游，切换渠道不会再把所有表格堆在一起。
-                </p>
-              </div>
-              <div className="button-row">
-                <button
-                  className="button secondary"
-                  onClick={() => exportModelPrices("json")}
-                  type="button"
-                >
-                  导出 JSON
-                </button>
-                <button
-                  className="button secondary"
-                  onClick={() => exportModelPrices("csv")}
-                  type="button"
-                >
-                  导出 CSV
-                </button>
-              </div>
-            </div>
+            </>
+          }
+        >
+          {selectedProvider ? (
             <div className="provider-stack stack-top">
               {(selectedProvider ? [selectedProvider] : []).map((provider) => {
                 const providerPrices = pricesForProvider(provider.name);
 
                 return (
-                  <section className="provider-panel" key={provider.id}>
+                  <section className="provider-panel provider-detail-panel" key={provider.id}>
                     <div className="provider-head">
                       <div>
                         <div className="provider-title">
@@ -1225,15 +1210,40 @@ export function UpstreamProviders({
                       </div>
                     </div>
 
+                    <div className="segmented-tabs">
+                      {[
+                        ["overview", "概览"],
+                        ["keys", "Key"],
+                        ["prices", "模型价格"],
+                        ["tools", "导入/导出"],
+                      ].map(([id, label]) => (
+                        <button
+                          key={id}
+                          className={providerDetailTab === id ? "active" : ""}
+                          onClick={() => setProviderDetailTab(id as typeof providerDetailTab)}
+                          type="button"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {providerDetailTab === "overview" ? (
+                      <div className="grid cols-3 metric-row">
+                        <Metric label="Key" value={`${provider.keys?.filter((key) => key.status === "ACTIVE").length ?? 0}/${provider.keys?.length ?? 0}`} />
+                        <Metric label="模型价格" value={`${providerPrices.filter((price) => price.enabled).length}/${providerPrices.length}`} />
+                        <Metric label="超时" value={seconds(provider.timeoutMs)} />
+                      </div>
+                    ) : null}
+
+                    {providerDetailTab === "keys" ? (
+                      <>
                     <div className="section-head compact-head">
                       <div>
                         <h3 className="section-title">Key 池</h3>
-                        <p className="section-subtitle">
-                          调度会在 ACTIVE Key 中按进行中请求数均摊。
-                        </p>
+                        <p className="section-subtitle">调度会在 ACTIVE Key 中按进行中请求数均摊。</p>
                       </div>
                     </div>
-
                     <AdminDataTable
                       columns={[
                         { accessorKey: "name", header: "名称" },
@@ -1249,6 +1259,8 @@ export function UpstreamProviders({
                       data={selectedProviderKeyRows}
                       empty="暂无 Key"
                     />
+                      </>
+                    ) : null}
                     <div className="mobile-record-list">
                       {(provider.keys ?? []).map((key) => (
                         <MobileRecord
@@ -1323,6 +1335,8 @@ export function UpstreamProviders({
                       ) : null}
                     </div>
 
+                    {providerDetailTab === "prices" ? (
+                      <>
                     <div className="section-head compact-head">
                       <div>
                         <h3 className="section-title">模型价格</h3>
@@ -1330,6 +1344,12 @@ export function UpstreamProviders({
                           输入 / 缓存输入 / 输出分别计价，再乘以倍率。
                         </p>
                       </div>
+                      <input
+                        className="input search-input"
+                        placeholder="搜索模型 / 版本"
+                        value={priceSearch}
+                        onChange={(event) => setPriceSearch(event.target.value)}
+                      />
                       <button
                         className="button secondary"
                         onClick={() => openCreatePrice(provider.name)}
@@ -1357,6 +1377,8 @@ export function UpstreamProviders({
                       data={selectedProviderPriceRows}
                       empty="暂无模型价格"
                     />
+                      </>
+                    ) : null}
                     <div className="mobile-record-list">
                       {providerPrices.map((price) => (
                         <MobileRecord
@@ -1435,15 +1457,39 @@ export function UpstreamProviders({
                         <MobileEmpty>暂无模型价格</MobileEmpty>
                       ) : null}
                     </div>
+
+                    {providerDetailTab === "tools" ? (
+                      <div className="admin-settings-stack">
+                        <section className="admin-action-card">
+                          <div>
+                            <strong>导入价格</strong>
+                            <small>批量创建或更新模型价格。</small>
+                          </div>
+                          <button className="button secondary" onClick={openPriceImportModal} type="button">
+                            <FileSearch size={16} />
+                            导入
+                          </button>
+                        </section>
+                        <section className="admin-action-card">
+                          <div>
+                            <strong>导出价格</strong>
+                            <small>导出当前全站模型价格配置。</small>
+                          </div>
+                          <div className="button-row">
+                            <button className="button secondary" onClick={() => exportModelPrices("json")} type="button">JSON</button>
+                            <button className="button secondary" onClick={() => exportModelPrices("csv")} type="button">CSV</button>
+                          </div>
+                        </section>
+                      </div>
+                    ) : null}
                   </section>
                 );
               })}
-              {providers.length === 0 ? (
-                <div className="empty-cell">暂无上游渠道</div>
-              ) : null}
             </div>
-          </section>
-        </div>
+          ) : (
+            <div className="empty-cell">暂无上游渠道</div>
+          )}
+        </WorkbenchLayout>
       </div>
 
       {providerModalOpen ? (

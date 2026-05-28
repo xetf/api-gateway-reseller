@@ -14,7 +14,12 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 import { confirmAdminAction } from "../_components/admin-confirm";
 import { useAdminResource } from "../_components/admin-hooks";
-import { AdminDataTable, StatusPill } from "../_components/admin-ui";
+import {
+  AdminDataTable,
+  ConsoleNavButton,
+  SettingsConsoleLayout,
+  StatusPill,
+} from "../_components/admin-ui";
 
 type DispatchSettings = {
   stickyEnabled: boolean;
@@ -114,6 +119,9 @@ export function AdminDispatchPage({
     sortOrder: "100",
     description: "",
   });
+  const [activePanel, setActivePanel] = useState<
+    "sticky" | "slow" | "entropy" | "penalty" | "tiers" | "ip"
+  >("sticky");
   const [busy, setBusy] = useState(false);
 
   const tiers = tiersQuery.data?.tiers ?? [];
@@ -443,27 +451,63 @@ export function AdminDispatchPage({
   }));
 
   return (
-    <div className="grid admin-page admin-dispatch-page">
-      <section className="admin-hero-panel">
-        <div>
-          <span className="eyebrow">Dispatch System</span>
-          <h2>调度与分发系统</h2>
-          <p>这里集中配置 IP 粘性、慢定义、解绑、惩罚、健康检测和熵值选择规则。</p>
-        </div>
-        <div className="dispatch-hero-metrics">
-          <DispatchMetric label="粘性" value={draft.stickyEnabled ? "开启" : "关闭"} />
-          <DispatchMetric label="解绑" value={draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"} />
-          <DispatchMetric label="惩罚" value={draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"} />
-          <DispatchMetric label="等级" value={`${activeTiers.length}/${tiers.length}`} />
-        </div>
-      </section>
-
+    <div className="admin-page admin-dispatch-page">
       <form className="dispatch-layout" onSubmit={saveSettings}>
+        <SettingsConsoleLayout
+          className="dispatch-settings-console"
+          nav={
+            <>
+              <div className="console-side-head">
+                <h2 className="section-title">调度与分发</h2>
+                <p className="section-subtitle">按类别维护调度参数、等级和 IP 规则。</p>
+              </div>
+              {[
+                ["sticky", "粘性策略", draft.stickyEnabled ? "开启" : "关闭"],
+                ["slow", "慢请求解绑", draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"],
+                ["entropy", "熵值选择", `${draft.speedRankPenalty}/${draft.stickyHitPenalty}`],
+                ["penalty", "惩罚与健康检测", draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"],
+                ["tiers", "等级预设", `${activeTiers.length}/${tiers.length}`],
+                ["ip", "IP 等级规则", `${activeIpRuleCount} 条`],
+              ].map(([id, title, meta]) => (
+                <ConsoleNavButton
+                  key={id}
+                  active={activePanel === id}
+                  title={title}
+                  meta={meta}
+                  onClick={() => setActivePanel(id as typeof activePanel)}
+                />
+              ))}
+            </>
+          }
+          summary={
+            <>
+              <RuleTitle
+                icon={<Clock3 size={18} />}
+                title="规则速览"
+                subtitle="保存后调度服务立即读取新配置。"
+              />
+              <div className="dispatch-summary-list">
+                <InfoPair label="粘性窗口" value={`${draft.stickyTtlSeconds}s`} />
+                <InfoPair label="慢定义" value={`${draft.slowFirstTokenMs}ms / ${draft.slowTotalLatencyMs}ms`} />
+                <InfoPair label="解绑阈值" value={draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"} />
+                <InfoPair label="惩罚阈值" value={draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"} />
+                <InfoPair label="惩罚时长" value={`${draft.penaltySeconds}s`} />
+                <InfoPair label="健康检测" value={`${draft.healthCheckIntervalSeconds}s`} />
+                <InfoPair label="IP 等级规则" value={`${activeIpRuleCount} 条启用`} />
+              </div>
+              <button className="button dispatch-save-button" disabled={busy} type="submit">
+                <Save size={16} />
+                {busy ? "保存中..." : "保存调度设置"}
+              </button>
+            </>
+          }
+        >
         <div className="dispatch-main">
+          {activePanel === "sticky" || activePanel === "slow" ? (
           <section className="card dispatch-rule-card">
             <RuleTitle
               icon={<GitBranch size={18} />}
-              title="粘性与解绑"
+              title={activePanel === "sticky" ? "粘性策略" : "慢请求解绑"}
               subtitle="成功后按 IP + 模型粘住上游；连续慢可自动解绑。"
               action={
                 <label className="check-row">
@@ -481,10 +525,15 @@ export function AdminDispatchPage({
                 </label>
               }
             />
-            <div className="dispatch-field-grid">
+            {activePanel === "sticky" ? (
+            <div className="dispatch-field-grid two">
               <Field label="粘性时长（秒）" hint="成功调用后，IP 粘住同一上游 Key 的时间。">
                 <input className="input" type="number" min={60} max={86400} value={draft.stickyTtlSeconds} onChange={(event) => setNumber("stickyTtlSeconds", event.target.value)} />
               </Field>
+            </div>
+            ) : (
+            <>
+            <div className="dispatch-field-grid">
               <Field label="首 token 慢阈值（毫秒）" hint="首 token 超过这个时间，就算本次调用慢。">
                 <input className="input" type="number" min={1000} max={300000} value={draft.slowFirstTokenMs} onChange={(event) => setNumber("slowFirstTokenMs", event.target.value)} />
               </Field>
@@ -500,8 +549,12 @@ export function AdminDispatchPage({
               开启粘性解绑规则
               <span>关闭后即使连续慢，也不会解除 IP 粘性。</span>
             </label>
+            </>
+            )}
           </section>
+          ) : null}
 
+          {activePanel === "entropy" ? (
           <section className="card dispatch-rule-card">
             <RuleTitle
               icon={<Gauge size={18} />}
@@ -518,7 +571,9 @@ export function AdminDispatchPage({
               </Field>
             </div>
           </section>
+          ) : null}
 
+          {activePanel === "penalty" ? (
           <section className="card dispatch-rule-card">
             <RuleTitle
               icon={<ShieldCheck size={18} />}
@@ -549,31 +604,11 @@ export function AdminDispatchPage({
               </Field>
             </div>
           </section>
+          ) : null}
         </div>
 
-        <aside className="dispatch-side card">
-          <RuleTitle
-            icon={<Clock3 size={18} />}
-            title="规则速览"
-            subtitle="保存后调度服务立即读取新配置。"
-          />
-          <div className="dispatch-summary-list">
-            <InfoPair label="粘性窗口" value={`${draft.stickyTtlSeconds}s`} />
-            <InfoPair label="慢定义" value={`${draft.slowFirstTokenMs}ms / ${draft.slowTotalLatencyMs}ms`} />
-            <InfoPair label="解绑阈值" value={draft.stickySlowUnbindEnabled && draft.stickyEnabled ? `${draft.slowUnbindThreshold} 次` : "关闭"} />
-            <InfoPair label="惩罚阈值" value={draft.penaltyEnabled ? `${draft.penaltyFailureThreshold} 次` : "关闭"} />
-            <InfoPair label="惩罚时长" value={`${draft.penaltySeconds}s`} />
-            <InfoPair label="健康检测" value={`${draft.healthCheckIntervalSeconds}s`} />
-            <InfoPair label="IP 等级规则" value={`${activeIpRuleCount} 条启用`} />
-          </div>
-          <button className="button dispatch-save-button" disabled={busy} type="submit">
-            <Save size={16} />
-            保存调度设置
-          </button>
-        </aside>
-      </form>
-
       <div className="dispatch-data-grid">
+        {activePanel === "tiers" ? (
         <section className="card dispatch-data-card">
           <div className="section-head">
             <div>
@@ -646,7 +681,9 @@ export function AdminDispatchPage({
             empty="暂无等级预设"
           />
         </section>
+        ) : null}
 
+        {activePanel === "ip" ? (
         <section className="card dispatch-data-card">
           <div className="section-head">
             <div>
@@ -682,7 +719,10 @@ export function AdminDispatchPage({
             empty="暂无 IP 等级规则"
           />
         </section>
+        ) : null}
       </div>
+        </SettingsConsoleLayout>
+      </form>
 
       {editingTier ? (
         <div className="modal-backdrop" onClick={() => setEditingTier(null)}>
