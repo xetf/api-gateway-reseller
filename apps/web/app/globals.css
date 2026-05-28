@@ -4299,9 +4299,7 @@ tbody tr:hover td {
 
 .modal-shell-content {
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
+  display: contents;
 }
 
 .form-modal > .form,
@@ -6703,11 +6701,11 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-users-page {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page:has(.charity-announcement-settings) {
-  grid-template-rows: auto minmax(0, 0.8fr) auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(150px, 0.85fr) auto minmax(0, 1fr);
 }
 
 .shell-admin .admin-users-page .admin-user-directory,
@@ -6741,6 +6739,10 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-redeem-page {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-redeem-page:has(.generated-code-card) {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
@@ -6771,6 +6773,10 @@ td .button-row.compact {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.shell-admin .admin-log-page:has(> .compact-error) {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
 .shell-admin .admin-settings-page {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -6783,7 +6789,7 @@ td .button-row.compact {
 }
 
 .shell-admin .admin-risk-page {
-  overflow: auto;
+  overflow: hidden;
   scrollbar-gutter: stable;
 }
 
@@ -6831,7 +6837,19 @@ td .button-row.compact {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.shell-admin .admin-notice-console:has(> .compact-success),
+.shell-admin .admin-notice-console:has(> .compact-error) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.shell-admin .admin-notice-console:has(> .compact-success):has(> .compact-error) {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
 .shell-admin .admin-notice-console .notice-console-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
   min-height: 0;
   height: 100%;
 }
@@ -6841,6 +6859,10 @@ td .button-row.compact {
 .shell-admin .admin-notice-console .notice-console-panel {
   min-height: 0;
   max-height: 100%;
+}
+
+.shell-admin .admin-notice-console .notice-console-nav {
+  position: static;
 }
 
 .shell-admin .admin-notice-console .notice-console-nav,
