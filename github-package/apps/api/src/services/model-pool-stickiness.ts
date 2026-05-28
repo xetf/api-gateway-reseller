@@ -292,12 +292,14 @@ export async function recordStickyModelPoolResult(params: {
     if (!slow) {
       await Promise.all([
         redis.del(key),
-        setStickyModelPoolChannel(
-          callerIdentity,
-          model,
-          channelId,
-          upstreamProviderKeyId,
-        ),
+        params.failed
+          ? Promise.resolve()
+          : setStickyModelPoolChannel(
+              callerIdentity,
+              model,
+              channelId,
+              upstreamProviderKeyId,
+            ),
       ]);
       return;
     }
@@ -315,12 +317,14 @@ export async function recordStickyModelPoolResult(params: {
       return;
     }
 
-    await setStickyModelPoolChannel(
-      callerIdentity,
-      model,
-      channelId,
-      upstreamProviderKeyId,
-    );
+    if (!params.failed) {
+      await setStickyModelPoolChannel(
+        callerIdentity,
+        model,
+        channelId,
+        upstreamProviderKeyId,
+      );
+    }
   } catch {
     // Redis stickiness is best-effort; never fail user requests because of it.
   }

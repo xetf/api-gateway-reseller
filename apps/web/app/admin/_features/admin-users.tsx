@@ -81,7 +81,7 @@ type AccessTier = AccessTierRef & {
   description?: string | null;
   createdAt?: string;
   updatedAt?: string;
-  _count?: { users: number; apiKeys: number; modelPools: number; dedicatedRouteRules: number };
+  _count?: { users: number; apiKeys: number; modelPools: number };
 };
 
 type AdminUser = {
@@ -104,7 +104,16 @@ type AdminUser = {
   wallet?: Wallet | null;
   walletTransactions?: Transaction[];
   apiKeys?: ApiKey[];
+  modelMappings?: ModelMapping[];
   _count: { apiKeys: number; apiRequests: number };
+};
+
+type ModelMapping = {
+  id?: string;
+  fromModel: string;
+  toModel: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type ModelPool = {
@@ -131,6 +140,8 @@ type ModelPoolResponse = {
   modelPools: ModelPool[];
   accessTiers?: AccessTier[];
 };
+
+const defaultCharityEmail = "free@qq.com";
 
 function errorToText(error: unknown) {
   return error instanceof Error ? error.message : "未知错误";
@@ -173,6 +184,19 @@ function normalizeApiKeyStatus(status: string): "ACTIVE" | "DISABLED" | "REVOKED
   return status === "DISABLED" || status === "REVOKED" ? status : "ACTIVE";
 }
 
+function normalizeModelMappingRows(rows: ModelMapping[]) {
+  const byFromModel = new Map<string, ModelMapping>();
+  for (const row of rows) {
+    const fromModel = row.fromModel.trim();
+    const toModel = row.toModel.trim();
+    if (!fromModel || !toModel) {
+      continue;
+    }
+    byFromModel.set(fromModel, { fromModel, toModel });
+  }
+  return [...byFromModel.values()];
+}
+
 function formatConcurrencyLimit(value: number | null | undefined) {
   const numeric = Number(value ?? 0);
   return !Number.isFinite(numeric) || numeric <= 0 ? "不限" : `${numeric}`;
@@ -194,7 +218,10 @@ export function AdminUsersPage({
   charityOnly?: boolean;
   onError: (error: string | null) => void;
 }) {
-  const users = useAdminResource<{ users: AdminUser[] }>("users", "/admin/users");
+  const users = useAdminResource<{ users: AdminUser[] }>(
+    "users",
+    charityOnly ? "/admin/users?scope=charity" : "/admin/users",
+  );
   const modelPools = useAdminResource<ModelPoolResponse>(
     "modelPools",
     "/admin/model-pools",
@@ -289,6 +316,11 @@ export function AdminUsers({
     "create" | "balance" | "models" | null
   >(null);
   const [keyModalUserId, setKeyModalUserId] = useState<string | null>(null);
+  const [mappingModalUserId, setMappingModalUserId] = useState<string | null>(
+    null,
+  );
+  const [mappingRows, setMappingRows] = useState<ModelMapping[]>([]);
+  const [mappingSaving, setMappingSaving] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState<"USER" | "ADMIN">("USER");
@@ -322,11 +354,15 @@ export function AdminUsers({
   const selectedUserId = targetUserId || users[0]?.id || "";
   const selectedUser = users.find((item) => item.id === selectedUserId);
   const keyModalUser = users.find((item) => item.id === keyModalUserId) ?? null;
+  const mappingModalUser =
+    users.find((item) => item.id === mappingModalUserId) ?? null;
   const modelSuggestions = modelPools.map((pool) => pool.model);
   const activeTiers = accessTiers.filter((tier) => tier.status === "ACTIVE");
   const defaultTierId = activeTiers[0]?.id ?? accessTiers[0]?.id ?? "";
   const filteredUsers = users.filter((item) => {
-    if (charityOnly && !item.charityEnabled) {
+    const isDefaultCharityUser =
+      item.email.toLowerCase() === defaultCharityEmail;
+    if (charityOnly && !item.charityEnabled && !isDefaultCharityUser) {
       return false;
     }
     return `${item.email} ${item.role} ${item.status} ${item.charityDisplayName ?? ""}`
@@ -394,6 +430,63 @@ export function AdminUsers({
     setEditCharityKey(item.charityKey ?? "");
     setEditCharityIpRateLimitEnabled(Boolean(item.charityIpRateLimitEnabled));
     setEditCharityIpRateLimitPerMinute(item.charityIpRateLimitPerMinute ?? 0);
+  }
+
+  function beginEditMappings(item: AdminUser) {
+    setMappingModalUserId(item.id);
+    setMappingRows(
+      item.modelMappings && item.modelMappings.length > 0
+        ? item.modelMappings.map((mapping) => ({ ...mapping }))
+        : [{ fromModel: "", toModel: "" }],
+    );
+  }
+
+  function updateMappingRow(
+    index: number,
+    field: "fromModel" | "toModel",
+    value: string,
+  ) {
+    setMappingRows((current) =>
+      current.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row,
+      ),
+    );
+  }
+
+  function addMappingRow() {
+    setMappingRows((current) => [...current, { fromModel: "", toModel: "" }]);
+  }
+
+  function removeMappingRow(index: number) {
+    setMappingRows((current) =>
+      current.length <= 1
+        ? [{ fromModel: "", toModel: "" }]
+        : current.filter((_, rowIndex) => rowIndex !== index),
+    );
+  }
+
+  async function saveUserModelMappings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onError(null);
+    if (!mappingModalUser) {
+      return;
+    }
+    setMappingSaving(true);
+
+    try {
+      await apiFetch(`/admin/users/${mappingModalUser.id}/model-mappings`, {
+        method: "PUT",
+        body: JSON.stringify({
+          mappings: normalizeModelMappingRows(mappingRows),
+        }),
+      });
+      setMappingModalUserId(null);
+      onChanged();
+    } catch (saveError) {
+      onError(errorToText(saveError));
+    } finally {
+      setMappingSaving(false);
+    }
   }
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
@@ -596,6 +689,9 @@ export function AdminUsers({
       if (keyModalUserId === item.id) {
         setKeyModalUserId(null);
       }
+      if (mappingModalUserId === item.id) {
+        setMappingModalUserId(null);
+      }
       onChanged();
     } catch (deleteError) {
       onError(errorToText(deleteError));
@@ -627,6 +723,8 @@ export function AdminUsers({
     tier: item.tier ? `${item.tier.name} (${item.tier.code})` : "默认等级",
     charity: item.charityEnabled ? (
       <span className="pill ok">{item.charityDisplayName || "已公开"}</span>
+    ) : charityOnly && item.email.toLowerCase() === defaultCharityEmail ? (
+      <span className="pill warn">待配置</span>
     ) : (
       <span className="pill">未公开</span>
     ),
@@ -664,6 +762,13 @@ export function AdminUsers({
             设置公开 Key
           </button>
         ) : null}
+        <button
+          className="button secondary"
+          onClick={() => beginEditMappings(item)}
+          type="button"
+        >
+          模型映射
+        </button>
         <button
           className="button secondary"
           onClick={() => setKeyModalUserId(item.id)}
@@ -877,7 +982,7 @@ export function AdminUsers({
               </h2>
               <p className="section-subtitle">
                 {charityOnly
-                  ? "只显示已纳入公益公开统计的用户，Key 管理沿用普通用户逻辑。"
+                  ? "显示公益账号；free@qq.com 会在这里作为公益账号集中编辑，Key 管理沿用普通用户逻辑。"
                   : "搜索用户、查看余额和模型限制。"}
               </p>
             </div>
@@ -986,6 +1091,9 @@ export function AdminUsers({
                 <MobileField label="公益">
                   {item.charityEnabled
                     ? item.charityDisplayName || "已公开"
+                    : charityOnly &&
+                        item.email.toLowerCase() === defaultCharityEmail
+                      ? "待配置"
                     : "未公开"}
                 </MobileField>
                 {charityOnly ? (
@@ -1334,6 +1442,82 @@ export function AdminUsers({
           onClose={() => setKeyModalUserId(null)}
           onError={onError}
         />
+      ) : null}
+
+      {mappingModalUser ? (
+        <ModalShell
+          title="模型映射"
+          description={mappingModalUser.email}
+          onClose={() => setMappingModalUserId(null)}
+          wide
+        >
+          <form className="form" onSubmit={saveUserModelMappings}>
+            <div className="modal-body">
+              <div className="mapping-editor">
+                {mappingRows.map((row, index) => (
+                  <div className="mapping-row" key={row.id ?? index}>
+                    <label className="field">
+                      <span>调用模型</span>
+                      <input
+                        className="input"
+                        onChange={(event) =>
+                          updateMappingRow(
+                            index,
+                            "fromModel",
+                            event.target.value,
+                          )
+                        }
+                        placeholder="gpt-4o"
+                        value={row.fromModel}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>实际模型</span>
+                      <input
+                        className="input"
+                        onChange={(event) =>
+                          updateMappingRow(
+                            index,
+                            "toModel",
+                            event.target.value,
+                          )
+                        }
+                        placeholder="gpt-4.1"
+                        value={row.toModel}
+                      />
+                    </label>
+                    <button
+                      className="button secondary icon-button"
+                      onClick={() => removeMappingRow(index)}
+                      title="删除映射"
+                      type="button"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="button secondary"
+                onClick={addMappingRow}
+                type="button"
+              >
+                <Plus size={17} />
+                添加映射
+              </button>
+              <button
+                className="button"
+                disabled={mappingSaving}
+                type="submit"
+              >
+                <Save size={17} />
+                {mappingSaving ? "保存中..." : "保存映射"}
+              </button>
+            </div>
+          </form>
+        </ModalShell>
       ) : null}
 
       {editingUser ? (

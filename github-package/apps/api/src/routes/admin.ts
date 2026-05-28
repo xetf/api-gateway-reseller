@@ -227,6 +227,9 @@ const noticeTextSchema = z
 const userRuntimeLimitSchema = z.number().int().min(0).max(10000);
 const optionalTierIdSchema = z.string().min(1).nullable().optional();
 const priceVersionSchema = z.string().trim().min(1).max(80).default("v1");
+const upstreamEndpointSchema = z
+  .enum(["responses", "chat_completions"])
+  .default("responses");
 const accessTierCodeSchema = z
   .string()
   .trim()
@@ -374,22 +377,6 @@ const adminBatchUpdateApiKeysSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
   disabledReason: z.string().trim().max(500).nullable().optional(),
 });
-const dedicatedRouteRuleSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  targetType: z.enum(["USER", "API_KEY", "IP"]),
-  userId: z.string().nullable().optional(),
-  apiKeyId: z.string().nullable().optional(),
-  ipPattern: z.string().trim().max(128).nullable().optional(),
-  accessTierId: z.string().min(1),
-  upstreamProvider: z.string().trim().max(80).nullable().optional(),
-  upstreamProviderKeyId: z.string().nullable().optional(),
-  status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
-  priority: z.number().int().min(1).max(10000).default(100),
-  startsAt: expiresAtSchema,
-  expiresAt: expiresAtSchema,
-  remark: z.string().trim().max(500).nullable().optional(),
-});
-const dedicatedRouteRulePatchSchema = dedicatedRouteRuleSchema.partial();
 const modelPriceImportSchema = z
   .object({
     format: z.enum(["json", "csv"]).optional(),
@@ -1011,15 +998,13 @@ type ReportDimensionField =
   | "userId"
   | "model"
   | "upstreamProvider"
-  | "accessTierId"
-  | "dedicatedRouteRuleId";
+  | "accessTierId";
 
 const reportDimensionSql: Record<ReportDimensionField, Prisma.Sql> = {
   userId: Prisma.sql`"userId"`,
   model: Prisma.sql`"model"`,
   upstreamProvider: Prisma.sql`"upstreamProvider"`,
   accessTierId: Prisma.sql`"accessTierId"`,
-  dedicatedRouteRuleId: Prisma.sql`"dedicatedRouteRuleId"`,
 };
 
 async function aggregateReportDimension(
@@ -1079,14 +1064,13 @@ async function buildAdminReportSummary() {
   const where = {
     createdAt: { gte: dateFrom },
   } satisfies Prisma.ApiRequestWhereInput;
-  const [summary, byUser, byModel, byUpstream, byTier, byRoute] =
+  const [summary, byUser, byModel, byUpstream, byTier] =
     await Promise.all([
       getAdminRequestsSummary(where),
       aggregateReportDimension("userId", where),
       aggregateReportDimension("model", where),
       aggregateReportDimension("upstreamProvider", where),
       aggregateReportDimension("accessTierId", where),
-      aggregateReportDimension("dedicatedRouteRuleId", where),
     ]);
   const userIds = byUser
     .map((row) => row.id)
@@ -1094,10 +1078,7 @@ async function buildAdminReportSummary() {
   const tierIds = byTier
     .map((row) => row.id)
     .filter((id): id is string => Boolean(id));
-  const routeRuleIds = byRoute
-    .map((row) => row.id)
-    .filter((id): id is string => Boolean(id));
-  const [users, tiers, rules] = await Promise.all([
+  const [users, tiers] = await Promise.all([
     prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, email: true },
@@ -1106,16 +1087,11 @@ async function buildAdminReportSummary() {
       where: { id: { in: tierIds } },
       select: { id: true, code: true, name: true },
     }),
-    prisma.dedicatedRouteRule.findMany({
-      where: { id: { in: routeRuleIds } },
-      select: { id: true, name: true },
-    }),
   ]);
   const userMap = new Map(users.map((user) => [user.id, user.email]));
   const tierMap = new Map(
     tiers.map((tier) => [tier.id, `${tier.name} (${tier.code})`]),
   );
-  const ruleMap = new Map(rules.map((rule) => [rule.id, rule.name]));
 
   return {
     dateFrom: dateFrom.toISOString(),
@@ -1131,10 +1107,6 @@ async function buildAdminReportSummary() {
       tiers: byTier.map((row) => ({
         ...row,
         label: row.id ? (tierMap.get(row.id) ?? row.id) : "未记录等级",
-      })),
-      dedicatedRoutes: byRoute.map((row) => ({
-        ...row,
-        label: row.id ? (ruleMap.get(row.id) ?? row.id) : "未命中专线",
       })),
     },
   };
@@ -1157,10 +1129,6 @@ function buildAdminReportSummaryCsv(report: AdminReportSummaryPayload) {
     ...reportDimensionCsvRows("models", report.dimensions.models),
     ...reportDimensionCsvRows("upstreams", report.dimensions.upstreams),
     ...reportDimensionCsvRows("tiers", report.dimensions.tiers),
-    ...reportDimensionCsvRows(
-      "dedicatedRoutes",
-      report.dimensions.dedicatedRoutes,
-    ),
   ];
 
   return `${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n")}\n`;
@@ -1200,6 +1168,160 @@ export async function adminRoutes(app: FastifyInstance) {
     await writeAdminAuditLog(request, reply.statusCode, app);
   });
 
+  app.get("/admin/requests/events", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let previousPayload = "";
+    let closed = false;
+    let refreshTimer: NodeJS.Timeout | undefined;
+    let keepaliveTimer: NodeJS.Timeout | undefined;
+
+    const sendRequestsSignature = async () => {
+      if (closed || reply.raw.destroyed) {
+        return;
+      }
+
+      try {
+        const rows = await prisma.apiRequest.findMany({
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 20,
+          select: {
+            id: true,
+            status: true,
+            httpStatus: true,
+            latencyMs: true,
+            firstTokenLatencyMs: true,
+            upstreamProvider: true,
+            updatedAt: true,
+            createdAt: true,
+          },
+        });
+        const payload = JSON.stringify(
+          rows.map((row) => ({
+            id: row.id,
+            status: row.status,
+            httpStatus: row.httpStatus,
+            latencyMs: row.latencyMs,
+            firstTokenLatencyMs: row.firstTokenLatencyMs,
+            upstreamProvider: row.upstreamProvider,
+            updatedAt: row.updatedAt.toISOString(),
+            createdAt: row.createdAt.toISOString(),
+          })),
+        );
+
+        if (payload !== previousPayload) {
+          previousPayload = payload;
+          reply.raw.write(`event: requests\ndata: ${payload}\n\n`);
+        }
+      } catch (error) {
+        reply.raw.write(
+          `event: error\ndata: ${JSON.stringify({
+            message:
+              error instanceof Error
+                ? error.message
+                : "request events failed",
+          })}\n\n`,
+        );
+      }
+    };
+
+    request.raw.on("close", () => {
+      closed = true;
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+    });
+
+    await sendRequestsSignature();
+    refreshTimer = setInterval(sendRequestsSignature, 2000);
+    keepaliveTimer = setInterval(() => {
+      if (!closed && !reply.raw.destroyed) {
+        reply.raw.write(": keepalive\n\n");
+      }
+    }, 15000);
+  });
+
+  app.get("/admin/model-pools/events", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let previousPayload = "";
+    let closed = false;
+    let refreshTimer: NodeJS.Timeout | undefined;
+    let keepaliveTimer: NodeJS.Timeout | undefined;
+
+    const sendModelPoolSignature = async () => {
+      if (closed || reply.raw.destroyed) {
+        return;
+      }
+
+      try {
+        const rows = await prisma.modelPoolChannel.findMany({
+          orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+          select: {
+            id: true,
+            modelPoolId: true,
+            status: true,
+            priority: true,
+            consecutiveFailures: true,
+            recoverySuccesses: true,
+            penalizedUntil: true,
+            lastCheckStatus: true,
+            lastCheckedAt: true,
+            lastLatencyMs: true,
+            lastFirstTokenLatencyMs: true,
+            lastError: true,
+            updatedAt: true,
+          },
+        });
+        const payload = JSON.stringify(
+          rows.map((row) => ({
+            ...row,
+            penalizedUntil: row.penalizedUntil?.toISOString() ?? null,
+            lastCheckedAt: row.lastCheckedAt?.toISOString() ?? null,
+            updatedAt: row.updatedAt.toISOString(),
+          })),
+        );
+
+        if (payload !== previousPayload) {
+          previousPayload = payload;
+          reply.raw.write(`event: model-pools\ndata: ${payload}\n\n`);
+        }
+      } catch (error) {
+        reply.raw.write(
+          `event: error\ndata: ${JSON.stringify({
+            message:
+              error instanceof Error
+                ? error.message
+                : "model pool events failed",
+          })}\n\n`,
+        );
+      }
+    };
+
+    request.raw.on("close", () => {
+      closed = true;
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+    });
+
+    await sendModelPoolSignature();
+    refreshTimer = setInterval(sendModelPoolSignature, 1000);
+    keepaliveTimer = setInterval(() => {
+      if (!closed && !reply.raw.destroyed) {
+        reply.raw.write(": keepalive\n\n");
+      }
+    }, 15000);
+  });
+
   app.get("/admin/access-tiers", async () => {
     await ensureStandardAccessTier();
     const tiers = await prisma.accessTier.findMany({
@@ -1210,7 +1332,6 @@ export async function adminRoutes(app: FastifyInstance) {
             users: true,
             apiKeys: true,
             modelPools: true,
-            dedicatedRouteRules: true,
           },
         },
       },
@@ -1448,86 +1569,6 @@ export async function adminRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get("/admin/dedicated-route-rules", async () => {
-    const rules = await prisma.dedicatedRouteRule.findMany({
-      orderBy: [
-        { targetType: "asc" },
-        { priority: "asc" },
-        { createdAt: "desc" },
-      ],
-      include: {
-        user: { select: { id: true, email: true } },
-        apiKey: { select: { id: true, name: true, keyPrefix: true } },
-        accessTier: { select: { id: true, code: true, name: true } },
-        upstreamProviderKey: {
-          select: {
-            id: true,
-            name: true,
-            keyPrefix: true,
-            upstreamProvider: { select: { name: true } },
-          },
-        },
-      },
-    });
-    return { rules: withDedicatedRouteRuleConflicts(rules) };
-  });
-
-  app.post("/admin/dedicated-route-rules", async (request, reply) => {
-    const body = dedicatedRouteRuleSchema.parse(request.body);
-    const validation = await validateDedicatedRouteRuleBody(body);
-    if (!validation.ok) {
-      return reply.status(400).send({ message: validation.message });
-    }
-
-    const rule = await prisma.dedicatedRouteRule.create({
-      data: normalizeDedicatedRouteRuleBody(body) as Prisma.DedicatedRouteRuleUncheckedCreateInput,
-    });
-    return { rule };
-  });
-
-  app.patch("/admin/dedicated-route-rules/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const existing = await prisma.dedicatedRouteRule.findUnique({
-      where: { id: params.id },
-    });
-
-    if (!existing) {
-      return reply
-        .status(404)
-        .send({ message: "Dedicated route rule not found" });
-    }
-
-    const body = dedicatedRouteRulePatchSchema.parse(request.body);
-    const merged = { ...existing, ...body };
-    const validation = await validateDedicatedRouteRuleBody(merged);
-    if (!validation.ok) {
-      return reply.status(400).send({ message: validation.message });
-    }
-
-    const rule = await prisma.dedicatedRouteRule.update({
-      where: { id: params.id },
-      data: normalizeDedicatedRouteRuleBody(body),
-    });
-    return { rule };
-  });
-
-  app.delete("/admin/dedicated-route-rules/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const rule = await prisma.dedicatedRouteRule.findUnique({
-      where: { id: params.id },
-      select: { id: true },
-    });
-
-    if (!rule) {
-      return reply
-        .status(404)
-        .send({ message: "Dedicated route rule not found" });
-    }
-
-    await prisma.dedicatedRouteRule.delete({ where: { id: params.id } });
-    return { ok: true };
-  });
-
   app.post("/admin/route-simulator", async (request) => {
     const body = z
       .object({
@@ -1612,6 +1653,7 @@ export async function adminRoutes(app: FastifyInstance) {
       globalCircuitBreakerSettings,
       externalAlertSettings,
       charityAnnouncementSettings,
+      reasoningEffortTransformSettings,
       pendingRequests,
       failedRequests24h,
       noticeRequests24h,
@@ -1626,6 +1668,7 @@ export async function adminRoutes(app: FastifyInstance) {
       readGlobalCircuitBreakerSettings(),
       readExternalAlertSettings(),
       readCharityAnnouncementSettings(),
+      readReasoningEffortTransformSettings(),
       prisma.apiRequest.count({ where: { status: "PENDING" } }),
       prisma.apiRequest.count({
         where: {
@@ -1676,6 +1719,7 @@ export async function adminRoutes(app: FastifyInstance) {
         minIntervalHours: minCharityAnnouncementIntervalHours,
         maxIntervalHours: maxCharityAnnouncementIntervalHours,
       },
+      reasoningEffortTransformSettings,
       counters: {
         pendingRequests,
         failedRequests24h,
@@ -1906,8 +1950,23 @@ export async function adminRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get("/admin/users", async () => {
+  app.get("/admin/users", async (request) => {
+    const query = z
+      .object({
+        scope: z.enum(["all", "charity"]).default("all"),
+      })
+      .parse(request.query);
+    const where =
+      query.scope === "charity"
+        ? {
+            OR: [
+              { charityEnabled: true },
+              { email: { equals: "free@qq.com", mode: "insensitive" as const } },
+            ],
+          }
+        : undefined;
     const users = await prisma.user.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       take: 100,
       select: {
@@ -1951,6 +2010,16 @@ export async function adminRoutes(app: FastifyInstance) {
         apiKeys: {
           orderBy: { createdAt: "desc" },
           select: adminApiKeySelect,
+        },
+        modelMappings: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            fromModel: true,
+            toModel: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         },
         _count: {
           select: {
@@ -2063,6 +2132,58 @@ export async function adminRoutes(app: FastifyInstance) {
     });
 
     return { user };
+  });
+
+  app.put("/admin/users/:id/model-mappings", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        mappings: z
+          .array(
+            z.object({
+              fromModel: z.string().trim().min(1).max(200),
+              toModel: z.string().trim().min(1).max(200),
+            }),
+          )
+          .max(500),
+      })
+      .parse(request.body);
+
+    const exists = await prisma.user.findUnique({
+      where: { id: params.id },
+      select: { id: true },
+    });
+    if (!exists) {
+      return reply.status(404).send({ message: "User not found" });
+    }
+
+    const mappings = normalizeUserModelMappings(body.mappings);
+    await prisma.$transaction([
+      prisma.userModelMapping.deleteMany({ where: { userId: params.id } }),
+      ...mappings.map((mapping) =>
+        prisma.userModelMapping.create({
+          data: {
+            userId: params.id,
+            fromModel: mapping.fromModel,
+            toModel: mapping.toModel,
+          },
+        }),
+      ),
+    ]);
+
+    return {
+      mappings: await prisma.userModelMapping.findMany({
+        where: { userId: params.id },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          fromModel: true,
+          toModel: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    };
   });
 
   app.post("/admin/users", async (request) => {
@@ -2319,7 +2440,6 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     const generated = createApiKey();
-    const standardTier = await ensureStandardAccessTier();
     const apiKey = await prisma.apiKey.create({
       data: {
         userId: params.id,
@@ -2329,7 +2449,7 @@ export async function adminRoutes(app: FastifyInstance) {
         keySecret: generated.key,
         rateLimitPerMinute: body.rateLimitPerMinute,
         totalLimitUsd: body.totalLimitUsd ?? body.dailyLimitUsd ?? null,
-        tierId: body.tierId ?? standardTier.id,
+        tierId: body.tierId ?? null,
         expiresAt: body.expiresAt,
         concurrencyLimit: body.concurrencyLimit,
         allowedModels: body.allowedModels,
@@ -2689,14 +2809,6 @@ export async function adminRoutes(app: FastifyInstance) {
               status: true,
             },
           },
-          dedicatedRouteRule: {
-            select: {
-              id: true,
-              name: true,
-              targetType: true,
-              priority: true,
-            },
-          },
           clientIp: true,
           apiKey: {
             select: {
@@ -2772,14 +2884,6 @@ export async function adminRoutes(app: FastifyInstance) {
             id: true,
             code: true,
             name: true,
-          },
-        },
-        dedicatedRouteRule: {
-          select: {
-            id: true,
-            name: true,
-            targetType: true,
-            priority: true,
           },
         },
         clientIp: true,
@@ -3462,6 +3566,7 @@ export async function adminRoutes(app: FastifyInstance) {
             });
             return {
               ...channel,
+              statusLabel: channelStatusLabel(channel.status),
               hasPrice: Boolean(price),
               priceEnabled: price?.enabled ?? false,
               providerStatus: provider?.status ?? "MISSING",
@@ -3475,6 +3580,12 @@ export async function adminRoutes(app: FastifyInstance) {
                     ? "FORCED_READY"
                     : "READY"
                   : "UNAVAILABLE",
+              effectiveStatusLabel:
+                unavailableReasons.length === 0
+                  ? channel.status === "FORCED_ACTIVE"
+                    ? "强制可用"
+                    : "可用"
+                  : "不可用",
             };
           })
           .sort(compareModelPoolChannelsForAdmin);
@@ -4058,7 +4169,9 @@ export async function adminRoutes(app: FastifyInstance) {
       where: { id: params.id },
       data: {
         ...body,
-        ...(body.status === "ACTIVE"
+        ...(body.status === "ACTIVE" ||
+        body.status === "FORCED_ACTIVE" ||
+        body.status === "DISABLED"
           ? {
               consecutiveFailures: 0,
               recoverySuccesses: 0,
@@ -4114,6 +4227,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .object({
         model: z.string().min(1).max(120),
         upstreamProvider: z.string().min(1).max(80).default("default"),
+        upstreamEndpoint: upstreamEndpointSchema,
         currency: z.string().default("USD"),
         upstreamInputPer1MTok: z.string().or(z.number()),
         upstreamOutputPer1MTok: z.string().or(z.number()),
@@ -4148,6 +4262,7 @@ export async function adminRoutes(app: FastifyInstance) {
       },
       update: {
         upstreamProvider: body.upstreamProvider,
+        upstreamEndpoint: body.upstreamEndpoint,
         currency: body.currency,
         upstreamInputPer1MTok: String(body.upstreamInputPer1MTok),
         upstreamOutputPer1MTok: String(body.upstreamOutputPer1MTok),
@@ -4169,6 +4284,7 @@ export async function adminRoutes(app: FastifyInstance) {
       create: {
         model: body.model,
         upstreamProvider: body.upstreamProvider,
+        upstreamEndpoint: body.upstreamEndpoint,
         currency: body.currency,
         upstreamInputPer1MTok: String(body.upstreamInputPer1MTok),
         upstreamOutputPer1MTok: String(body.upstreamOutputPer1MTok),
@@ -4253,6 +4369,7 @@ export async function adminRoutes(app: FastifyInstance) {
       .object({
         model: z.string().min(1).max(120).optional(),
         upstreamProvider: z.string().min(1).max(80).optional(),
+        upstreamEndpoint: upstreamEndpointSchema.optional(),
         currency: z.string().optional(),
         upstreamInputPer1MTok: z.string().or(z.number()).optional(),
         upstreamOutputPer1MTok: z.string().or(z.number()).optional(),
@@ -4454,7 +4571,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z
       .object({
-        name: z.string().min(1).max(80),
+        name: z.string().trim().max(80).optional(),
         key: z.string().min(1),
         status: upstreamProviderKeyStatusSchema.default("ACTIVE"),
         priority: z.number().int().min(1).max(10000).default(100),
@@ -4472,12 +4589,13 @@ export async function adminRoutes(app: FastifyInstance) {
       return reply.status(404).send({ message: "Upstream provider not found" });
     }
 
+    const name = body.name?.trim() || await nextUpstreamProviderKeyName(params.id);
     let key;
     try {
       key = await prisma.upstreamProviderKey.create({
         data: {
           upstreamProviderId: params.id,
-          name: body.name,
+          name,
           key: body.key.trim(),
           ...encryptUpstreamKey(body.key.trim()),
           keyPrefix: upstreamKeyPrefix(body.key.trim()),
@@ -4632,6 +4750,32 @@ function maskProviderPoolKey<T extends { key: string }>(key: T) {
   };
 }
 
+async function nextUpstreamProviderKeyName(upstreamProviderId: string) {
+  const count = await prisma.upstreamProviderKey.count({
+    where: { upstreamProviderId },
+  });
+  let index = count + 1;
+
+  while (true) {
+    const name = `key-${index}`;
+    const existing = await prisma.upstreamProviderKey.findUnique({
+      where: {
+        upstreamProviderId_name: {
+          upstreamProviderId,
+          name,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return name;
+    }
+
+    index += 1;
+  }
+}
+
 async function buildSetupWizardStatus() {
   const standardTier = await ensureStandardAccessTier();
   const [
@@ -4781,6 +4925,23 @@ function compareModelPoolChannelsForAdmin(
 
 function modelPoolChannelAvailabilityRank(status: string) {
   return status === "READY" || status === "FORCED_READY" ? 0 : 1;
+}
+
+function channelStatusLabel(status: string) {
+  switch (status) {
+    case "ACTIVE":
+      return "可用";
+    case "FORCED_ACTIVE":
+      return "强制可用";
+    case "DISABLED":
+      return "停用";
+    case "PENALIZED":
+      return "惩罚中";
+    case "UNAVAILABLE":
+      return "不可用";
+    default:
+      return status;
+  }
 }
 
 function nullableNumberRank(value: number | null | undefined) {
@@ -5058,6 +5219,21 @@ function normalizeNullableText(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeUserModelMappings(
+  mappings: Array<{ fromModel: string; toModel: string }>,
+) {
+  const byFromModel = new Map<string, { fromModel: string; toModel: string }>();
+  for (const mapping of mappings) {
+    const fromModel = mapping.fromModel.trim();
+    const toModel = mapping.toModel.trim();
+    if (!fromModel || !toModel) {
+      continue;
+    }
+    byFromModel.set(fromModel, { fromModel, toModel });
+  }
+  return [...byFromModel.values()];
+}
+
 function explainAdminChannelUnavailable(params: {
   poolStatus: string;
   tierStatus?: string;
@@ -5093,125 +5269,10 @@ function explainAdminChannelUnavailable(params: {
   return reasons;
 }
 
-type DedicatedRouteRuleBody = z.infer<typeof dedicatedRouteRulePatchSchema>;
-
-async function validateDedicatedRouteRuleBody(body: DedicatedRouteRuleBody) {
-  if (!body.accessTierId) {
-    return { ok: false as const, message: "Access tier is required" };
-  }
-
-  const tier = await prisma.accessTier.findUnique({
-    where: { id: body.accessTierId },
-    select: { id: true, status: true },
-  });
-  if (!tier) {
-    return { ok: false as const, message: "Access tier not found" };
-  }
-
-  if (tier.status !== "ACTIVE" && body.status !== "DISABLED") {
-    return {
-      ok: false as const,
-      message: "Disabled access tier can only be used by disabled rules",
-    };
-  }
-
-  if (body.targetType === "USER" && !body.userId) {
-    return { ok: false as const, message: "User target is required" };
-  }
-
-  if (body.targetType === "API_KEY" && !body.apiKeyId) {
-    return { ok: false as const, message: "API key target is required" };
-  }
-
-  if (body.targetType === "IP") {
-    const ipPattern = normalizeNullableText(body.ipPattern);
-    if (!ipPattern) {
-      return { ok: false as const, message: "IP or CIDR target is required" };
-    }
-
-    if (!isValidIpPattern(ipPattern)) {
-      return { ok: false as const, message: "Invalid IP or CIDR target" };
-    }
-  }
-
-  if (body.upstreamProviderKeyId) {
-    const key = await prisma.upstreamProviderKey.findUnique({
-      where: { id: body.upstreamProviderKeyId },
-      select: {
-        upstreamProvider: {
-          select: { name: true },
-        },
-      },
-    });
-
-    if (!key) {
-      return { ok: false as const, message: "Upstream key not found" };
-    }
-
-    if (
-      body.upstreamProvider &&
-      key.upstreamProvider.name !== body.upstreamProvider
-    ) {
-      return {
-        ok: false as const,
-        message: "Upstream key does not belong to selected provider",
-      };
-    }
-  }
-
-  if (
-    body.startsAt &&
-    body.expiresAt &&
-    body.startsAt.getTime() >= body.expiresAt.getTime()
-  ) {
-    return {
-      ok: false as const,
-      message: "Route rule expiresAt must be later than startsAt",
-    };
-  }
-
-  return { ok: true as const };
-}
-
-function normalizeDedicatedRouteRuleBody(body: DedicatedRouteRuleBody) {
-  const targetType = body.targetType;
-  return {
-    ...(body.name !== undefined ? { name: body.name } : {}),
-    ...(targetType !== undefined ? { targetType } : {}),
-    ...(body.userId !== undefined || targetType !== undefined
-      ? { userId: targetType === "USER" ? (body.userId ?? null) : null }
-      : {}),
-    ...(body.apiKeyId !== undefined || targetType !== undefined
-      ? { apiKeyId: targetType === "API_KEY" ? (body.apiKeyId ?? null) : null }
-      : {}),
-    ...(body.ipPattern !== undefined || targetType !== undefined
-      ? {
-          ipPattern:
-            targetType === "IP" ? normalizeNullableText(body.ipPattern) : null,
-        }
-      : {}),
-    ...(body.accessTierId !== undefined
-      ? { accessTierId: body.accessTierId }
-      : {}),
-    ...(body.upstreamProvider !== undefined
-      ? { upstreamProvider: normalizeNullableText(body.upstreamProvider) }
-      : {}),
-    ...(body.upstreamProviderKeyId !== undefined
-      ? { upstreamProviderKeyId: body.upstreamProviderKeyId ?? null }
-      : {}),
-    ...(body.status !== undefined ? { status: body.status } : {}),
-    ...(body.priority !== undefined ? { priority: body.priority } : {}),
-    ...(body.startsAt !== undefined ? { startsAt: body.startsAt } : {}),
-    ...(body.expiresAt !== undefined ? { expiresAt: body.expiresAt } : {}),
-    ...(body.remark !== undefined
-      ? { remark: normalizeNullableText(body.remark) }
-      : {}),
-  };
-}
-
 type ModelPriceBody = {
   model?: string;
   upstreamProvider?: string;
+  upstreamEndpoint?: string;
   currency?: string;
   upstreamInputPer1MTok?: string | number;
   upstreamOutputPer1MTok?: string | number;
@@ -5233,6 +5294,9 @@ function buildModelPriceUpdateData(body: ModelPriceBody) {
     ...(body.model !== undefined ? { model: body.model } : {}),
     ...(body.upstreamProvider !== undefined
       ? { upstreamProvider: body.upstreamProvider }
+      : {}),
+    ...(body.upstreamEndpoint !== undefined
+      ? { upstreamEndpoint: body.upstreamEndpoint }
       : {}),
     ...(body.currency !== undefined ? { currency: body.currency } : {}),
     ...(body.upstreamInputPer1MTok !== undefined
@@ -5303,6 +5367,7 @@ type ModelPriceExportRow = {
   id: string;
   model: string;
   upstreamProvider: string;
+  upstreamEndpoint: string;
   currency: string;
   upstreamInputPer1MTok: Decimal;
   upstreamCachedInputPer1MTok: Decimal;
@@ -5395,6 +5460,7 @@ function buildModelPricesCsv(modelPrices: ModelPriceExportRow[]) {
     "id",
     "model",
     "upstreamProvider",
+    "upstreamEndpoint",
     "currency",
     "upstreamInputPer1MTok",
     "upstreamCachedInputPer1MTok",
@@ -5417,6 +5483,7 @@ function buildModelPricesCsv(modelPrices: ModelPriceExportRow[]) {
     price.id,
     price.model,
     price.upstreamProvider,
+    price.upstreamEndpoint,
     price.currency,
     price.upstreamInputPer1MTok.toString(),
     price.upstreamCachedInputPer1MTok.toString(),
@@ -5608,6 +5675,7 @@ function normalizeImportedModelPriceRow(row: Record<string, unknown>) {
   return {
     model,
     upstreamProvider,
+    upstreamEndpoint: readImportUpstreamEndpoint(row),
     currency: readImportString(row, "currency", false) || "USD",
     upstreamInputPer1MTok: readImportDecimal(row, "upstreamInputPer1MTok"),
     upstreamCachedInputPer1MTok: readImportDecimal(
@@ -5638,7 +5706,18 @@ function normalizeImportedModelPriceRow(row: Record<string, unknown>) {
     priceVersion: readImportString(row, "priceVersion", false) || "v1",
     effectiveFrom,
     effectiveTo,
-  } satisfies ImportedModelPriceData;
+} satisfies ImportedModelPriceData;
+}
+
+function readImportUpstreamEndpoint(row: Record<string, unknown>) {
+  const value = readImportString(row, "upstreamEndpoint", false) || "responses";
+  if (value === "responses" || value === "chat_completions") {
+    return value;
+  }
+
+  throw new Error(
+    "upstreamEndpoint must be responses or chat_completions",
+  );
 }
 
 function asStringRecord(value: unknown) {
@@ -5734,121 +5813,6 @@ function escapeCsvCell(value: string) {
   return value;
 }
 
-type DedicatedRouteRuleForConflict = {
-  id: string;
-  name: string;
-  targetType: string;
-  userId: string | null;
-  apiKeyId: string | null;
-  ipPattern: string | null;
-  status: string;
-  priority: number;
-  startsAt: Date | null;
-  expiresAt: Date | null;
-};
-
-function withDedicatedRouteRuleConflicts<T extends DedicatedRouteRuleForConflict>(
-  rules: T[],
-) {
-  return rules.map((rule) => ({
-    ...rule,
-    conflictWarnings: findDedicatedRouteRuleConflictWarnings(rule, rules),
-  }));
-}
-
-function findDedicatedRouteRuleConflictWarnings(
-  rule: DedicatedRouteRuleForConflict,
-  rules: DedicatedRouteRuleForConflict[],
-) {
-  if (rule.status !== "ACTIVE") {
-    return [];
-  }
-
-  const warnings: string[] = [];
-
-  for (const other of rules) {
-    if (
-      other.id === rule.id ||
-      other.status !== "ACTIVE" ||
-      !validityWindowsOverlap(rule, other)
-    ) {
-      continue;
-    }
-
-    if (
-      other.targetType === rule.targetType &&
-      dedicatedRouteRuleTargetsOverlap(rule, other)
-    ) {
-      warnings.push(
-        `与「${other.name}」目标和生效时间重叠；实际会按优先级 ${Math.min(
-          rule.priority,
-          other.priority,
-        )} 先匹配`,
-      );
-      continue;
-    }
-
-    const precedence = dedicatedRoutePrecedence(rule.targetType);
-    const otherPrecedence = dedicatedRoutePrecedence(other.targetType);
-    if (precedence < otherPrecedence && higherPriorityRuleMayCover(rule, other)) {
-      warnings.push(`会覆盖「${other.name}」的同时间低优先级层级专线`);
-    } else if (
-      otherPrecedence < precedence &&
-      higherPriorityRuleMayCover(other, rule)
-    ) {
-      warnings.push(`可能被「${other.name}」的高优先级层级专线覆盖`);
-    }
-  }
-
-  return Array.from(new Set(warnings));
-}
-
-function dedicatedRouteRuleTargetKey(rule: DedicatedRouteRuleForConflict) {
-  if (rule.targetType === "USER") {
-    return rule.userId ?? "";
-  }
-  if (rule.targetType === "API_KEY") {
-    return rule.apiKeyId ?? "";
-  }
-  return rule.ipPattern ?? "";
-}
-
-function dedicatedRouteRuleTargetsOverlap(
-  left: DedicatedRouteRuleForConflict,
-  right: DedicatedRouteRuleForConflict,
-) {
-  if (left.targetType === "IP" && right.targetType === "IP") {
-    return ipPatternsOverlap(left.ipPattern, right.ipPattern);
-  }
-  return dedicatedRouteRuleTargetKey(left) === dedicatedRouteRuleTargetKey(right);
-}
-
-function dedicatedRoutePrecedence(targetType: string) {
-  if (targetType === "IP") {
-    return 0;
-  }
-  if (targetType === "API_KEY") {
-    return 1;
-  }
-  if (targetType === "USER") {
-    return 2;
-  }
-  return 99;
-}
-
-function higherPriorityRuleMayCover(
-  higher: DedicatedRouteRuleForConflict,
-  lower: DedicatedRouteRuleForConflict,
-) {
-  if (higher.targetType === "IP") {
-    return true;
-  }
-  if (higher.targetType === "API_KEY" && lower.targetType === "USER") {
-    return true;
-  }
-  return false;
-}
-
 function ipPatternsOverlap(left?: string | null, right?: string | null) {
   if (!left || !right) {
     return false;
@@ -5911,17 +5875,6 @@ function ipv4BytesToNumber(bytes: number[]) {
       (bytes[3] ?? 0)) >>>
     0
   );
-}
-
-function validityWindowsOverlap(
-  left: DedicatedRouteRuleForConflict,
-  right: DedicatedRouteRuleForConflict,
-) {
-  const leftStart = left.startsAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-  const leftEnd = left.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
-  const rightStart = right.startsAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-  const rightEnd = right.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY;
-  return leftStart < rightEnd && rightStart < leftEnd;
 }
 
 function isValidIpPattern(pattern: string) {

@@ -70,10 +70,13 @@ import {
   normalizeEndpoint,
   normalizeRequestUrl,
   redactBodyForLog,
+  resolveUpstreamEndpoint,
+  resolveUpstreamRequestUrl,
   safeReadUpstreamBody,
   shouldCheckNewRequestLimits,
   shouldReturnApiKeyNotice,
   shouldStreamResponse,
+  transformProxyResponseBody,
   type ProxyBody,
 } from "../services/proxy-request-utils.js";
 import {
@@ -197,9 +200,9 @@ export async function proxyRoutes(app: FastifyInstance) {
         return;
       }
 
-      const body = (request.body ?? {}) as ProxyBody;
+      let body = (request.body ?? {}) as ProxyBody;
       const { apiKey, user } = request.apiAuth;
-      const model = body.model;
+      let model = body.model;
       const clientIp = getClientIp(request);
       const accessRoutePolicy = await resolveAccessRoutePolicy({
         userId: user.id,
@@ -236,7 +239,6 @@ export async function proxyRoutes(app: FastifyInstance) {
             reason: "global_circuit_breaker",
           },
           accessTierId: accessRoutePolicy.tierId,
-          dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
         });
 
         if (shouldReturnApiKeyNotice(endpoint, request.method)) {
@@ -275,7 +277,6 @@ export async function proxyRoutes(app: FastifyInstance) {
             clientIp,
           },
           accessTierId: accessRoutePolicy.tierId,
-          dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
         });
         return sendApiError(reply, 403, "IP not allowed for this API key");
       }
@@ -388,6 +389,14 @@ export async function proxyRoutes(app: FastifyInstance) {
         return sendApiError(reply, 403, "Model is not allowed for this user");
       }
 
+      if (model) {
+        const mappedModel = await resolveUserModelMapping(user.id, model);
+        if (mappedModel && mappedModel !== model) {
+          body = { ...body, model: mappedModel };
+          model = mappedModel;
+        }
+      }
+
       if (billable) {
         const walletCheck = await ensureWalletCanStart(user.id);
         if (!walletCheck.ok) {
@@ -407,7 +416,6 @@ export async function proxyRoutes(app: FastifyInstance) {
               reason: "insufficient_balance",
             },
             accessTierId: accessRoutePolicy.tierId,
-            dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
           });
           return sendApiError(
             reply,
@@ -458,7 +466,6 @@ export async function proxyRoutes(app: FastifyInstance) {
             reason: "runtime_limit",
           },
           accessTierId: accessRoutePolicy.tierId,
-          dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
         });
         if (!shouldReturnApiKeyNotice(endpoint, request.method)) {
           return sendApiError(
@@ -539,7 +546,6 @@ export async function proxyRoutes(app: FastifyInstance) {
             reason: "insufficient_available_balance",
           },
           accessTierId: accessRoutePolicy.tierId,
-          dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
         });
         return sendApiError(
           reply,
@@ -561,7 +567,6 @@ export async function proxyRoutes(app: FastifyInstance) {
             upstreamProvider: initialRoute.provider.name,
             model: model ?? inferModelFromEndpoint(endpoint),
             accessTierId: accessRoutePolicy.tierId,
-            dedicatedRouteRuleId: accessRoutePolicy.dedicatedRouteRuleId,
             reasoningEffort: getReasoningEffortFromBody(body),
             endpoint,
             method: request.method,
@@ -729,6 +734,20 @@ function createMutableLifecycleRelease(reply: FastifyReply) {
       release = nextRelease;
     },
   };
+}
+
+async function resolveUserModelMapping(userId: string, fromModel: string) {
+  const mapping = await prisma.userModelMapping.findUnique({
+    where: {
+      userId_fromModel: {
+        userId,
+        fromModel,
+      },
+    },
+    select: { toModel: true },
+  });
+
+  return mapping?.toModel;
 }
 
 function getCompactChannelFingerprint(route: UpstreamAttemptRoute) {
@@ -1264,6 +1283,14 @@ async function runUpstreamAttempt(params: {
   } = params;
   const { provider, price, channelId } = route;
   const upstreamProviderKeyId = getLoggedUpstreamProviderKeyId(route);
+  const resolvedUpstreamRequestUrl = resolveUpstreamRequestUrl(
+    endpoint,
+    upstreamRequestUrl,
+    price,
+  );
+  const resolvedUpstreamEndpoint = resolveUpstreamEndpoint(
+    resolvedUpstreamRequestUrl,
+  );
   const fallbackBody = await applyCompactFallback({
     app,
     endpoint,
@@ -1277,7 +1304,12 @@ async function runUpstreamAttempt(params: {
     compactFallbackContext,
   });
   const upstreamBody = await applyReasoningEffortTransform(
-    buildUpstreamBody(endpoint, fallbackBody, provider),
+    buildUpstreamBody(
+      endpoint,
+      fallbackBody,
+      provider,
+      resolvedUpstreamEndpoint,
+    ),
   );
   const actualReasoningEffort = getReasoningEffortFromBody(upstreamBody);
   if (actualReasoningEffort) {
@@ -1296,7 +1328,7 @@ async function runUpstreamAttempt(params: {
     const timeout = setTimeout(() => controller.abort(), provider.timeoutMs);
 
     const upstreamResponse = await fetch(
-      buildUpstreamUrl(provider.baseUrl, upstreamRequestUrl),
+      buildUpstreamUrl(provider.baseUrl, resolvedUpstreamRequestUrl),
       {
         method: request.method,
         headers: {
@@ -1510,11 +1542,16 @@ async function runUpstreamAttempt(params: {
       reply.send({ error: rawBody.error.message });
       return { kind: "sent" };
     }
-    const responseBody = contentType.includes("application/json")
+    const upstreamResponseBody = contentType.includes("application/json")
       ? rawBody.json
       : contentType.includes("text/event-stream")
         ? parseSseJsonPayloads(rawBody.text)
         : rawBody.text;
+    const responseBody = transformProxyResponseBody(
+      endpoint,
+      resolvedUpstreamEndpoint,
+      upstreamResponseBody,
+    );
 
     let normalCompactUsageMetadata:
       | ReturnType<typeof createNormalCompactResponseUsage>
@@ -1523,7 +1560,7 @@ async function runUpstreamAttempt(params: {
       const compactCacheResult = await cacheCompactResponse({
         logger: app.log,
         requestBody: body,
-        responseBody,
+        responseBody: upstreamResponseBody,
         userId,
         apiKeyId,
         model,
@@ -1557,12 +1594,12 @@ async function runUpstreamAttempt(params: {
       return { kind: "sent" };
     }
 
-    let usage = usageFromOpenAIResponse(responseBody);
+    let usage = usageFromOpenAIResponse(upstreamResponseBody);
     if (usage.totalTokens <= 0) {
       const estimatedUsage = estimateUsageFromResponse(
         endpoint,
         upstreamBody,
-        responseBody,
+        upstreamResponseBody,
       );
       if (estimatedUsage) {
         usage = estimatedUsage;

@@ -36,7 +36,7 @@ type AccessTier = AccessTierRef & {
   description?: string | null;
   createdAt?: string;
   updatedAt?: string;
-  _count?: { users: number; apiKeys: number; modelPools: number; dedicatedRouteRules: number };
+  _count?: { users: number; apiKeys: number; modelPools: number };
 };
 
 type UpstreamProviderKey = {
@@ -2185,7 +2185,7 @@ function nextCheckCountdown(
     return "-";
   }
 
-  return state.isWaitingForResult ? "检测中" : `${state.secondsUntilNext}s`;
+  return state.isWaitingForResult ? "等待检测" : `${state.secondsUntilNext}s`;
 }
 
 function successGraceCountdownText(

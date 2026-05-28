@@ -68,17 +68,6 @@ enum AccessTierStatus {
   DISABLED
 }
 
-enum DedicatedRouteTargetType {
-  USER
-  API_KEY
-  IP
-}
-
-enum DedicatedRouteRuleStatus {
-  ACTIVE
-  DISABLED
-}
-
 model AccessTier {
   id          String           @id @default(cuid())
   code        String           @unique
@@ -93,7 +82,6 @@ model AccessTier {
   apiKeys              ApiKey[]
   modelPools           ModelPool[]
   apiRequests          ApiRequest[]
-  dedicatedRouteRules  DedicatedRouteRule[]
   ipAccessTierRules    IpAccessTierRule[]
   redeemCodes          RedeemCode[]
 
@@ -129,12 +117,26 @@ model User {
   walletTransactions WalletTransaction[]
   apiRequests        ApiRequest[]
   redeemRedemptions  RedeemCodeRedemption[]
-  dedicatedRouteRules DedicatedRouteRule[] @relation("DedicatedRouteRuleUser")
   createdModelPrices ModelPrice[]
   loginLogs          LoginLog[]
+  modelMappings      UserModelMapping[]
 
   @@index([tierId])
   @@index([status])
+}
+
+model UserModelMapping {
+  id        String   @id @default(cuid())
+  userId    String
+  fromModel String
+  toModel   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fromModel])
+  @@index([userId])
 }
 
 model ApiKey {
@@ -165,8 +167,6 @@ model ApiKey {
   tier        AccessTier?  @relation(fields: [tierId], references: [id], onDelete: SetNull)
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   apiRequests ApiRequest[]
-  dedicatedRouteRules DedicatedRouteRule[] @relation("DedicatedRouteRuleApiKey")
-
   @@index([userId])
   @@index([keyPrefix])
   @@index([tierId])
@@ -237,7 +237,6 @@ model ApiRequest {
   requestBody       Json?
   responseUsage     Json?
   accessTierId      String?
-  dedicatedRouteRuleId String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -245,14 +244,12 @@ model ApiRequest {
   apiKey             ApiKey?             @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
   upstreamProviderKey UpstreamProviderKey? @relation(fields: [upstreamProviderKeyId], references: [id], onDelete: SetNull)
   accessTier         AccessTier?         @relation(fields: [accessTierId], references: [id], onDelete: SetNull)
-  dedicatedRouteRule DedicatedRouteRule?  @relation(fields: [dedicatedRouteRuleId], references: [id], onDelete: SetNull)
   walletTransactions WalletTransaction[]
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
   @@index([upstreamProviderKeyId, createdAt])
   @@index([accessTierId, createdAt])
-  @@index([dedicatedRouteRuleId, createdAt])
   @@index([status, createdAt])
   @@index([resultType, createdAt])
   @@index([model, createdAt])
@@ -307,6 +304,7 @@ model ModelPrice {
   id                      String   @id @default(cuid())
   model                   String
   upstreamProvider        String   @default("default")
+  upstreamEndpoint        String   @default("responses")
   currency                String   @default("USD")
   upstreamInputPer1MTok   Decimal  @db.Decimal(18, 8)
   upstreamOutputPer1MTok  Decimal  @db.Decimal(18, 8)
@@ -354,44 +352,11 @@ model ModelPool {
   @@unique([model, tierId])
 }
 
-model DedicatedRouteRule {
-  id                    String                   @id @default(cuid())
-  name                  String
-  targetType            DedicatedRouteTargetType
-  userId                String?
-  apiKeyId              String?
-  ipPattern             String?
-  accessTierId          String
-  upstreamProvider      String?
-  upstreamProviderKeyId String?
-  status                DedicatedRouteRuleStatus @default(ACTIVE)
-  priority              Int                      @default(100)
-  startsAt              DateTime?
-  expiresAt             DateTime?
-  remark                String?
-  createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @updatedAt
-
-  user                User?                @relation("DedicatedRouteRuleUser", fields: [userId], references: [id], onDelete: Cascade)
-  apiKey              ApiKey?              @relation("DedicatedRouteRuleApiKey", fields: [apiKeyId], references: [id], onDelete: Cascade)
-  accessTier          AccessTier           @relation(fields: [accessTierId], references: [id], onDelete: Restrict)
-  upstreamProviderKey UpstreamProviderKey?  @relation(fields: [upstreamProviderKeyId], references: [id], onDelete: SetNull)
-  apiRequests         ApiRequest[]
-
-  @@index([targetType, status, priority])
-  @@index([userId, status, priority])
-  @@index([apiKeyId, status, priority])
-  @@index([ipPattern, status, priority])
-  @@index([status, startsAt, expiresAt])
-  @@index([accessTierId])
-  @@index([upstreamProviderKeyId])
-}
-
 model IpAccessTierRule {
   id        String                   @id @default(cuid())
   cidrOrIp  String
   tierId    String
-  status    DedicatedRouteRuleStatus @default(ACTIVE)
+  status    AccessTierStatus         @default(ACTIVE)
   priority  Int                      @default(100)
   remark    String?
   createdAt DateTime                 @default(now())
@@ -477,8 +442,6 @@ model UpstreamProviderKey {
 
   upstreamProvider UpstreamProvider @relation(fields: [upstreamProviderId], references: [id], onDelete: Cascade)
   apiRequests      ApiRequest[]
-  dedicatedRouteRules DedicatedRouteRule[]
-
   @@index([upstreamProviderId, status, priority])
   @@index([lastUsedAt])
   @@index([encryptionKeyVersion])

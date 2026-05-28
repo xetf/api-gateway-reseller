@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { AlertTriangle, Database, Gift, Import, Plus, Server, Settings, UserPlus } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
 import { dateTime, formatBytes, formatDuration, formatLoadAverage, formatNumber, formatPercent, money } from "../_components/admin-format";
 import { useAdminResource } from "../_components/admin-hooks";
 import { InfoLine, Metric, StatusPill, StatusTile } from "../_components/admin-ui";
@@ -103,12 +104,12 @@ function AdminOverviewPanel({
       .slice(0, 4) ?? [];
 
   return (
-    <div className="grid admin-page admin-dashboard-page">
-      <section className="admin-hero-panel">
+    <div className="grid admin-page admin-dashboard-page protocol-overview">
+      <section className="admin-hero-panel protocol-hero">
         <div>
           <span className="eyebrow">Control Overview</span>
           <h2>运营驾驶舱</h2>
-          <p>先看经营指标，再看配置进度和实时健康状态。日常巡检不用在多个卡片之间来回跳。</p>
+          <p>实时监控营收、成本、配置进度及系统健康度。接口和设置流程保持不变，这里只重新组织操作视图。</p>
         </div>
         <div className="admin-hero-status">
           <StatusTile
@@ -131,6 +132,11 @@ function AdminOverviewPanel({
         <Metric label="用户数" value={String(overview?.users ?? 0)} />
         <Metric label="总请求数" value={String(overview?.requests ?? 0)} />
         <Metric
+          label="钱包余额"
+          value={`$${money(overview?.totalWalletBalance ?? "0")}`}
+          small
+        />
+        <Metric
           label="总 token"
           value={formatNumber(overview?.totalTokens ?? 0)}
         />
@@ -147,7 +153,9 @@ function AdminOverviewPanel({
           value={`$${money(overview?.grossProfit ?? "0")}`}
         />
       </div>
-      <div className="admin-dashboard-grid">
+      <div className="protocol-dashboard-layout">
+        <div className="protocol-dashboard-main">
+          <div className="admin-dashboard-grid">
         <section className="card admin-command-card">
           <div className="card-head">
             <div>
@@ -168,6 +176,9 @@ function AdminOverviewPanel({
             <p>
               下一步：{setupWizard?.steps.find((step) => !step.completed)?.label ?? "已完成"}
             </p>
+            <div className="protocol-progress-track">
+              <span style={{ width: `${setupWizard?.percent ?? 0}%` }} />
+            </div>
           </div>
           <div className="admin-step-list">
             {(setupWizard?.steps ?? []).map((step) => (
@@ -182,24 +193,7 @@ function AdminOverviewPanel({
             {!setupWizard ? <InfoLine label="状态" value="加载中" /> : null}
           </div>
         </section>
-        <section className="card admin-command-card">
-          <h2 className="section-title">资金概览</h2>
-          <div className="info-list">
-            <InfoLine
-              label="用户余额总额"
-              value={`$${money(overview?.totalWalletBalance ?? "0")}`}
-            />
-            <InfoLine
-              label="累计收入"
-              value={`$${money(overview?.revenue ?? "0")}`}
-            />
-            <InfoLine
-              label="累计成本"
-              value={`$${money(overview?.upstreamCost ?? "0")}`}
-            />
           </div>
-        </section>
-      </div>
       <section className="card admin-monitor-panel">
         <div className="card-head">
           <div>
@@ -275,6 +269,32 @@ function AdminOverviewPanel({
                 .map((process) => `${process.name}:${process.status}`)
                 .join(" · ") || "-"
             }
+          />
+        </div>
+        <div className="protocol-health-grid">
+          <HealthLine
+            icon={<Database size={15} />}
+            label="Redis"
+            ok={serverStatus?.server.redis.ok}
+            value={serverStatus?.server.redis.ok ? `${serverStatus.server.redis.latencyMs ?? 0} ms` : (serverStatus?.server.redis.error ?? "-")}
+          />
+          <HealthLine
+            icon={<Database size={15} />}
+            label="Database"
+            ok={serverStatus?.server.database.ok}
+            value={serverStatus?.server.database.ok ? `${serverStatus.server.database.latencyMs ?? 0} ms` : (serverStatus?.server.database.error ?? "-")}
+          />
+          <HealthLine
+            icon={<Server size={15} />}
+            label="PM2"
+            ok={serverStatus?.server.pm2.ok}
+            value={(serverStatus?.server.pm2.processes ?? []).length ? `${serverStatus?.server.pm2.processes?.length} processes` : "-"}
+          />
+          <HealthLine
+            icon={<AlertTriangle size={15} />}
+            label="Model Pool"
+            ok={(serverStatus?.modelPool.unavailableChannels ?? 0) === 0}
+            value={`活跃 ${serverStatus?.modelPool.activeChannels ?? 0} / 惩罚 ${serverStatus?.modelPool.penalizedChannels ?? 0}`}
           />
         </div>
         <div className="audit-stack">
@@ -354,6 +374,94 @@ function AdminOverviewPanel({
           />
         </div>
       </section>
+        </div>
+        <aside className="protocol-operator-rail">
+          <section className="card admin-command-card">
+            <div className="card-head">
+              <div>
+                <h2 className="section-title">风险预警</h2>
+                <p className="section-subtitle">来自 `/admin/server-status` 的实时告警。</p>
+              </div>
+            </div>
+            <div className="protocol-alert-list">
+              {(serverStatus?.alerts ?? []).length > 0 ? (
+                (serverStatus?.alerts ?? []).map((alert) => (
+                  <div className={`protocol-alert ${alert.severity}`} key={`${alert.severity}:${alert.title}:rail`}>
+                    <span />
+                    <div>
+                      <strong>{alert.title}</strong>
+                      <small>{alert.message}</small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="protocol-alert info">
+                  <span />
+                  <div>
+                    <strong>暂无风险预警</strong>
+                    <small>Redis、数据库和模型池没有上报严重事件。</small>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+          <section className="card admin-command-card">
+            <div className="card-head">
+              <div>
+                <h2 className="section-title">快捷操作</h2>
+                <p className="section-subtitle">跳转入口沿用现有后台功能。</p>
+              </div>
+            </div>
+            <div className="protocol-action-list">
+              <QuickAction icon={<UserPlus size={16} />} label="新增用户" />
+              <QuickAction icon={<Plus size={16} />} label="新增上游" />
+              <QuickAction icon={<Import size={16} />} label="导入模型价格" />
+              <QuickAction icon={<Gift size={16} />} label="创建兑换码" />
+              <QuickAction icon={<Settings size={16} />} label="设置中心" />
+            </div>
+          </section>
+          <section className="card admin-command-card">
+            <h2 className="section-title">资金概览</h2>
+            <div className="info-list">
+              <InfoLine label="用户余额总额" value={`$${money(overview?.totalWalletBalance ?? "0")}`} />
+              <InfoLine label="累计收入" value={`$${money(overview?.revenue ?? "0")}`} />
+              <InfoLine label="累计成本" value={`$${money(overview?.upstreamCost ?? "0")}`} />
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
+  );
+}
+
+function HealthLine({
+  icon,
+  label,
+  ok,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  ok: boolean | undefined;
+  value: string;
+}) {
+  return (
+    <div className="protocol-health-line">
+      <span className={ok === false ? "protocol-health-icon danger" : "protocol-health-icon"}>
+        {icon}
+      </span>
+      <strong>{label}</strong>
+      <em>{value}</em>
+      <i>{ok === undefined ? "WAITING" : ok ? "HEALTHY" : "CHECK"}</i>
+    </div>
+  );
+}
+
+function QuickAction({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <button className="button secondary protocol-quick-action" type="button">
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }

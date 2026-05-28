@@ -41,12 +41,6 @@ type ApiRequest = {
   upstreamProvider?: string | null;
   upstreamProviderKey?: { id: string; name: string; keyPrefix: string } | null;
   accessTier?: { id: string; code: string; name: string } | null;
-  dedicatedRouteRule?: {
-    id: string;
-    name: string;
-    targetType: string;
-    priority: number;
-  } | null;
   clientIp?: string | null;
   model: string;
   reasoningEffort?: string | null;
@@ -810,6 +804,10 @@ function Requests({
     outputTokens: formatNumber(item.outputTokens),
     totalTokens: formatNumber(item.totalTokens),
     chargedAmount: `$${money(item.chargedAmountUsd)}`,
+    reasoningEffort: formatReasoningEffortCell(
+      item.reasoningEffort,
+      item.reasoningEffortActual,
+    ),
     latency: seconds(item.latencyMs),
     firstTokenLatency: seconds(item.firstTokenLatencyMs),
     createdAt: dateTime(item.createdAt),
@@ -864,6 +862,7 @@ function Requests({
                 { accessorKey: "outputTokens", header: "输出" },
                 { accessorKey: "totalTokens", header: "总 token" },
                 { accessorKey: "chargedAmount", header: "扣费" },
+                { accessorKey: "reasoningEffort", header: "思考强度" },
                 { accessorKey: "latency", header: "总时间" },
                 { accessorKey: "firstTokenLatency", header: "首 token" },
                 { accessorKey: "createdAt", header: "时间" },
@@ -913,14 +912,14 @@ function Requests({
                   <MobileField label="上游 Key" wide>
                     {formatRequestUpstreamKey(item.upstreamProviderKey)}
                   </MobileField>
-                  <MobileField label="推理强度">
-                    {formatReasoningEffortCell(
-                      item.reasoningEffort,
-                      item.reasoningEffortActual,
-                    )}
-                  </MobileField>
                 </>
               ) : null}
+              <MobileField label="思考强度">
+                {formatReasoningEffortCell(
+                  item.reasoningEffort,
+                  item.reasoningEffortActual,
+                )}
+              </MobileField>
               <MobileField label="API Key" wide>
                 {formatRequestApiKey(item.apiKey)}
               </MobileField>
@@ -1477,11 +1476,11 @@ function getRequestReasoningEffort(
 function formatReasoningEffort(value: string) {
   const normalized = value.trim().toLowerCase();
   const labels: Record<string, string> = {
-    minimal: "最低",
-    low: "低",
-    medium: "中",
-    high: "高",
-    xhigh: "超高",
+    minimal: "minimal",
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
   };
 
   return labels[normalized] ?? value.trim();
@@ -1498,7 +1497,7 @@ function getEnabledReasoningRulesSummary(
   if (enabledRules.length === 1) {
     const rule = enabledRules[0];
     return rule
-      ? `${formatReasoningEffort(rule.from)}→${formatReasoningEffort(rule.to)}`
+      ? `${formatReasoningEffort(rule.from)} -> ${formatReasoningEffort(rule.to)}`
       : "关";
   }
 
@@ -1515,9 +1514,9 @@ function formatReasoningEffortCell(
   }
 
   const actual = actualValue?.trim();
-  const originalLabel = `${formatReasoningEffort(trimmed)} · ${trimmed}`;
+  const originalLabel = formatReasoningEffort(trimmed);
   if (actual && actual.toLowerCase() !== trimmed.toLowerCase()) {
-    return `${originalLabel} → ${formatReasoningEffort(actual)} · ${actual}`;
+    return `${originalLabel} -> ${formatReasoningEffort(actual)}`;
   }
 
   return originalLabel;

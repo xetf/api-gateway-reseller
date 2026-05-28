@@ -56,15 +56,11 @@ let stopExternalAlertScheduler: (() => void) | undefined;
 
 app.decorate("redis", redis);
 
-const allowedOrigins = new Set([
-  "http://127.0.0.1:4101",
-  "http://localhost:4101",
-  "http://43.153.88.103:4101",
-  "http://154.37.220.248:4101",
-  "https://apishare.l-kx.cn",
-  "https://gateway.l-kx.cn",
-  "https://free.l-kx.cn",
-]);
+const allowedOrigins = new Set(
+  env.CORS_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
 
 await app.register(cors, {
   origin: (origin, callback) => {

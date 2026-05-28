@@ -4,7 +4,6 @@ import {
   clearStickyModelPoolChannel,
   getStickyChannelOccupancies,
   getStickyModelPoolRoute,
-  setStickyModelPoolChannel,
 } from "./model-pool-stickiness.js";
 import {
   getSpeedScoreMs,
@@ -49,8 +48,6 @@ type RouteCandidate = {
 };
 type ModelRouteOptions = {
   tierId?: string | null;
-  forcedProvider?: string | null;
-  forcedProviderKeyId?: string | null;
   excludeChannelIds?: string[];
   bypassSticky?: boolean;
   skipStickyUpdate?: boolean;
@@ -93,25 +90,12 @@ export async function getProviderForModel(
   const decisionTrace = createRoutingDecisionTrace({
     model,
     tierId: options.tierId,
-    forcedProvider: options.forcedProvider,
-    forcedProviderKeyId: options.forcedProviderKeyId,
     dryRun: options.dryRun,
   });
   const modelPool = await findModelPoolForTier(model, options.tierId);
 
   if (!modelPool || modelPool.channels.length === 0) {
     decisionTrace.unavailableReasons.push("没有可用模型池或模型池没有可路由渠道");
-    return null;
-  }
-
-  const channels = options.forcedProvider
-    ? modelPool.channels.filter(
-        (channel) => channel.upstreamProvider === options.forcedProvider,
-      )
-    : modelPool.channels;
-
-  if (channels.length === 0) {
-    decisionTrace.unavailableReasons.push("专线限定的上游不在模型池中");
     return null;
   }
 
@@ -130,14 +114,14 @@ export async function getProviderForModel(
     );
   }
   if (stickyRouteState) {
-    const stickyChannel = channels.find(
+    const stickyChannel = modelPool.channels.find(
       (channel) => channel.id === stickyRouteState.channelId,
     );
     if (stickyChannel && !excludedChannelIds.has(stickyChannel.id)) {
       const stickyRoute = await getRouteForChannelWithKey(
         model,
         stickyChannel,
-        options.forcedProviderKeyId ?? stickyRouteState.upstreamProviderKeyId,
+        stickyRouteState.upstreamProviderKeyId,
         options.dryRun,
       );
 
@@ -151,16 +135,6 @@ export async function getProviderForModel(
           stickyRoute.upstreamProviderKeyId ?? null;
         decisionTrace.keyCandidates =
           stickyRoute.keyDecisionTrace?.candidates ?? [];
-        if (options.skipStickyUpdate) {
-          return stickyRoute;
-        }
-
-        await setStickyModelPoolChannel(
-          scopedCallerIdentity,
-          model,
-          stickyChannel.id,
-          stickyRoute.upstreamProviderKeyId,
-        );
         return stickyRoute;
       }
     }
@@ -175,8 +149,7 @@ export async function getProviderForModel(
 
   const routeCandidates = await getRouteCandidates(
     model,
-    channels.filter((channel) => !excludedChannelIds.has(channel.id)),
-    options.forcedProviderKeyId,
+    modelPool.channels.filter((channel) => !excludedChannelIds.has(channel.id)),
   );
   decisionTrace.candidates = routeCandidates.map((route) => ({
     channelId: route.channelId,
@@ -205,7 +178,7 @@ export async function getProviderForModel(
 
     const preparedRoute = await prepareRoute(
       balancedRoute,
-      options.forcedProviderKeyId,
+      undefined,
       options.dryRun,
     );
     if (preparedRoute) {
@@ -217,16 +190,6 @@ export async function getProviderForModel(
         preparedRoute.upstreamProviderKeyId ?? null;
       decisionTrace.keyCandidates =
         preparedRoute.keyDecisionTrace?.candidates ?? [];
-      if (options.skipStickyUpdate) {
-        return preparedRoute;
-      }
-
-      await setStickyModelPoolChannel(
-        scopedCallerIdentity,
-        model,
-        balancedRoute.channelId,
-        preparedRoute.upstreamProviderKeyId,
-      );
       return preparedRoute;
     }
 
@@ -292,20 +255,12 @@ async function getRouteCandidates(
     lastLatencyMs: number | null;
     priority: number;
   }>,
-  forcedProviderKeyId?: string | null,
 ): Promise<RouteCandidate[]> {
   const routes = await Promise.all(
     channels.map(async (channel) => {
       const route = await getRouteForChannel(model, channel);
 
       if (!route) {
-        return null;
-      }
-
-      if (
-        forcedProviderKeyId &&
-        !(await providerHasActiveKey(route.provider.id, forcedProviderKeyId))
-      ) {
         return null;
       }
 
@@ -453,21 +408,6 @@ async function getRouteForChannel(
   }
 
   return null;
-}
-
-async function providerHasActiveKey(providerId: string, keyId: string) {
-  if (providerId === "env") {
-    return keyId === "env";
-  }
-
-  const count = await prisma.upstreamProviderKey.count({
-    where: {
-      id: keyId,
-      upstreamProviderId: providerId,
-      status: "ACTIVE",
-    },
-  });
-  return count > 0;
 }
 
 async function getRouteForChannelWithKey(

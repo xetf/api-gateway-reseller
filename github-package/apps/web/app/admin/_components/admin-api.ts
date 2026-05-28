@@ -15,7 +15,6 @@ export type AdminResource =
   | "dispatchSettings"
   | "ipAccessTiers"
   | "accessTiers"
-  | "dedicatedRouteRules"
   | "redeemCodes"
   | "authSettings"
   | "gatewayNotices"

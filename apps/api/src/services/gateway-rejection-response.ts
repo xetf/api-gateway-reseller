@@ -28,7 +28,6 @@ type CommonRejectedParams = {
   clientIp: string | null;
   userAgent?: string | string[];
   accessTierId?: string | null;
-  dedicatedRouteRuleId?: string | null;
 };
 
 export async function createGatewayRejectedRequest(
@@ -71,7 +70,6 @@ export async function createGatewayRejectedRequest(
           ? undefined
           : (sanitizeJsonForPostgres(params.responseUsage) as Prisma.InputJsonValue),
       accessTierId: params.accessTierId,
-      dedicatedRouteRuleId: params.dedicatedRouteRuleId,
     },
   });
 }

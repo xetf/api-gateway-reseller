@@ -5,9 +5,6 @@ export const standardAccessTierCode = "standard";
 export type AccessRoutePolicy = {
   tierId: string | null;
   tierCode: string;
-  dedicatedRouteRuleId?: string | null;
-  forcedProvider?: string | null;
-  forcedProviderKeyId?: string | null;
 };
 
 type RoutePrincipal = {
@@ -17,8 +14,6 @@ type RoutePrincipal = {
   apiKeyTierId?: string | null;
   clientIp?: string | null;
 };
-
-type DedicatedRule = Awaited<ReturnType<typeof listActiveDedicatedRules>>[number];
 
 let cachedStandardTier:
   | {
@@ -58,22 +53,16 @@ export function clearStandardAccessTierCache() {
 export async function resolveAccessRoutePolicy(
   principal: RoutePrincipal,
 ): Promise<AccessRoutePolicy> {
-  const [standardTier, rules] = await Promise.all([
+  const [standardTier, ipTier] = await Promise.all([
     ensureStandardAccessTier(),
-    listActiveDedicatedRules(),
+    findMatchingIpAccessTier(principal.clientIp),
   ]);
-  const matchedRule = findMatchingDedicatedRule(rules, principal);
-  const ipTier = matchedRule
-    ? null
-    : await findMatchingIpAccessTier(principal.clientIp);
   const selectedTierId =
-    matchedRule?.accessTierId ??
     ipTier?.tierId ??
     principal.apiKeyTierId ??
     principal.userTierId ??
     standardTier.id;
   const tier =
-    matchedRule?.accessTier ??
     ipTier?.tier ??
     (await prisma.accessTier.findFirst({
       where: {
@@ -87,9 +76,6 @@ export async function resolveAccessRoutePolicy(
   return {
     tierId: tier.id,
     tierCode: tier.code,
-    dedicatedRouteRuleId: matchedRule?.id ?? null,
-    forcedProvider: matchedRule?.upstreamProvider ?? null,
-    forcedProviderKeyId: matchedRule?.upstreamProviderKeyId ?? null,
   };
 }
 
@@ -113,59 +99,6 @@ async function findMatchingIpAccessTier(clientIp?: string | null) {
   });
 
   return rules.find((rule) => ipMatchesPattern(clientIp, rule.cidrOrIp)) ?? null;
-}
-
-async function listActiveDedicatedRules() {
-  return prisma.dedicatedRouteRule.findMany({
-    where: {
-      status: "ACTIVE",
-      accessTier: { status: "ACTIVE" },
-      AND: [
-        { OR: [{ startsAt: null }, { startsAt: { lte: new Date() } }] },
-        { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
-      ],
-    },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-    select: {
-      id: true,
-      targetType: true,
-      userId: true,
-      apiKeyId: true,
-      ipPattern: true,
-      accessTierId: true,
-      upstreamProvider: true,
-      upstreamProviderKeyId: true,
-      accessTier: {
-        select: {
-          id: true,
-          code: true,
-        },
-      },
-    },
-  });
-}
-
-function findMatchingDedicatedRule(
-  rules: DedicatedRule[],
-  principal: RoutePrincipal,
-) {
-  return (
-    rules.find(
-      (rule) =>
-        rule.targetType === "IP" &&
-        principal.clientIp &&
-        rule.ipPattern &&
-        ipMatchesPattern(principal.clientIp, rule.ipPattern),
-    ) ??
-    rules.find(
-      (rule) =>
-        rule.targetType === "API_KEY" && rule.apiKeyId === principal.apiKeyId,
-    ) ??
-    rules.find(
-      (rule) => rule.targetType === "USER" && rule.userId === principal.userId,
-    ) ??
-    null
-  );
 }
 
 export function ipMatchesPattern(ip: string, pattern: string) {

@@ -79,6 +79,7 @@ type ModelPrice = {
   id: string;
   model: string;
   upstreamProvider: string;
+  upstreamEndpoint: "responses" | "chat_completions";
   currency: string;
   upstreamInputPer1MTok: string;
   upstreamCachedInputPer1MTok: string;
@@ -161,8 +162,8 @@ type ModelPricesResponse = {
 };
 
 const modelPriceImportExampleCsv = [
-  "model,upstreamProvider,currency,upstreamInputPer1MTok,upstreamCachedInputPer1MTok,upstreamOutputPer1MTok,upstreamPriceMultiplier,customerInputPer1MTok,customerCachedInputPer1MTok,customerOutputPer1MTok,customerPriceMultiplier,minimumChargeUsd,enabled,priceVersion,effectiveFrom,effectiveTo",
-  "gpt-4o-mini,openai,USD,5,0.5,30,1,6,0.6,36,1,0,true,v1,,",
+  "model,upstreamProvider,upstreamEndpoint,currency,upstreamInputPer1MTok,upstreamCachedInputPer1MTok,upstreamOutputPer1MTok,upstreamPriceMultiplier,customerInputPer1MTok,customerCachedInputPer1MTok,customerOutputPer1MTok,customerPriceMultiplier,minimumChargeUsd,enabled,priceVersion,effectiveFrom,effectiveTo",
+  "gpt-4o-mini,openai,responses,USD,5,0.5,30,1,6,0.6,36,1,0,true,v1,,",
 ].join("\n");
 
 function errorToText(error: unknown) { return error instanceof Error ? error.message : "未知错误"; }
@@ -258,6 +259,9 @@ export function UpstreamProviders({
   const [busyKeyId, setBusyKeyId] = useState<string | null>(null);
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [priceProvider, setPriceProvider] = useState("");
+  const [upstreamEndpoint, setUpstreamEndpoint] = useState<
+    "responses" | "chat_completions"
+  >("responses");
   const [model, setModel] = useState("gpt-4o-mini");
   const [upstreamInput, setUpstreamInput] = useState("5");
   const [upstreamCachedInput, setUpstreamCachedInput] = useState("0.5");
@@ -342,6 +346,7 @@ export function UpstreamProviders({
           body: JSON.stringify({
             model,
             upstreamProvider: priceProvider,
+            upstreamEndpoint,
             upstreamInputPer1MTok: upstreamInput,
             upstreamCachedInputPer1MTok: upstreamCachedInput,
             upstreamOutputPer1MTok: upstreamOutput,
@@ -366,6 +371,7 @@ export function UpstreamProviders({
   function editPrice(price: ModelPrice) {
     setEditingPriceId(price.id);
     setPriceProvider(price.upstreamProvider);
+    setUpstreamEndpoint(price.upstreamEndpoint ?? "responses");
     setModel(price.model);
     setUpstreamInput(price.upstreamInputPer1MTok);
     setUpstreamCachedInput(price.upstreamCachedInputPer1MTok);
@@ -382,6 +388,7 @@ export function UpstreamProviders({
   function openCreatePrice(providerName: string) {
     setEditingPriceId(null);
     setPriceProvider(providerName);
+    setUpstreamEndpoint("responses");
     setModel("gpt-4o-mini");
     setUpstreamInput("5");
     setUpstreamCachedInput("0.5");
@@ -1001,6 +1008,8 @@ export function UpstreamProviders({
       <>
         {price.priceVersion || "v1"}
         <br />
+        <span className="muted-cell">{endpointLabel(price.upstreamEndpoint)}</span>
+        <br />
         <span className="muted-cell">{formatPriceValidity(price)}</span>
       </>
     ),
@@ -1449,6 +1458,7 @@ export function UpstreamProviders({
                           </MobileField>
                           <MobileField label="版本/有效期" wide>
                             {price.priceVersion || "v1"} ·{" "}
+                            {endpointLabel(price.upstreamEndpoint)} ·{" "}
                             {formatPriceValidity(price)}
                           </MobileField>
                         </MobileRecord>
@@ -2030,6 +2040,25 @@ export function UpstreamProviders({
                         onChange={(event) => setModel(event.target.value)}
                       />
                     </label>
+                    <label className="field">
+                      <span>上游接口</span>
+                      <select
+                        className="input"
+                        value={upstreamEndpoint}
+                        onChange={(event) =>
+                          setUpstreamEndpoint(
+                            event.target.value as
+                              | "responses"
+                              | "chat_completions",
+                          )
+                        }
+                      >
+                        <option value="responses">Responses API</option>
+                        <option value="chat_completions">
+                          Chat Completions API
+                        </option>
+                      </select>
+                    </label>
                   </div>
                   <section className="subpanel">
                     <h3>上游价格</h3>
@@ -2269,6 +2298,10 @@ function isNonNegativeNumberText(value: string) {
 
 function multiplied(value: string | number, multiplier: string | number) {
   return Number(value) * Number(multiplier);
+}
+
+function endpointLabel(value: ModelPrice["upstreamEndpoint"]) {
+  return value === "chat_completions" ? "Chat Completions" : "Responses";
 }
 
 function priceTriplet(

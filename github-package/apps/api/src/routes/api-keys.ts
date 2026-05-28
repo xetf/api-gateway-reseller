@@ -70,6 +70,17 @@ const createKeySchema = z.object({
   ipWhitelist: z.array(z.string().trim().min(1).max(128)).max(100).default([]),
 });
 
+const modelMappingsSchema = z.object({
+  mappings: z
+    .array(
+      z.object({
+        fromModel: z.string().trim().min(1).max(200),
+        toModel: z.string().trim().min(1).max(200),
+      }),
+    )
+    .max(500),
+});
+
 function normalizeTags(tags: string[] | undefined) {
   return Array.from(
     new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)),
@@ -83,6 +94,56 @@ function normalizeIpPatterns(patterns: string[] | undefined) {
 }
 
 export async function apiKeyRoutes(app: FastifyInstance) {
+  app.get("/model-mappings", { preHandler: requireUser }, async (request) => {
+    const user = request.user as { sub: string };
+    const mappings = await prisma.userModelMapping.findMany({
+      where: { userId: user.sub },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        fromModel: true,
+        toModel: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return { mappings };
+  });
+
+  app.put("/model-mappings", { preHandler: requireUser }, async (request) => {
+    const user = request.user as { sub: string };
+    const body = modelMappingsSchema.parse(request.body);
+    const mappings = normalizeModelMappings(body.mappings);
+
+    await prisma.$transaction([
+      prisma.userModelMapping.deleteMany({ where: { userId: user.sub } }),
+      ...mappings.map((mapping) =>
+        prisma.userModelMapping.create({
+          data: {
+            userId: user.sub,
+            fromModel: mapping.fromModel,
+            toModel: mapping.toModel,
+          },
+        }),
+      ),
+    ]);
+
+    return {
+      mappings: await prisma.userModelMapping.findMany({
+        where: { userId: user.sub },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          fromModel: true,
+          toModel: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    };
+  });
+
   app.get("/api-keys", { preHandler: requireUser }, async (request) => {
     const user = request.user as { sub: string };
     await disableExpiredOrOverLimitApiKeys(user.sub);
@@ -281,6 +342,21 @@ export async function apiKeyRoutes(app: FastifyInstance) {
 
     return { ok: true, apiKey };
   });
+}
+
+function normalizeModelMappings(
+  mappings: Array<{ fromModel: string; toModel: string }>,
+) {
+  const byFromModel = new Map<string, { fromModel: string; toModel: string }>();
+  for (const mapping of mappings) {
+    const fromModel = mapping.fromModel.trim();
+    const toModel = mapping.toModel.trim();
+    if (!fromModel || !toModel) {
+      continue;
+    }
+    byFromModel.set(fromModel, { fromModel, toModel });
+  }
+  return [...byFromModel.values()];
 }
 
 async function withApiKeyUsage<T extends { id: string; totalLimitUsd?: unknown }>(apiKey: T) {

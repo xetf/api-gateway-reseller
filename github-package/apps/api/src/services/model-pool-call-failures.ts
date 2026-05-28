@@ -13,10 +13,14 @@ type Logger = {
 };
 
 const failureCounterTtlSeconds = 600;
-const liveMetricSmoothingFactor = 0.25;
 
-function failureKey(callerIdentity: string, model: string, channelId: string) {
-  return `modelpool:caller-channel-failure:${callerIdentity}:${model}:${channelId}`;
+function failureKey(
+  callerIdentity: string,
+  model: string,
+  channelId: string,
+  upstreamProviderKeyId?: string | null,
+) {
+  return `modelpool:caller-channel-key-failure:${callerIdentity}:${model}:${channelId}:${upstreamProviderKeyId ?? "provider"}`;
 }
 
 export async function recordModelPoolUserCallResult(params: {
@@ -25,24 +29,24 @@ export async function recordModelPoolUserCallResult(params: {
   callerIdentity: string;
   model: string;
   channelId?: string;
+  upstreamProviderKeyId?: string | null;
   failed?: boolean;
   retryableFailure?: boolean;
   firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
   logger?: Logger;
 }) {
-  const { userId, apiKeyId, callerIdentity, model, channelId, failed, retryableFailure, firstTokenLatencyMs, latencyMs, logger } = params;
+  const { userId, apiKeyId, callerIdentity, model, channelId, upstreamProviderKeyId, failed, retryableFailure, firstTokenLatencyMs, latencyMs, logger } = params;
 
   if (!channelId) {
     return;
   }
 
-  const key = failureKey(callerIdentity, model, channelId);
+  const key = failureKey(callerIdentity, model, channelId, upstreamProviderKeyId);
 
   try {
     if (!failed) {
       await redis.del(key);
-      await updateChannelLiveMetrics(channelId, latencyMs, firstTokenLatencyMs, logger);
       await markChannelSuccessfulCall(channelId, logger);
       return;
     }
@@ -101,6 +105,17 @@ async function penalizeChannel(params: {
     getModelPoolPenaltySeconds(),
     readDispatchSettings(),
   ]);
+  const currentChannel = await prisma.modelPoolChannel.findUnique({
+    where: { id: channelId },
+    select: { status: true },
+  });
+  if (
+    !currentChannel ||
+    currentChannel.status === "FORCED_ACTIVE" ||
+    currentChannel.status === "DISABLED"
+  ) {
+    return;
+  }
   const penalizedUntil = new Date(Date.now() + penaltySeconds * 1000);
   const penaltyReason = `IP ${callerIdentity} failed this channel ${settings.penaltyFailureThreshold} times`;
 
@@ -141,61 +156,4 @@ async function penalizeChannel(params: {
   );
 
   schedulePenalizedChannelRecovery(channelId, penalizedUntil, logger);
-}
-
-async function updateChannelLiveMetrics(
-  channelId: string,
-  latencyMs?: number | null,
-  firstTokenLatencyMs?: number | null,
-  logger?: Logger,
-) {
-  const observedLatencyMs = latencyMs === undefined ? null : latencyMs;
-  const observedFirstTokenLatencyMs = firstTokenLatencyMs === undefined ? null : firstTokenLatencyMs;
-  const scoreSourceMs = observedFirstTokenLatencyMs ?? observedLatencyMs;
-
-  if (!scoreSourceMs || scoreSourceMs <= 0) {
-    return;
-  }
-
-  try {
-    const channel = await prisma.modelPoolChannel.findUnique({
-      where: { id: channelId },
-      select: {
-        priority: true,
-        lastLatencyMs: true,
-        lastFirstTokenLatencyMs: true,
-      },
-    });
-
-    if (!channel) {
-      return;
-    }
-
-    const nextFirstTokenLatencyMs = smoothMetric(channel.lastFirstTokenLatencyMs, observedFirstTokenLatencyMs);
-    const nextLatencyMs = smoothMetric(channel.lastLatencyMs, observedLatencyMs);
-    const nextPriority = Math.max(1, smoothMetric(channel.priority, scoreSourceMs) ?? scoreSourceMs);
-
-    await prisma.modelPoolChannel.update({
-      where: { id: channelId },
-      data: {
-        priority: nextPriority,
-        lastLatencyMs: nextLatencyMs,
-        lastFirstTokenLatencyMs: nextFirstTokenLatencyMs,
-      },
-    });
-  } catch (error) {
-    logger?.warn({ error, channelId }, "Failed to update model pool channel live metrics");
-  }
-}
-
-function smoothMetric(current: number | null, observed: number | null) {
-  if (observed === null || observed <= 0) {
-    return current;
-  }
-
-  if (current === null || current <= 0) {
-    return Math.round(observed);
-  }
-
-  return Math.round((current * (1 - liveMetricSmoothingFactor)) + (observed * liveMetricSmoothingFactor));
 }

@@ -43,7 +43,13 @@ export function nextChannelStatusAfterHealthSuccess(
 }
 
 export function nextChannelStatusAfterHealthFailure(status: string) {
-  return shouldKeepCallableAfterHealthFailure(status)
-    ? "FORCED_ACTIVE"
-    : "UNAVAILABLE";
+  if (status === "ACTIVE") {
+    return "PENALIZED";
+  }
+
+  if (status === "FORCED_ACTIVE") {
+    return "FORCED_ACTIVE";
+  }
+
+  return "UNAVAILABLE";
 }

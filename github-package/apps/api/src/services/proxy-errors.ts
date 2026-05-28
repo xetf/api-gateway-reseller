@@ -45,6 +45,9 @@ export function isRetryableUpstreamFailure(
   responseBody?: unknown,
 ) {
   return (
+    statusCode === 401 ||
+    statusCode === 403 ||
+    statusCode === 404 ||
     statusCode === 408 ||
     statusCode === 429 ||
     statusCode >= 500 ||

@@ -9,8 +9,6 @@ export async function routeUpstreamRequest(
     input.billable && input.model
       ? await getProviderForModel(input.callerIdentity, input.model, {
           tierId: input.accessRoutePolicy?.tierId,
-          forcedProvider: input.accessRoutePolicy?.forcedProvider,
-          forcedProviderKeyId: input.accessRoutePolicy?.forcedProviderKeyId,
           excludeChannelIds: input.excludeChannelIds,
           bypassSticky: input.bypassSticky || input.dryRun,
           skipStickyUpdate: input.skipStickyUpdate || input.dryRun,
@@ -36,9 +34,6 @@ export async function routeUpstreamRequest(
       model: input.model,
       tierId: input.accessRoutePolicy?.tierId,
       tierCode: input.accessRoutePolicy?.tierCode,
-      dedicatedRouteRuleId: input.accessRoutePolicy?.dedicatedRouteRuleId,
-      forcedProvider: input.accessRoutePolicy?.forcedProvider,
-      forcedProviderKeyId: input.accessRoutePolicy?.forcedProviderKeyId,
       dryRun: input.dryRun,
       selectedBy: "default-provider",
       unavailableReasons: input.billable

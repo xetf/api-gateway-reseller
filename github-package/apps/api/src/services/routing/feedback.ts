@@ -21,6 +21,7 @@ export async function recordRoutingFeedback(input: RoutingFeedbackInput) {
     callerIdentity: input.callerIdentity,
     model: input.model,
     channelId: input.channelId,
+    upstreamProviderKeyId: input.upstreamProviderKeyId,
     failed: input.failed,
     retryableFailure: input.retryableFailure,
     firstTokenLatencyMs: input.firstTokenLatencyMs,

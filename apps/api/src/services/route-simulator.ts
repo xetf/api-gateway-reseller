@@ -119,12 +119,7 @@ export async function explainModelRoute(
 
   const routeCandidates =
     effectivePool?.channels.filter(
-      (channel) =>
-        channel.effectiveStatus !== "UNAVAILABLE" &&
-        (!policy.forcedProvider ||
-          channel.upstreamProvider === policy.forcedProvider) &&
-        (!policy.forcedProviderKeyId ||
-          channel.activeKeys.some((key) => key.id === policy.forcedProviderKeyId)),
+      (channel) => channel.effectiveStatus !== "UNAVAILABLE",
     ) ?? [];
 
   return {
@@ -133,8 +128,6 @@ export async function explainModelRoute(
       Boolean(requestedPool) &&
       requestedPool?.pool?.tierId !== effectivePool?.pool?.tierId,
     effectivePool,
-    forcedProvider: policy.forcedProvider ?? null,
-    forcedProviderKeyId: policy.forcedProviderKeyId ?? null,
     routeCandidates,
     selectedCandidate:
       routeCandidates.find(
@@ -323,12 +316,6 @@ function buildRouteUnavailableReasons(
   if (effectivePool?.pool?.status && effectivePool.pool.status !== "ACTIVE") {
     reasons.push("最终模型池未启用");
   }
-  if (policy.forcedProvider) {
-    reasons.push(`专线限制只能使用上游 ${policy.forcedProvider}`);
-  }
-  if (policy.forcedProviderKeyId) {
-    reasons.push("专线限制只能使用指定上游 Key");
-  }
   if (effectivePool?.channels.length === 0) {
     reasons.push("最终模型池没有渠道");
   }
@@ -348,19 +335,11 @@ function buildRouteSimulationSteps(params: {
     `API Key 状态：${params.apiKey.status}`,
     `来源 IP：${params.clientIp?.trim() || "未提供"}`,
     `请求模型：${params.model}`,
-    params.policy.dedicatedRouteRuleId
-      ? "命中专线规则，专线优先于 Key/用户等级"
-      : "未命中专线规则，按 Key 等级、用户等级、standard 顺序解析",
+    "按来源 IP 等级、Key 等级、用户等级、standard 顺序解析",
     `最终访问等级：${params.policy.tierCode}`,
     params.route.fallbackToStandard
       ? "目标等级模型池不可用，已回落 standard 模型池"
       : "使用目标等级模型池",
-    params.policy.forcedProvider
-      ? `专线限定上游：${params.policy.forcedProvider}`
-      : "未限定专用上游",
-    params.policy.forcedProviderKeyId
-      ? "专线限定指定上游 Key"
-      : "未限定专用上游 Key",
     params.route.selectedCandidate
       ? `模拟首选渠道：${params.route.selectedCandidate.upstreamProvider}，客户输入/输出价 ${params.route.selectedCandidate.price?.customerInputPer1MTok ?? "-"} / ${params.route.selectedCandidate.price?.customerOutputPer1MTok ?? "-"} 每 1M tokens`
       : `无可用渠道：${params.route.unavailableReasons.join("；")}`,

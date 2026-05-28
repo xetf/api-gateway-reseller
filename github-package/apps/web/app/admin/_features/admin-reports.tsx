@@ -41,7 +41,6 @@ export type AdminReportSummary = {
     models: ReportDimensionRow[];
     upstreams: ReportDimensionRow[];
     tiers: ReportDimensionRow[];
-    dedicatedRoutes: ReportDimensionRow[];
   };
 };
 
@@ -53,7 +52,7 @@ export function AdminReports({
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<
-    "summary" | "users" | "models" | "upstreams" | "tiers" | "routes"
+    "summary" | "users" | "models" | "upstreams" | "tiers"
   >("summary");
   const {
     data: report,
@@ -123,7 +122,6 @@ export function AdminReports({
             <ConsoleNavButton active={activeView === "models"} title="模型" description="模型收入排行" meta={`${report?.dimensions.models.length ?? 0} 项`} onClick={() => setActiveView("models")} />
             <ConsoleNavButton active={activeView === "upstreams"} title="上游" description="上游收入排行" meta={`${report?.dimensions.upstreams.length ?? 0} 项`} onClick={() => setActiveView("upstreams")} />
             <ConsoleNavButton active={activeView === "tiers"} title="等级" description="等级收入排行" meta={`${report?.dimensions.tiers.length ?? 0} 项`} onClick={() => setActiveView("tiers")} />
-            <ConsoleNavButton active={activeView === "routes"} title="专线" description="专线收入排行" meta={`${report?.dimensions.dedicatedRoutes.length ?? 0} 项`} onClick={() => setActiveView("routes")} />
           </>
         }
         summary={
@@ -159,7 +157,6 @@ export function AdminReports({
         {activeView === "models" ? <ReportDimensionTable title="模型收入排行" rows={report?.dimensions.models ?? []} /> : null}
         {activeView === "upstreams" ? <ReportDimensionTable title="上游收入排行" rows={report?.dimensions.upstreams ?? []} /> : null}
         {activeView === "tiers" ? <ReportDimensionTable title="等级收入排行" rows={report?.dimensions.tiers ?? []} /> : null}
-        {activeView === "routes" ? <ReportDimensionTable title="专线收入排行" rows={report?.dimensions.dedicatedRoutes ?? []} /> : null}
       </SettingsConsoleLayout>
     </div>
   );

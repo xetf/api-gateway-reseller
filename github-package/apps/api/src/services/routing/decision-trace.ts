@@ -2,9 +2,6 @@ export type RoutingDecisionTrace = {
   model?: string;
   tierId?: string | null;
   tierCode?: string | null;
-  dedicatedRouteRuleId?: string | null;
-  forcedProvider?: string | null;
-  forcedProviderKeyId?: string | null;
   dryRun?: boolean;
   stickyTried: boolean;
   stickyHit: boolean;
@@ -41,9 +38,6 @@ export function createRoutingDecisionTrace(
     model: input.model,
     tierId: input.tierId,
     tierCode: input.tierCode,
-    dedicatedRouteRuleId: input.dedicatedRouteRuleId,
-    forcedProvider: input.forcedProvider,
-    forcedProviderKeyId: input.forcedProviderKeyId,
     dryRun: input.dryRun,
     stickyTried: input.stickyTried ?? false,
     stickyHit: input.stickyHit ?? false,

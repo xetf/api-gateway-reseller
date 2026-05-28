@@ -48,7 +48,6 @@ type AccessTier = {
     users?: number;
     apiKeys?: number;
     modelPools?: number;
-    dedicatedRouteRules?: number;
   };
 };
 

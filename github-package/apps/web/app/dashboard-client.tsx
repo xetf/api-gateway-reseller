@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Server,
   Settings,
@@ -115,6 +116,14 @@ type User = {
   wallet?: Wallet | null;
 };
 
+type ModelMapping = {
+  id?: string;
+  fromModel: string;
+  toModel: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 type Summary = {
   totals: {
     requests: number;
@@ -174,37 +183,7 @@ type AccessTier = AccessTierRef & {
     users: number;
     apiKeys: number;
     modelPools: number;
-    dedicatedRouteRules: number;
   };
-};
-
-type DedicatedRouteRule = {
-  id: string;
-  name: string;
-  targetType: "USER" | "API_KEY" | "IP" | string;
-  userId?: string | null;
-  apiKeyId?: string | null;
-  ipPattern?: string | null;
-  accessTierId: string;
-  upstreamProvider?: string | null;
-  upstreamProviderKeyId?: string | null;
-  status: "ACTIVE" | "DISABLED" | string;
-  priority: number;
-  startsAt?: string | null;
-  expiresAt?: string | null;
-  conflictWarnings?: string[];
-  remark?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  user?: { id: string; email: string } | null;
-  apiKey?: { id: string; name: string; keyPrefix: string } | null;
-  accessTier?: AccessTierRef | null;
-  upstreamProviderKey?: {
-    id: string;
-    name: string;
-    keyPrefix: string;
-    upstreamProvider?: { name: string } | null;
-  } | null;
 };
 
 type RiskCenter = {
@@ -324,13 +303,14 @@ type PublicAuthSettings = Pick<
 >;
 
 const modelPriceImportExampleCsv = [
-  "model,upstreamProvider,currency,upstreamInputPer1MTok,upstreamCachedInputPer1MTok,upstreamOutputPer1MTok,upstreamPriceMultiplier,customerInputPer1MTok,customerCachedInputPer1MTok,customerOutputPer1MTok,customerPriceMultiplier,minimumChargeUsd,enabled,priceVersion,effectiveFrom,effectiveTo",
-  "gpt-4o-mini,openai,USD,5,0.5,30,1,6,0.6,36,1,0,true,v1,,",
+  "model,upstreamProvider,upstreamEndpoint,currency,upstreamInputPer1MTok,upstreamCachedInputPer1MTok,upstreamOutputPer1MTok,upstreamPriceMultiplier,customerInputPer1MTok,customerCachedInputPer1MTok,customerOutputPer1MTok,customerPriceMultiplier,minimumChargeUsd,enabled,priceVersion,effectiveFrom,effectiveTo",
+  "gpt-4o-mini,openai,responses,USD,5,0.5,30,1,6,0.6,36,1,0,true,v1,,",
 ].join("\n");
 
 const frontNav = [
   { id: "overview", label: "前台总览", icon: BarChart3 },
   { id: "keys", label: "API Key", icon: KeyRound },
+  { id: "model-mappings", label: "模型映射", icon: GitBranch },
   { id: "wallet", label: "余额兑换", icon: CreditCard },
   { id: "requests", label: "我的调用", icon: Activity },
   { id: "test", label: "调用测试", icon: Send },
@@ -399,8 +379,8 @@ const adminNav = [
   },
   {
     id: "admin-routing",
-    label: "分级专线",
-    description: "等级、模型池、专线路由",
+    label: "访问等级",
+    description: "等级、模型池、路由模拟",
     icon: GitBranch,
   },
   {
@@ -470,29 +450,29 @@ const adminNavGroups = [
 const adminWorkspaces = [
   {
     id: "overview",
-    label: "总览",
-    description: "状态、收入、成本、初始化",
+    label: "运营总览",
+    description: "健康状态、收入成本、初始化",
     icon: Shield,
     tabs: ["admin-overview"],
   },
   {
     id: "commerce",
     label: "用户与商业",
-    description: "用户、公益、兑换和商业账户",
+    description: "用户、公益、兑换码和余额",
     icon: Users,
     tabs: ["admin-users", "admin-charity", "admin-redeem"],
   },
   {
     id: "gateway",
     label: "网关配置",
-    description: "上游、价格、模型池、专线",
+    description: "上游、模型池、调度、等级",
     icon: Server,
     tabs: ["admin-upstreams", "admin-model-pools", "admin-dispatch", "admin-routing"],
   },
   {
     id: "traffic-risk",
     label: "调用与风控",
-    description: "请求、封禁、公告和终止",
+    description: "调用记录、封禁、公告返回",
     icon: Activity,
     tabs: ["admin-requests", "admin-risk", "admin-notices"],
   },
@@ -577,6 +557,11 @@ const pageMeta: Record<
     title: "API Key",
     description: "创建、查看和停用你的调用密钥。",
   },
+  "model-mappings": {
+    eyebrow: "前台",
+    title: "模型映射",
+    description: "配置你调用的模型名实际转发到哪个后端模型。",
+  },
   wallet: {
     eyebrow: "前台",
     title: "余额兑换",
@@ -644,8 +629,8 @@ const pageMeta: Record<
   },
   "admin-routing": {
     eyebrow: "网关配置",
-    title: "分级专线",
-    description: "维护访问等级，并按用户、Key 或 IP 指定专线路由。",
+    title: "访问等级",
+    description: "维护访问等级，并模拟用户、Key 和 IP 等级路由。",
   },
   "admin-requests": {
     eyebrow: "审计与账单",
@@ -655,7 +640,7 @@ const pageMeta: Record<
   "admin-reports": {
     eyebrow: "审计与账单",
     title: "运营报表",
-    description: "查看最近 30 天按用户、模型、上游、等级和专线聚合的经营数据。",
+    description: "查看最近 30 天按用户、模型、上游和等级聚合的经营数据。",
   },
   "admin-audit-logs": {
     eyebrow: "审计与账单",
@@ -679,6 +664,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     mode === "admin" ? adminTabFromPath(pathname) : "overview",
   );
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [modelMappings, setModelMappings] = useState<ModelMapping[]>([]);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -686,9 +672,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [ipBanRules, setIpBanRules] = useState<IpBanRule[]>([]);
   const [accessTiers, setAccessTiers] = useState<AccessTier[]>([]);
-  const [dedicatedRouteRules, setDedicatedRouteRules] = useState<
-    DedicatedRouteRule[]
-  >([]);
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [pendingAutoTerminateSettings, setPendingAutoTerminateSettings] =
     useState<PendingAutoTerminateSettings | null>(null);
@@ -808,7 +791,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
       setRiskCenter(null);
       setAdminUsers([]);
       setAccessTiers([]);
-      setDedicatedRouteRules([]);
       setPendingAutoTerminateSettings(null);
       setReasoningEffortTransformSettings(null);
       setIpBanRules([]);
@@ -830,6 +812,13 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
           });
           setApiKeys(result.apiKeys);
         }),
+        loadData("模型映射", async () => {
+          const result = await apiFetch<{ mappings: ModelMapping[] }>(
+            "/model-mappings",
+            { token: authToken },
+          );
+          setModelMappings(result.mappings);
+        }),
         loadData("钱包", async () => {
           const result = await apiFetch<{
             wallet: Wallet | null;
@@ -849,6 +838,7 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
     }
 
     setApiKeys([]);
+    setModelMappings([]);
     setWallet(null);
     setTransactions([]);
     setSummary(null);
@@ -959,17 +949,13 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
         return;
       }
 
-      const [tiersResult, rulesResult] = await Promise.all([
-        apiFetch<{ tiers: AccessTier[] }>("/admin/access-tiers", {
+      const tiersResult = await apiFetch<{ tiers: AccessTier[] }>(
+        "/admin/access-tiers",
+        {
           token: authToken,
-        }),
-        apiFetch<{ rules: DedicatedRouteRule[] }>(
-          "/admin/dedicated-route-rules",
-          { token: authToken },
-        ),
-      ]);
+        },
+      );
       setAccessTiers(tiersResult.tiers);
-      setDedicatedRouteRules(rulesResult.rules);
     },
     [token],
   );
@@ -1093,21 +1079,24 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 
   return (
     <main
-      className={
-        mode === "admin" ? "shell shell-admin sidebar-compact" : "shell"
-      }
+      className={mode === "admin" ? "shell shell-admin" : "shell"}
     >
       <aside className={mode === "admin" ? "sidebar admin-sidebar" : "sidebar"}>
         <div className="brand">
           <span className="brand-lockup">
-            <span className="brand-mark">A</span>
-            <span className="brand-name">APIshare</span>
+            <span className="brand-mark">AG</span>
+            <span className="brand-copy">
+              <span className="brand-name">API Gateway</span>
+              {mode === "admin" ? (
+                <span className="brand-subtitle">Management Console</span>
+              ) : null}
+            </span>
           </span>
         </div>
         <nav className="nav">
           {mode === "admin" ? (
             <div className="nav-group">
-              <div className="nav-heading">后台</div>
+              <div className="nav-heading">WORKSPACES</div>
               {adminWorkspaces.map((workspace) => (
                 <NavButton
                   key={workspace.id}
@@ -1139,20 +1128,37 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             mode === "admin" ? "topbar admin-command-bar" : "topbar"
           }
         >
+          {mode === "admin" ? (
+            <div className="admin-operator-left">
+              <span className="admin-env-badge">PRODUCTION</span>
+              <label className="admin-global-search">
+                <Search size={16} />
+                <input
+                  aria-label="搜索用户、邮箱、API Key 或请求 ID"
+                  placeholder="Search user, email, API key, request ID..."
+                  type="search"
+                />
+              </label>
+            </div>
+          ) : null}
           <div className="page-heading">
             <span className="eyebrow">{currentPage.eyebrow}</span>
             <h1>{currentPage.title}</h1>
             <p>{currentPage.description}</p>
           </div>
           {mode === "admin" && activeAdminWorkspace ? (
-            <AdminWorkspaceTabs
-              activeTab={activeTab as AdminTab}
-              tabs={activeAdminWorkspace.tabs}
-              onSelect={(tab) => switchTab(tab)}
-            />
+            <div className="admin-command-center">
+              <span>{activeAdminWorkspace.label}</span>
+              <AdminWorkspaceTabs
+                activeTab={activeTab as AdminTab}
+                tabs={activeAdminWorkspace.tabs}
+                onSelect={(tab) => switchTab(tab)}
+              />
+            </div>
           ) : null}
           <div className="topbar-side">
             <div className="account-chip">
+              {mode === "admin" ? <span className="account-avatar">AD</span> : null}
               <span>{user.email}</span>
               {user.role === "ADMIN" ? <strong>管理员</strong> : null}
             </div>
@@ -1183,12 +1189,21 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             fixedWorkspace ? "workspace workspace-fixed-page" : "workspace"
           }
         >
-          {error ? <div className="notice">{error}</div> : null}
+          {error ? (
+            <div aria-live="polite" className="notice" role="alert">
+              {error}
+            </div>
+          ) : null}
           {loading ? <p className="muted">加载中...</p> : null}
           {mode === "admin" &&
           isAdminTab(activeTab) &&
           loadingAdminTab === activeTab ? (
-            <div className="admin-page-loading">
+            <div
+              aria-live="polite"
+              aria-busy="true"
+              className="admin-page-loading"
+              role="status"
+            >
               正在加载{titleForTab(activeTab)}...
             </div>
           ) : null}
@@ -1204,6 +1219,13 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <Keys
               apiKeys={apiKeys}
               onChanged={() => refreshAll()}
+              onError={setError}
+            />
+          ) : null}
+          {mode === "user" && activeTab === "model-mappings" ? (
+            <ModelMappingsPanel
+              mappings={modelMappings}
+              onChanged={(nextMappings) => setModelMappings(nextMappings)}
               onError={setError}
             />
           ) : null}
@@ -1229,7 +1251,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
             <AdminDashboardContent
               activeTab={activeTab}
               accessTiers={accessTiers}
-              dedicatedRouteRules={dedicatedRouteRules}
               adminUsers={adminUsers}
               reasoningEffortTransformSettings={
                 reasoningEffortTransformSettings
@@ -1259,7 +1280,6 @@ export default function DashboardClient({ mode }: { mode: DashboardMode }) {
 function AdminDashboardContent({
   activeTab,
   accessTiers,
-  dedicatedRouteRules,
   adminUsers,
   ipBanRules,
   pendingAutoTerminateSettings,
@@ -1275,7 +1295,6 @@ function AdminDashboardContent({
 }: {
   activeTab: AdminTab;
   accessTiers: AccessTier[];
-  dedicatedRouteRules: DedicatedRouteRule[];
   adminUsers: AdminUser[];
   ipBanRules: IpBanRule[];
   pendingAutoTerminateSettings: PendingAutoTerminateSettings | null;
@@ -1679,6 +1698,144 @@ function Login({
       </section>
     </main>
   );
+}
+
+function ModelMappingsPanel({
+  mappings,
+  onChanged,
+  onError,
+}: {
+  mappings: ModelMapping[];
+  onChanged: (mappings: ModelMapping[]) => void;
+  onError: (error: string | null) => void;
+}) {
+  const [rows, setRows] = useState<ModelMapping[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setRows(
+      mappings.length > 0
+        ? mappings.map((item) => ({ ...item }))
+        : [{ fromModel: "", toModel: "" }],
+    );
+  }, [mappings]);
+
+  function updateRow(index: number, field: "fromModel" | "toModel", value: string) {
+    setRows((current) =>
+      current.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row,
+      ),
+    );
+  }
+
+  function addRow() {
+    setRows((current) => [...current, { fromModel: "", toModel: "" }]);
+  }
+
+  function removeRow(index: number) {
+    setRows((current) =>
+      current.length <= 1
+        ? [{ fromModel: "", toModel: "" }]
+        : current.filter((_, rowIndex) => rowIndex !== index),
+    );
+  }
+
+  async function saveMappings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onError(null);
+    const normalized = normalizeModelMappingRows(rows);
+    setSaving(true);
+
+    try {
+      const result = await apiFetch<{ mappings: ModelMapping[] }>(
+        "/model-mappings",
+        {
+          method: "PUT",
+          body: JSON.stringify({ mappings: normalized }),
+        },
+      );
+      onChanged(result.mappings);
+    } catch (saveError) {
+      onError(errorToText(saveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="section-head">
+        <div>
+          <h2 className="section-title">模型映射</h2>
+          <p className="section-subtitle">
+            左侧是请求里填写的模型，右侧是网关实际转发和计费的模型。
+          </p>
+        </div>
+        <StatusPill status={mappings.length > 0 ? "ACTIVE" : "EMPTY"} />
+      </div>
+      <form className="form" onSubmit={saveMappings}>
+        <div className="mapping-editor">
+          {rows.map((row, index) => (
+            <div className="mapping-row" key={row.id ?? index}>
+              <label className="field">
+                <span>调用模型</span>
+                <input
+                  className="input"
+                  onChange={(event) =>
+                    updateRow(index, "fromModel", event.target.value)
+                  }
+                  placeholder="gpt-4o"
+                  value={row.fromModel}
+                />
+              </label>
+              <label className="field">
+                <span>实际模型</span>
+                <input
+                  className="input"
+                  onChange={(event) =>
+                    updateRow(index, "toModel", event.target.value)
+                  }
+                  placeholder="gpt-4.1"
+                  value={row.toModel}
+                />
+              </label>
+              <button
+                className="button secondary icon-button"
+                onClick={() => removeRow(index)}
+                title="删除映射"
+                type="button"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="button-row">
+          <button className="button secondary" onClick={addRow} type="button">
+            <Plus size={16} />
+            添加映射
+          </button>
+          <button className="button" disabled={saving} type="submit">
+            <Save size={16} />
+            {saving ? "保存中..." : "保存映射"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function normalizeModelMappingRows(rows: ModelMapping[]) {
+  const byFromModel = new Map<string, ModelMapping>();
+  for (const row of rows) {
+    const fromModel = row.fromModel.trim();
+    const toModel = row.toModel.trim();
+    if (!fromModel || !toModel) {
+      continue;
+    }
+    byFromModel.set(fromModel, { fromModel, toModel });
+  }
+  return [...byFromModel.values()];
 }
 
 function Overview({

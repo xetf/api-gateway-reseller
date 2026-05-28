@@ -12,7 +12,6 @@ import {
   isPenalizedModelPoolChannel,
   nextChannelStatusAfterHealthFailure,
   nextChannelStatusAfterHealthSuccess,
-  shouldKeepCallableAfterHealthFailure,
 } from "./routing/channel-state.js";
 import {
   readDispatchSettings,
@@ -313,22 +312,20 @@ export function schedulePenalizedChannelRecovery(
   const delayMs = Math.max(0, penalizedUntil.getTime() - Date.now());
 
   setTimeout(() => {
-    void runChannelHealthCheck(channelId, { allowPenalizedRecovery: true })
+    void releaseExpiredPenalizedChannel(channelId)
       .then((channel) => {
         logger?.info?.(
           {
             channelId,
             status: channel?.status,
-            recoverySuccesses: channel?.recoverySuccesses,
-            lastCheckStatus: channel?.lastCheckStatus,
           },
-          "Penalized model pool channel recovery check completed",
+          "Penalized model pool channel moved to unavailable after penalty period",
         );
       })
       .catch((error) => {
         logger?.warn?.(
           { error, channelId },
-          "Penalized model pool channel recovery check failed",
+          "Failed to release penalized model pool channel",
         );
       });
   }, delayMs);
@@ -349,10 +346,17 @@ async function performModelPoolChannelCheck(
 
   if (
     channel.status === "PENALIZED" &&
-    !options.allowPenalizedRecovery &&
     channel.penalizedUntil &&
     channel.penalizedUntil.getTime() > Date.now()
   ) {
+    return channel;
+  }
+
+  if (channel.status === "PENALIZED") {
+    return releaseExpiredPenalizedChannel(channel.id);
+  }
+
+  if (!canHealthCheckModelPoolChannel(channel.status)) {
     return channel;
   }
 
@@ -477,13 +481,13 @@ async function scheduleDueModelPoolChannels(logger?: HealthLogger) {
 }
 
 async function findDueModelPoolChannels() {
+  await releaseExpiredPenalizedChannels();
   const [intervalSeconds, successGraceSeconds] = await Promise.all([
     getModelPoolHealthCheckIntervalSeconds(),
     getModelPoolSuccessGraceSeconds(),
   ]);
   const intervalMs = intervalSeconds * 1000;
   const successGraceMs = successGraceSeconds * 1000;
-  const now = new Date();
   const candidates = await prisma.modelPoolChannel.findMany({
     where: {
       OR: [
@@ -492,13 +496,6 @@ async function findDueModelPoolChannels() {
           modelPool: {
             status: "ACTIVE",
             autoHealthCheckEnabled: true,
-          },
-        },
-        {
-          status: "PENALIZED",
-          penalizedUntil: { lte: now },
-          modelPool: {
-            status: "ACTIVE",
           },
         },
       ],
@@ -574,6 +571,47 @@ async function runChannelHealthCheck(
       inFlightChannelChecks.delete(channelId);
     }
   }
+}
+
+async function releaseExpiredPenalizedChannel(channelId: string) {
+  const now = new Date();
+  return prisma.modelPoolChannel.updateMany({
+    where: {
+      id: channelId,
+      status: "PENALIZED",
+      OR: [{ penalizedUntil: null }, { penalizedUntil: { lte: now } }],
+    },
+    data: {
+      status: "UNAVAILABLE",
+      recoverySuccesses: 0,
+      penalizedUntil: null,
+      penaltyReason: null,
+      lastCheckedAt: now,
+    },
+  }).then(async (result) => {
+    if (result.count === 0) {
+      return prisma.modelPoolChannel.findUnique({ where: { id: channelId } });
+    }
+
+    return prisma.modelPoolChannel.findUnique({ where: { id: channelId } });
+  });
+}
+
+async function releaseExpiredPenalizedChannels() {
+  const now = new Date();
+  await prisma.modelPoolChannel.updateMany({
+    where: {
+      status: "PENALIZED",
+      OR: [{ penalizedUntil: null }, { penalizedUntil: { lte: now } }],
+    },
+    data: {
+      status: "UNAVAILABLE",
+      recoverySuccesses: 0,
+      penalizedUntil: null,
+      penaltyReason: null,
+      lastCheckedAt: now,
+    },
+  });
 }
 
 function isModelPoolChannelDueForHealthCheck(
@@ -669,16 +707,27 @@ async function markChannelFailure(
   options: ChannelHealthCheckOptions = {},
 ) {
   const consecutiveFailures = channel.consecutiveFailures + 1;
+  const nextStatus = nextChannelStatusAfterHealthFailure(channel.status);
+  const shouldPenalize = nextStatus === "PENALIZED";
+  const penaltySeconds = shouldPenalize
+    ? await getModelPoolPenaltySeconds()
+    : null;
+  const penalizedUntil = penaltySeconds
+    ? new Date(Date.now() + penaltySeconds * 1000)
+    : null;
+  const penaltyReason = shouldPenalize
+    ? `Health check failed: ${message}`.slice(0, 1000)
+    : null;
 
-  return prisma.modelPoolChannel.update({
+  const updated = await prisma.modelPoolChannel.update({
     where: { id: channel.id },
     data: {
-      status: nextChannelStatusAfterHealthFailure(channel.status),
+      status: nextStatus,
       priority: Math.min(10_000, channel.priority + 1000),
       consecutiveFailures,
       recoverySuccesses: 0,
-      penalizedUntil: null,
-      penaltyReason: null,
+      penalizedUntil,
+      penaltyReason,
       lastCheckStatus: "FAILED",
       lastCheckedAt: new Date(),
       lastLatencyMs: latencyMs,
@@ -686,12 +735,18 @@ async function markChannelFailure(
       lastError: message.slice(0, 1000),
     },
   });
+
+  if (penalizedUntil) {
+    schedulePenalizedChannelRecovery(channel.id, penalizedUntil);
+  }
+
+  return updated;
 }
 
 async function forceUnavailableAfterFailedCheck(channel: ModelPoolChannel | null) {
   if (
     !channel ||
-    shouldKeepCallableAfterHealthFailure(channel.status) ||
+    channel.status === "PENALIZED" ||
     channel.status === "UNAVAILABLE" ||
     channel.lastCheckStatus !== "FAILED"
   ) {
