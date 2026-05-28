@@ -1214,17 +1214,28 @@ function AdminModelPools({
           />
         </div>
         <div className="provider-stack model-pool-scroll">
-          {groupedModelPools.map((modelGroup) => (
-            <section className="provider-panel model-dispatch-model-group" key={modelGroup.model}>
-              <div className="section-head">
+          {groupedModelPools.map((modelGroup, modelIndex) => (
+            <details
+              className="provider-panel model-dispatch-model-group model-pool-foldout"
+              key={modelGroup.model}
+              open={modelIndex === 0}
+            >
+              <summary className="model-pool-foldout-summary">
                 <div>
                   <h3 className="section-title">{modelGroup.model}</h3>
-                  <p className="section-subtitle">按访问等级分组；每个等级内分可调用区和不可调用区。</p>
+                  <p className="section-subtitle">
+                    {modelGroup.pools.length} 个等级 · 可调用{" "}
+                    {sumReadyChannels(modelGroup.pools)} 个 · 已加入{" "}
+                    {sumChannels(modelGroup.pools)} 个渠道
+                  </p>
                 </div>
-                <StatusPill status={modelGroup.pools.some((pool) => pool.readyChannelCount > 0) ? "READY" : "UNAVAILABLE"} />
-              </div>
+                <div className="model-pool-foldout-meta">
+                  <StatusPill status={modelGroup.pools.some((pool) => pool.readyChannelCount > 0) ? "READY" : "UNAVAILABLE"} />
+                  <span className="foldout-caret">展开</span>
+                </div>
+              </summary>
               <div className="provider-stack">
-                {modelGroup.pools.map((pool) => {
+                {modelGroup.pools.map((pool, poolIndex) => {
                   const selectableChannels = channelsForPool(pool);
                   const selectedChannel =
                     channelSelections[pool.id] ||
@@ -1238,14 +1249,17 @@ function AdminModelPools({
                   );
 
                   return (
-                    <section className="subpanel" key={pool.id}>
-                <div className="provider-head">
+                    <details
+                      className="subpanel model-tier-foldout"
+                      key={pool.id}
+                      open={modelIndex === 0 && poolIndex === 0}
+                    >
+                <summary className="provider-head model-tier-foldout-summary">
                   <div>
                     <div className="provider-title">
-                      <strong>{pool.model}</strong>
+                      <strong>{pool.tier?.name ?? "Standard"}</strong>
                       <span className="muted">
-                        {pool.tier?.name ?? "Standard"} (
-                        {pool.tier?.code ?? "standard"})
+                        {pool.tier?.code ?? "standard"}
                       </span>
                       <StatusPill status={pool.status} />
                       <StatusPill
@@ -1262,7 +1276,7 @@ function AdminModelPools({
                       />
                     </div>
                     <p>
-                      可调用 {pool.readyChannelCount} 个 · 已定价{" "}
+                      模型 {pool.model} · 可调用 {pool.readyChannelCount} 个 · 已定价{" "}
                       {pool.pricedChannelCount} 个 · 已加入{" "}
                       {pool.channels.length} 个 · 检测接口{" "}
                       {modelPoolHealthCheckEndpointLabel(
@@ -1339,7 +1353,7 @@ function AdminModelPools({
                       删除模型池
                     </button>
                   </div>
-                </div>
+                </summary>
 
                 <div className="section-head compact-head">
                   <div>
@@ -1580,11 +1594,11 @@ function AdminModelPools({
                     <MobileEmpty>暂无上游渠道</MobileEmpty>
                   ) : null}
                 </div>
-                    </section>
+                    </details>
                   );
                 })}
               </div>
-            </section>
+            </details>
           ))}
           {modelPools.length === 0 ? (
             <div className="empty-cell">暂无模型池</div>
@@ -2076,6 +2090,14 @@ function groupModelPools(modelPools: ModelPool[]) {
       ),
     }))
     .sort((left, right) => left.model.localeCompare(right.model));
+}
+
+function sumReadyChannels(pools: ModelPool[]) {
+  return pools.reduce((total, pool) => total + pool.readyChannelCount, 0);
+}
+
+function sumChannels(pools: ModelPool[]) {
+  return pools.reduce((total, pool) => total + pool.channels.length, 0);
 }
 
 function normalizeModelPoolHealthCheckEndpoint(
