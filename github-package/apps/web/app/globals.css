@@ -1590,7 +1590,7 @@ a {
 }
 
 .notice-console-panel {
-  min-height: 520px;
+  min-height: 0;
 }
 
 .charity-announcement-settings {
@@ -1608,13 +1608,13 @@ a {
 .announcement-layout {
   display: grid;
   grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
-  gap: 16px;
+  gap: 10px;
 }
 
 .announcement-controls {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 8px;
 }
 
 .announcement-content-field {
@@ -1839,18 +1839,15 @@ a {
 }
 
 .admin-settings-console-panel {
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .admin-settings-console-summary {
   align-self: start;
   display: grid;
-  gap: 10px;
-  padding: 12px;
-  max-height: 100%;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  gap: 8px;
+  padding: 10px;
+  overflow: visible;
 }
 
 .console-nav-button {
@@ -2049,7 +2046,7 @@ a {
 
 .provider-detail-panel {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .console-side-head {
@@ -2116,8 +2113,7 @@ a {
 
 .routing-rules-panel,
 .routing-side-panel {
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .routing-rules-panel {
@@ -2136,8 +2132,8 @@ a {
 }
 
 .routing-tier-panel {
-  max-height: 360px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .legacy-routing-rules {
@@ -3588,7 +3584,7 @@ tbody tr:hover td {
 
 .admin-settings-stack {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .admin-action-card,
@@ -3604,9 +3600,9 @@ tbody tr:hover td {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
-  min-height: 68px;
-  padding: 14px;
+  gap: 10px;
+  min-height: 52px;
+  padding: 9px 10px;
 }
 
 .admin-action-card > div:first-child {
@@ -3617,13 +3613,13 @@ tbody tr:hover td {
 
 .admin-action-card strong {
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .admin-action-card small {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .admin-action-card-side {
@@ -3690,11 +3686,11 @@ tbody tr:hover td {
 
 .email-preview {
   display: grid;
-  gap: 10px;
+  gap: 7px;
   border: 1px solid #d0d5dd;
   border-radius: 8px;
   background: #f8fafc;
-  padding: 12px;
+  padding: 9px;
 }
 
 .email-preview-toolbar {
@@ -3747,7 +3743,7 @@ tbody tr:hover td {
 }
 
 .email-test-row .button {
-  min-height: 40px;
+  min-height: 32px;
   white-space: nowrap;
 }
 
@@ -3762,13 +3758,13 @@ tbody tr:hover td {
   border-radius: 8px;
   background: #ffffff;
   color: #111827;
-  line-height: 1.6;
-  padding: 14px;
+  line-height: 1.35;
+  padding: 9px;
 }
 
 .email-preview-body h3 {
-  margin: 0 0 10px;
-  font-size: 16px;
+  margin: 0 0 6px;
+  font-size: 14px;
 }
 
 .email-preview-body p {
@@ -3779,11 +3775,11 @@ tbody tr:hover td {
 
 .email-preview-code {
   color: #111827;
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 800;
   letter-spacing: 6px;
   line-height: 1.2;
-  margin: 12px 0;
+  margin: 7px 0;
   overflow-wrap: anywhere;
 }
 
@@ -6739,7 +6735,7 @@ td .button-row.compact {
 
 .shell-admin .admin-users-page .charity-announcement-settings .form {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .shell-admin .admin-dashboard-page {
@@ -6749,7 +6745,7 @@ td .button-row.compact {
 .shell-admin .admin-dashboard-page .admin-monitor-panel,
 .shell-admin .admin-dashboard-page .admin-dashboard-grid {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 
 .shell-admin .admin-redeem-page {
@@ -6794,8 +6790,7 @@ td .button-row.compact {
 
 .shell-admin .admin-settings-page .admin-settings-stack {
   min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .shell-admin .admin-risk-page {
@@ -6894,27 +6889,26 @@ td .button-row.compact {
 
 .shell-admin .notice-field-editor {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 12px;
-  min-height: 360px;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
 }
 
 .shell-admin .notice-field-list {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 6px;
   min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .shell-admin .notice-field-item {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
   background: rgb(248 250 252 / 80%);
-  padding: 10px;
+  padding: 7px 8px;
   color: var(--admin-text);
   text-align: left;
   cursor: pointer;
@@ -6935,7 +6929,7 @@ td .button-row.compact {
 }
 
 .shell-admin .notice-field-current textarea {
-  min-height: 280px;
+  min-height: 150px;
 }
 
 .shell-admin .admin-users-page .admin-secondary-toolbar {
@@ -6985,12 +6979,11 @@ td .button-row.compact {
 
 .shell-admin .admin-notice-console .notice-console-nav,
 .shell-admin .admin-notice-console .notice-console-content {
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .shell-admin .admin-notice-console .notice-console-panel {
-  overflow: auto;
+  overflow: visible;
 }
 
 .shell-admin .card,
@@ -7245,7 +7238,32 @@ td .button-row.compact {
 }
 
 .shell-admin .form {
-  gap: 10px;
+  gap: 8px;
+}
+
+.shell-admin .grid.cols-2,
+.shell-admin .grid.cols-3,
+.shell-admin .grid-form {
+  gap: 8px;
+}
+
+.shell-admin .field {
+  gap: 4px;
+}
+
+.shell-admin .input,
+.shell-admin select.input {
+  min-height: 32px;
+  padding: 6px 9px;
+}
+
+.shell-admin textarea.input,
+.shell-admin .textarea {
+  min-height: 72px;
+}
+
+.shell-admin .compact-textarea {
+  min-height: 58px;
 }
 
 .shell-admin .modal-backdrop {
@@ -7282,8 +7300,8 @@ td .button-row.compact {
 }
 
 .shell-admin .modal-body {
-  gap: 12px;
-  padding: 16px 18px;
+  gap: 10px;
+  padding: 14px 16px;
 }
 
 .shell-admin .modal-footer {
@@ -7699,7 +7717,7 @@ td .button-row.compact {
   border: 1px solid rgb(15 118 110 / 16%);
   border-radius: 8px;
   background: rgb(255 255 255 / 62%);
-  padding: 10px;
+  padding: 7px 8px;
 }
 
 .shell-admin .dispatch-metric span {
@@ -7732,7 +7750,7 @@ td .button-row.compact {
 
 .shell-admin .dispatch-rule-card {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .shell-admin .dispatch-rule-title {
@@ -7773,7 +7791,7 @@ td .button-row.compact {
 .shell-admin .dispatch-field-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .shell-admin .dispatch-field-grid.two {
@@ -7785,7 +7803,7 @@ td .button-row.compact {
   border: 1px solid rgb(148 163 184 / 18%);
   border-radius: 8px;
   background: rgb(248 250 252 / 62%);
-  padding: 9px;
+  padding: 7px;
 }
 
 .shell-admin .dispatch-rule-card .field > span {
@@ -7796,13 +7814,13 @@ td .button-row.compact {
 
 .shell-admin .dispatch-rule-card .field small {
   display: block;
-  min-height: 32px;
+  min-height: 0;
   font-size: 11px;
   line-height: 1.35;
 }
 
 .shell-admin .dispatch-rule-card .input {
-  min-height: 34px;
+  min-height: 32px;
 }
 
 .shell-admin .dispatch-inline-toggle {
@@ -8106,9 +8124,8 @@ td .button-row.compact {
 
 .admin-console-v2 .shell-admin .workspace {
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .admin-console-v2 .shell-admin .workspace-fixed-page {
